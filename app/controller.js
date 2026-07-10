@@ -272,8 +272,10 @@ export function selectNode(nodeId) {
 
 export function selectEdge(index) {
   state.selectedId = null;
+  state.detailNodeId = null; // panel must not keep showing the last node
   state.selectedEdge = index == null ? null : { scopeId: state.scopeId, index };
   canvas.paintSelection();
+  writeHash(); // drop any stale /node/<id> from the URL
   bus.emit('selection-changed');
 }
 
