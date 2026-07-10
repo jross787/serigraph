@@ -121,9 +121,9 @@ function wireKeyboard() {
     switch (ev.key) {
       case 'Escape':
         if (state.connectFrom) { state.connectFrom = null; canvas.paintSelection(); ui.toast('Connect cancelled'); }
-        else if (state.selectedId || state.selectedEdge != null) { ctrl.clearSelection(); ui.hideDetail(); }
         else if (!document.getElementById('templates-panel').hidden) ui.toggleTemplates(false);
-        else if (state.scopeId != null) ctrl.riseUp();
+        else if (state.scopeId != null) ctrl.riseUp(); // one level per press, always
+        else if (state.selectedId || state.selectedEdge != null) { ctrl.clearSelection(); ui.hideDetail(); }
         break;
       case 'Backspace':
         if (state.scopeId != null) { ev.preventDefault(); ctrl.riseUp(); }

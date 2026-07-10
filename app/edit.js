@@ -104,16 +104,22 @@ export function updateNode(nodeId, fields) {
   tidyKeyOrder(doc, p);
 }
 
-// keep files predictable: links before children on every node we touch
+// keep files predictable: id, type, label, description, links, children —
+// unknown keys keep their relative order at the end
+const KEY_ORDER = ['id', 'type', 'label', 'description', 'links', 'children'];
 function tidyKeyOrder(doc, nodePath) {
   const map = doc.getIn(nodePath, true);
   if (!isMap(map)) return;
-  const idx = (key) => map.items.findIndex((pair) => pair.key?.value === key);
-  const li = idx('links'), ci = idx('children');
-  if (li !== -1 && ci !== -1 && li > ci) {
-    const [linksPair] = map.items.splice(li, 1);
-    map.items.splice(idx('children'), 0, linksPair);
-  }
+  const rank = (pair) => {
+    // parsed pairs carry Scalar keys ({value}); setIn-created pairs carry raw strings
+    const key = typeof pair.key === 'string' ? pair.key : pair.key?.value;
+    const i = KEY_ORDER.indexOf(key);
+    return i === -1 ? KEY_ORDER.length : i;
+  };
+  map.items = map.items
+    .map((pair, i) => [pair, i])
+    .sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1])
+    .map(([pair]) => pair);
 }
 
 export function deleteNode(nodeId) {
@@ -121,11 +127,11 @@ export function deleteNode(nodeId) {
   const node = state.model.byId.get(nodeId);
   if (!node) throw new Error(`node "${nodeId}" not found`);
   const ownerId = node.ownerId;
+  // normalize the parent scope FIRST — list-form children get rewritten to
+  // map form, which would invalidate any path computed before this call
+  const scope = ensureScope(doc, ownerId, { create: false });
   const p = findNodePath(doc, nodeId);
   if (!p) throw new Error(`node "${nodeId}" not found in file`);
-
-  // remove sibling edges that reference it
-  const scope = ensureScope(doc, ownerId, { create: false });
   if (scope) {
     const edgesSeq = doc.getIn(scope.edgesPath, true);
     if (isSeq(edgesSeq)) {

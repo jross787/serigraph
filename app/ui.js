@@ -222,11 +222,18 @@ export function helpDialog() {
 
 // ── detail panel ─────────────────────────────────────────────────────
 let editMode = false;
+let ghostTimer = null;
 
 export function showDetail(nodeId) {
   editMode = false;
   state.detailNodeId = nodeId;
   renderDetail();
+  // let the 2nd click of a double-click pass through to nodes the panel
+  // now covers — otherwise containers on the right edge can't be dived into
+  const panel = document.getElementById('detail');
+  panel.classList.add('ghost');
+  clearTimeout(ghostTimer);
+  ghostTimer = setTimeout(() => panel.classList.remove('ghost'), 400);
 }
 export function hideDetail() {
   state.detailNodeId = null;

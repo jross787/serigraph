@@ -49,19 +49,20 @@
     </div>
   </header>
 
-  <main id="stage">
-    <svg id="canvas" tabindex="0" role="application" aria-label="Operations map canvas"></svg>
-    <div id="zoombar">
-      <button id="zoom-out" title="Zoom out (−)">−</button>
-      <button id="zoom-fit" title="Fit to view (0)">⛶</button>
-      <button id="zoom-in" title="Zoom in (+)">+</button>
-    </div>
-    <div id="minimap" hidden><svg></svg></div>
-    <div id="canvas-msg" hidden></div>
-  </main>
-
-  <aside id="detail" hidden></aside>
-  <aside id="templates-panel" hidden></aside>
+  <div id="main-row">
+    <aside id="templates-panel" hidden></aside>
+    <main id="stage">
+      <svg id="canvas" tabindex="0" role="application" aria-label="Operations map canvas"></svg>
+      <div id="zoombar">
+        <button id="zoom-out" title="Zoom out (−)">−</button>
+        <button id="zoom-fit" title="Fit to view (0)">⛶</button>
+        <button id="zoom-in" title="Zoom in (+)">+</button>
+      </div>
+      <div id="minimap" hidden><svg></svg></div>
+      <div id="canvas-msg" hidden></div>
+    </main>
+    <aside id="detail" hidden></aside>
+  </div>
   <div id="search-overlay" hidden></div>
   <div id="dialog-root"></div>
   <div id="present-hud" hidden></div>

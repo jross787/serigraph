@@ -11,7 +11,9 @@ import { api } from './api.js';
 // #/map/<id>/in/<node>  — inside a container node
 // #/map/<id>/node/<id>  — a node, selected in its parent scope
 export function readHash() {
-  const h = decodeURIComponent(location.hash || '');
+  let h;
+  try { h = decodeURIComponent(location.hash || ''); }
+  catch { h = location.hash || ''; } // malformed %-sequence: use it verbatim
   let m = h.match(/^#\/map\/([^/]+)\/node\/(.+)$/);
   if (m) return { mapId: m[1], nodeId: m[2] };
   m = h.match(/^#\/map\/([^/]+)\/in\/(.+)$/);
@@ -257,6 +259,9 @@ export function selectNode(nodeId) {
   canvas.paintSelection();
   writeHash();
   bus.emit('selection-changed');
+  // the detail panel docking may have just shrunk the canvas — keep the
+  // selected node on screen (after the resize settles)
+  setTimeout(() => { if (state.selectedId === nodeId) canvas.ensureVisible(nodeId); }, 90);
 }
 
 export function selectEdge(index) {

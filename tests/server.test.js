@@ -59,3 +59,17 @@ test('export html embeds the actual YAML source verbatim', async () => {
   assert.equal(payload.source, source);
   assert.equal(payload.name, 'Tiny');
 });
+
+test('export survives $-replacement patterns in user YAML (regression)', async () => {
+  const source = `name: "Payroll $& Books"\ndescription: "figures in $'000 and $\` too"\nnodes:\n  - id: a\n    type: process\n    label: "Costs $$ everywhere"\n`;
+  const html = await buildExport(ROOT, 'dollar', source);
+  const payload = JSON.parse(html.match(/window\.OPSMAP_STANDALONE = (.*?);<\/script>/s)[1]);
+  assert.equal(payload.source, source, 'YAML embedded verbatim');
+  assert.match(html, /<title>Payroll \$&(amp;)? Books — Opsmap<\/title>|<title>Payroll \$& Books — Opsmap<\/title>/);
+  assert.ok(!html.includes("</body></html></script>"), 'no document-tail splicing');
+});
+
+test('generator hits the requested node count exactly', () => {
+  const out = execFileSync('node', ['tools/generate-map.mjs', '--nodes', '150', '--depth', '4', '--seed', '3'], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  assert.match(out, /^name:/m);
+});

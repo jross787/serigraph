@@ -358,7 +358,7 @@ function buildTree(rand, n, maxDepth) {
     if (currentLevel.length === 0) break;
   }
 
-  if (state.total < targetMin) {
+  if (state.total < n) {
     const expandable = [];
     (function collect(slots) {
       for (const s of slots) {
@@ -369,7 +369,7 @@ function buildTree(rand, n, maxDepth) {
 
     let guard = 0;
     const guardMax = targetMin * 4 + 200;
-    while (state.total < targetMin && guard < guardMax) {
+    while (state.total < n && guard < guardMax) {
       guard++;
       if (expandable.length === 0) {
         // Flat map (maxDepth === 1) or nothing left to expand: add more top-level nodes.

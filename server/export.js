@@ -51,19 +51,21 @@ export async function buildExport(root, id, mapSource) {
   const title = model ? `${model.name} — Opsmap` : `${id} — Opsmap`;
   const payload = JSON.stringify({ id, name: model?.name ?? id, source: mapSource }).replace(/</g, '\\u003c');
 
+  // replacement callbacks throughout: user content (map name, YAML source)
+  // must never be interpreted as $-replacement patterns
   let out = html;
-  out = out.replace(/<title>.*?<\/title>/, `<title>${title.replace(/</g, '&lt;')}</title>`);
+  out = out.replace(/<title>.*?<\/title>/, () => `<title>${title.replace(/</g, '&lt;')}</title>`);
   out = out.replace(
     /<link rel="stylesheet" href="\/app\/styles.css">/,
-    `<style>\n${css}\n</style>`,
+    () => `<style>\n${css}\n</style>`,
   );
   out = out.replace(
     /<script src="\/vendor\/dagre.min.js"><\/script>/,
-    `<script>${escapeInline(dagre)}</script>`,
+    () => `<script>${escapeInline(dagre)}</script>`,
   );
   out = out.replace(
     /<script type="module" src="\/app\/main.js"><\/script>/,
-    [
+    () => [
       `<script>window.OPSMAP_STANDALONE = ${escapeInline(payload)};</script>`,
       `<script type="importmap">${escapeInline(JSON.stringify(importMap))}</script>`,
       `<script type="module">import 'opsmap/app/main.js';</script>`,

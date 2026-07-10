@@ -140,3 +140,39 @@ test('slugify and uniqueId', () => {
   assert.equal(edit.uniqueId(state.model, 'intake'), 'intake-2');
   assert.equal(edit.uniqueId(state.model, 'fresh'), 'fresh');
 });
+
+test('deleteNode works on LIST-form children (regression)', () => {
+  load(`
+name: L
+nodes:
+  - id: a
+    type: process
+    label: A
+    children:
+      - id: b
+        type: process
+        label: B
+      - id: c
+        type: process
+        label: C
+`);
+  edit.deleteNode('b');
+  const { model } = reserialize();
+  assert.ok(!model.byId.has('b'), 'b really deleted');
+  assert.ok(model.byId.has('c'), 'sibling kept');
+  assert.equal(model.byId.get('a').stats.childCount, 1);
+});
+
+test('updateNode keeps key order: description/links before children (regression)', () => {
+  edit.updateNode('intake', {
+    description: 'container description',
+    links: [{ label: 'Doc', url: 'https://example.com' }],
+  });
+  const { out } = reserialize();
+  const block = out.slice(out.indexOf('- id: intake'), out.indexOf('- id: qualify'));
+  const order = ['id:', 'type:', 'label:', 'description:', 'links:', 'children:']
+    .map((k) => block.indexOf(k));
+  for (let i = 1; i < order.length; i++) {
+    assert.ok(order[i] > order[i - 1], `key #${i} in order (${order.join(',')})`);
+  }
+});

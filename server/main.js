@@ -94,7 +94,9 @@ async function findMapFile(id) {
 const sseClients = new Set();
 function broadcast(event) {
   const payload = `data: ${JSON.stringify(event)}\n\n`;
-  for (const res of sseClients) res.write(payload);
+  for (const res of sseClients) {
+    try { res.write(payload); } catch { sseClients.delete(res); }
+  }
 }
 
 const fileHashes = new Map();
@@ -152,7 +154,8 @@ async function handleApi(req, res, url) {
       const source = `# ${name} — operations map\nname: ${JSON.stringify(name)}\ndescription: ""\n\nnodes: []\n\nedges: []\n`;
       await fs.mkdir(MAPS_DIR, { recursive: true });
       await fs.writeFile(path.join(MAPS_DIR, slug + '.yaml'), source, 'utf8');
-      fileHashes.set(slug + '.yaml', hashOf(source));
+      // fileHashes deliberately NOT updated here: the watcher must see the
+      // change and broadcast it so other tabs pick the new map up
       return json(res, 201, { id: slug });
     }
   }
@@ -178,7 +181,9 @@ async function handleApi(req, res, url) {
       await fs.mkdir(MAPS_DIR, { recursive: true });
       await fs.writeFile(tmp, body.source, 'utf8');
       await fs.rename(tmp, target);
-      fileHashes.set(path.basename(target), hashOf(body.source));
+      // fileHashes deliberately NOT updated here: the watcher must detect the
+      // write and broadcast to OTHER tabs; the writing tab ignores the echo
+      // because the fetched source matches what it already has
       return json(res, 200, { ok: true });
     }
   }
@@ -204,8 +209,13 @@ async function handleApi(req, res, url) {
     });
     res.write(': connected\n\n');
     sseClients.add(res);
-    const heartbeat = setInterval(() => res.write(': ping\n\n'), 25000);
-    req.on('close', () => { clearInterval(heartbeat); sseClients.delete(res); });
+    const heartbeat = setInterval(() => {
+      try { res.write(': ping\n\n'); } catch { cleanup(); }
+    }, 25000);
+    const cleanup = () => { clearInterval(heartbeat); sseClients.delete(res); };
+    req.on('close', cleanup);
+    req.on('error', cleanup);
+    res.on('error', cleanup);
     return;
   }
 

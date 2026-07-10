@@ -139,7 +139,8 @@ button { font-family: inherit; color: inherit; }
 .crumb-sep { color: var(--faint); font-size: 12px; flex: none; user-select: none; }
 
 /* ─── Stage / canvas ───────────────────────────────────────────────── */
-#stage { position: relative; flex: 1; min-height: 0; }
+#main-row { display: flex; flex: 1; min-height: 0; min-width: 0; }
+#stage { position: relative; flex: 1; min-height: 0; min-width: 0; }
 #canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; cursor: grab; }
 #canvas.panning { cursor: grabbing; }
 #canvas.connecting { cursor: crosshair; }
@@ -268,13 +269,15 @@ button { font-family: inherit; color: inherit; }
 .scope-layer { will-change: opacity, transform; }
 
 /* ─── Right detail panel ───────────────────────────────────────────── */
+#detail.ghost { pointer-events: none; }
+/* docked: the canvas shrinks instead of being covered, so every node stays clickable */
 #detail {
-  position: absolute; top: calc(var(--topbar-h) + 12px); right: 12px; bottom: 12px;
-  width: 340px; z-index: 20;
+  width: 340px; flex: none; z-index: 20;
+  margin: 12px 12px 12px 0;
   background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
-  box-shadow: var(--shadow-2);
+  box-shadow: var(--shadow-1);
   display: flex; flex-direction: column;
-  overflow: hidden;
+  overflow: hidden; min-height: 0;
 }
 .panel-head {
   padding: 14px 16px 12px; border-bottom: 1px solid var(--border);
@@ -380,10 +383,10 @@ button { font-family: inherit; color: inherit; }
 
 /* ─── Templates panel ──────────────────────────────────────────────── */
 #templates-panel {
-  position: absolute; top: calc(var(--topbar-h) + 12px); left: 12px; bottom: 12px;
-  width: 320px; z-index: 20;
+  width: 320px; flex: none; z-index: 20;
+  margin: 12px 0 12px 12px;
   background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
-  box-shadow: var(--shadow-2); display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: var(--shadow-1); display: flex; flex-direction: column; overflow: hidden; min-height: 0;
 }
 .tpl-list { flex: 1; overflow-y: auto; padding: 10px 12px; }
 .tpl-card {
@@ -525,11 +528,13 @@ body.presenting #detail, body.presenting #templates-panel { display: none; }
   .logo-word, #btn-templates, #btn-present, #btn-help { display: none; }
   .map-switcher { max-width: 130px; }
   .crumb { max-width: 96px; }
-  #detail {
+  /* phones: panels overlay as bottom sheets (canvas too small to dock) */
+  #detail, #templates-panel {
+    position: absolute; z-index: 20;
     top: auto; left: 10px; right: 10px; bottom: 10px; width: auto;
-    max-height: 62dvh;
+    max-height: 62dvh; margin: 0;
+    box-shadow: var(--shadow-2);
   }
-  #templates-panel { left: 10px; right: 10px; width: auto; max-height: 62dvh; }
   #minimap { display: none; }
   #topbar { padding: 0 8px; gap: 6px; }
   .tb-btn { padding: 6px 9px; }

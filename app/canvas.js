@@ -366,7 +366,7 @@ async function diveTo(model, containerId, focusId) {
     applyCamera();
   };
 
-  await animate(500, (e) => {
+  const done = await animate(500, (e) => {
     camera = {
       x: from.x + (camTarget.x - from.x) * e,
       y: from.y + (camTarget.y - from.y) * e,
@@ -376,6 +376,7 @@ async function diveTo(model, containerId, focusId) {
     newLayer.style.opacity = Math.min(1, e * 1.5);
     oldLayer.style.opacity = Math.max(0, 1 - e * 1.15);
   });
+  if (!done) return false; // superseded — the interrupter already ran finishTransition
   finishTransition();
   await animateCamera(fitCamera({ x: 0, y: 0, w: childLayout.w, h: childLayout.h }), 300);
   return true;
@@ -409,7 +410,7 @@ async function riseTo(model, parentOwnerId) {
     applyCamera();
   };
 
-  await animate(500, (e) => {
+  const done = await animate(500, (e) => {
     camera = {
       x: from.x + (camTarget.x - from.x) * e,
       y: from.y + (camTarget.y - from.y) * e,
@@ -419,6 +420,7 @@ async function riseTo(model, parentOwnerId) {
     parentLayer.style.opacity = Math.min(1, e * 1.3);
     childLayer.style.opacity = Math.max(0, 1 - e * 1.3);
   });
+  if (!done) return false; // superseded — the interrupter already ran finishTransition
   finishTransition();
   return true;
 }
@@ -448,6 +450,15 @@ export function centerOn(nodeId, ms = 420) {
 }
 
 export const getLayout = () => currentLayout;
+
+// pan the node into view if it's off-screen or hidden by a panel resize
+export function ensureVisible(nodeId, margin = 30) {
+  const n = currentLayout?.nodes.find((x) => x.id === nodeId);
+  if (!n) return;
+  const x1 = camera.x + n.x * camera.k, y1 = camera.y + n.y * camera.k;
+  const x2 = x1 + n.w * camera.k, y2 = y1 + n.h * camera.k;
+  if (x1 < margin || y1 < margin || x2 > vw - margin || y2 > vh - margin) centerOn(nodeId, 320);
+}
 
 // ── selection visuals (no re-render) ─────────────────────────────────
 export function paintSelection() {
@@ -484,14 +495,22 @@ function wirePointer() {
 
   svg.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0) return;
-    down = { px: ev.clientX, py: ev.clientY, cam: { ...camera } };
+    // remember the real pressed element: with pointer capture active the
+    // browser retargets pointerup/click to the <svg>, so hit-testing must
+    // use this, never ev.target of the up event.
+    down = { px: ev.clientX, py: ev.clientY, cam: { ...camera }, target: ev.target, pointerId: ev.pointerId };
     moved = false;
-    svg.setPointerCapture(ev.pointerId);
   });
   svg.addEventListener('pointermove', (ev) => {
     if (!down) return;
     const dx = ev.clientX - down.px, dy = ev.clientY - down.py;
-    if (!moved && Math.hypot(dx, dy) > 4) { moved = true; svg.classList.add('panning'); }
+    if (!moved && Math.hypot(dx, dy) > 4) {
+      moved = true;
+      svg.classList.add('panning');
+      // capture only once a drag actually starts, so plain clicks and
+      // dblclicks keep their natural targets
+      try { svg.setPointerCapture(down.pointerId); } catch { /* stale pointer */ }
+    }
     if (moved) {
       camera = { ...camera, x: down.cam.x + dx, y: down.cam.y + dy };
       applyCamera();
@@ -500,16 +519,24 @@ function wirePointer() {
   svg.addEventListener('pointerup', (ev) => {
     svg.classList.remove('panning');
     const wasDrag = moved;
+    const target = down?.target;
+    if (down && svg.hasPointerCapture?.(down.pointerId)) {
+      try { svg.releasePointerCapture(down.pointerId); } catch { /* already released */ }
+    }
     down = null; moved = false;
-    if (wasDrag) return;
+    if (wasDrag || !target) return;
 
-    const dive = ev.target.closest?.('[data-dive]');
+    const dive = target.closest?.('[data-dive]');
     if (dive) { bus.emit('dive-request', dive.dataset.dive); return; }
-    const nodeEl = ev.target.closest?.('.node');
+    const nodeEl = target.closest?.('.node');
     if (nodeEl) { bus.emit('node-click', nodeEl.dataset.id, ev); return; }
-    const edgeEl = ev.target.closest?.('.edge');
+    const edgeEl = target.closest?.('.edge');
     if (edgeEl) { bus.emit('edge-click', Number(edgeEl.dataset.index)); return; }
     bus.emit('bg-click');
+  });
+  svg.addEventListener('pointercancel', () => {
+    svg.classList.remove('panning');
+    down = null; moved = false;
   });
 
   svg.addEventListener('dblclick', (ev) => {
