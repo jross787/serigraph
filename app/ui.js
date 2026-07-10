@@ -222,18 +222,11 @@ export function helpDialog() {
 
 // ── detail panel ─────────────────────────────────────────────────────
 let editMode = false;
-let ghostTimer = null;
 
 export function showDetail(nodeId) {
   editMode = false;
   state.detailNodeId = nodeId;
   renderDetail();
-  // let the 2nd click of a double-click pass through to nodes the panel
-  // now covers — otherwise containers on the right edge can't be dived into
-  const panel = document.getElementById('detail');
-  panel.classList.add('ghost');
-  clearTimeout(ghostTimer);
-  ghostTimer = setTimeout(() => panel.classList.remove('ghost'), 400);
 }
 export function hideDetail() {
   state.detailNodeId = null;
@@ -576,9 +569,17 @@ export function initUI() {
     const curScope = state.model ? (state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children) : null;
     if (mm) mm.hidden = !curScope || curScope.nodes.length === 0;
   });
+  let panelTimer = null;
   bus.on('selection-changed', () => {
-    if (state.selectedId) showDetail(state.selectedId);
-    else if (state.selectedEdge != null) renderDetail();
+    clearTimeout(panelTimer);
+    if (state.selectedId) {
+      // open just past the double-click window: the first click of a
+      // dblclick must not reflow the canvas before the second click lands
+      const id = state.selectedId;
+      panelTimer = setTimeout(() => {
+        if (state.selectedId === id) showDetail(id);
+      }, 230);
+    } else if (state.selectedEdge != null) renderDetail();
     else hideDetail();
   });
   bus.on('maps-listed', () => { renderSwitcher(); });

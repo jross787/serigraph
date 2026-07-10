@@ -355,7 +355,7 @@ async function diveTo(model, containerId, focusId) {
   const camTarget = fitCamera(worldRect, 60, Infinity);
   const from = { ...camera };
 
-  pendingFinish = () => {
+  const myFinish = () => {
     oldLayer.remove();
     camera = { k: camera.k * T.k, x: camera.x + camera.k * T.x, y: camera.y + camera.k * T.y };
     newLayer.removeAttribute('transform');
@@ -365,8 +365,9 @@ async function diveTo(model, containerId, focusId) {
     renderMinimapNodes(childLayout);
     applyCamera();
   };
+  pendingFinish = myFinish;
 
-  const done = await animate(500, (e) => {
+  await animate(500, (e) => {
     camera = {
       x: from.x + (camTarget.x - from.x) * e,
       y: from.y + (camTarget.y - from.y) * e,
@@ -376,9 +377,13 @@ async function diveTo(model, containerId, focusId) {
     newLayer.style.opacity = Math.min(1, e * 1.5);
     oldLayer.style.opacity = Math.max(0, 1 - e * 1.15);
   });
-  if (!done) return false; // superseded — the interrupter already ran finishTransition
-  finishTransition();
-  await animateCamera(fitCamera({ x: 0, y: 0, w: childLayout.w, h: childLayout.h }), 300);
+  // Finish OUR swap unless a newer scope change already consumed it. A mere
+  // camera animation (fit, centerOn, ensureVisible) interrupting us must not
+  // leave the layers half-swapped — snap, then settle onto the new scope.
+  if (pendingFinish === myFinish) {
+    finishTransition();
+    await animateCamera(fitCamera({ x: 0, y: 0, w: childLayout.w, h: childLayout.h }), 300);
+  }
   return true;
 }
 
@@ -402,13 +407,14 @@ async function riseTo(model, parentOwnerId) {
   const camTarget = saved ?? fitCamera({ x: 0, y: 0, w: parentLayout.w, h: parentLayout.h });
   const from = { ...camera };
 
-  pendingFinish = () => {
+  const myFinish = () => {
     childLayer.remove();
     currentLayer = parentLayer;
     currentLayout = parentLayout;
     renderMinimapNodes(parentLayout);
     applyCamera();
   };
+  pendingFinish = myFinish;
 
   const done = await animate(500, (e) => {
     camera = {
@@ -420,8 +426,12 @@ async function riseTo(model, parentOwnerId) {
     parentLayer.style.opacity = Math.min(1, e * 1.3);
     childLayer.style.opacity = Math.max(0, 1 - e * 1.3);
   });
-  if (!done) return false; // superseded — the interrupter already ran finishTransition
-  finishTransition();
+  if (pendingFinish === myFinish) {
+    finishTransition();
+    // camera was rebased up-front, so camTarget stays valid — complete the
+    // move if a camera-only animation cut ours short
+    if (!done) await animateCamera(camTarget, 200);
+  }
   return true;
 }
 
@@ -501,8 +511,17 @@ function wirePointer() {
     down = { px: ev.clientX, py: ev.clientY, cam: { ...camera }, target: ev.target, pointerId: ev.pointerId };
     moved = false;
   });
+  const clearDrag = () => {
+    svg.classList.remove('panning');
+    down = null; moved = false;
+  };
+  // releases outside the svg (uncaptured non-drag presses) must not leave a
+  // stale drag state that pans on buttonless hover
+  window.addEventListener('pointerup', () => { if (down && !moved) clearDrag(); });
+
   svg.addEventListener('pointermove', (ev) => {
     if (!down) return;
+    if ((ev.buttons & 1) === 0) { clearDrag(); return; }
     const dx = ev.clientX - down.px, dy = ev.clientY - down.py;
     if (!moved && Math.hypot(dx, dy) > 4) {
       moved = true;
@@ -534,10 +553,7 @@ function wirePointer() {
     if (edgeEl) { bus.emit('edge-click', Number(edgeEl.dataset.index)); return; }
     bus.emit('bg-click');
   });
-  svg.addEventListener('pointercancel', () => {
-    svg.classList.remove('panning');
-    down = null; moved = false;
-  });
+  svg.addEventListener('pointercancel', clearDrag);
 
   svg.addEventListener('dblclick', (ev) => {
     const nodeEl = ev.target.closest?.('.node');

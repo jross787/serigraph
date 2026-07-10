@@ -259,9 +259,11 @@ export function selectNode(nodeId) {
   canvas.paintSelection();
   writeHash();
   bus.emit('selection-changed');
-  // the detail panel docking may have just shrunk the canvas — keep the
-  // selected node on screen (after the resize settles)
-  setTimeout(() => { if (state.selectedId === nodeId) canvas.ensureVisible(nodeId); }, 90);
+  // the detail panel docks ~230ms after selection and shrinks the canvas —
+  // keep the selected node on screen once that resize settles
+  setTimeout(() => {
+    if (!state.presenting && state.selectedId === nodeId) canvas.ensureVisible(nodeId);
+  }, 360);
 }
 
 export function selectEdge(index) {

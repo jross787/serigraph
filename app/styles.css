@@ -269,7 +269,6 @@ button { font-family: inherit; color: inherit; }
 .scope-layer { will-change: opacity, transform; }
 
 /* ─── Right detail panel ───────────────────────────────────────────── */
-#detail.ghost { pointer-events: none; }
 /* docked: the canvas shrinks instead of being covered, so every node stays clickable */
 #detail {
   width: 340px; flex: none; z-index: 20;

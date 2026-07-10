@@ -324,7 +324,7 @@ function containerProb(depth) {
 
 function buildTree(rand, n, maxDepth) {
   const targetMin = Math.floor(n * 0.95);
-  const targetMax = Math.max(targetMin, Math.ceil(n * 1.05));
+  const targetMax = n; // phase 1 never exceeds the request; top-up fills to exactly n
   const state = { total: 0 };
 
   const topCount = Math.max(1, Math.min(targetMax, randInt(rand, 8, 14)));

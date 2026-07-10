@@ -69,7 +69,12 @@ test('export survives $-replacement patterns in user YAML (regression)', async (
   assert.ok(!html.includes("</body></html></script>"), 'no document-tail splicing');
 });
 
-test('generator hits the requested node count exactly', () => {
-  const out = execFileSync('node', ['tools/generate-map.mjs', '--nodes', '150', '--depth', '4', '--seed', '3'], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  assert.match(out, /^name:/m);
+test('generator hits the requested node count exactly (several seeds)', async () => {
+  const { parseMap } = await import('../shared/model.js');
+  for (const seed of ['1', '4', '7']) {
+    const out = execFileSync('node', ['tools/generate-map.mjs', '--nodes', '150', '--depth', '4', '--seed', seed], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const { model, errors } = parseMap(out);
+    assert.deepEqual(errors, [], `seed ${seed} valid`);
+    assert.equal(model.nodeCount, 150, `seed ${seed} exact count`);
+  }
 });
