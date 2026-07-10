@@ -62,6 +62,6 @@ npm run validate  # validate every map and template
 node tools/generate-map.mjs --nodes 300 --depth 4 --seed 7 --out maps/stress.yaml
 ```
 
-## Roadmap (deliberately not built yet)
+## Roadmap
 
-Read-only client shares, live node status from CRMs/GitHub. The format won't need to change for either: nodes already carry stable ids and outbound links.
+See **[docs/ROADMAP.md](docs/ROADMAP.md)** — the north star (Lucid's flexibility + Mermaid's structure), starting with manual layout adjustment that persists to the file, then direct-manipulation authoring, data-bound live status, and desktop/hosted distribution.
