@@ -28,6 +28,7 @@ That's it. No `npm install`, no build step, no cloud — the only requirement is
 | **Click** a node | Details: what happens here, outbound links (SOPs, repos, dashboards), sub-map |
 | **`#id ⧉`** in the panel | Copy a deep link — paste it in a fresh tab, land zoomed on that node |
 | **+ Node**, **Edit**, **→ Connect** | Build the map visually; every change is written back to the YAML |
+| **Drag a node** | Pin it exactly there — one `position: { x, y }` line in the YAML; click its pin badge to release back to auto-layout. Drag the background to pan |
 | **Templates** | Drop in reusable blocks (lead intake, incident response, invoice-to-cash…) and customize |
 | **P** | Presentation mode — walk a client through the flow step by step |
 | **⬇** | Download a standalone HTML file of the map — read-only, works offline, email it to anyone |

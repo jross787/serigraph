@@ -143,6 +143,7 @@ button { font-family: inherit; color: inherit; }
 #stage { position: relative; flex: 1; min-height: 0; min-width: 0; }
 #canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; cursor: grab; }
 #canvas.panning { cursor: grabbing; }
+#canvas.dragging-node, #canvas.dragging-node .node { cursor: grabbing; }
 #canvas.connecting { cursor: crosshair; }
 
 #zoombar {
@@ -240,6 +241,17 @@ button { font-family: inherit; color: inherit; }
 .mini-node.t-role { fill: var(--c-role); }
 .mini-node.t-artifact { fill: var(--c-artifact); }
 .mini-edge { stroke: var(--edge); stroke-width: 1; fill: none; opacity: .6; }
+
+/* pinned-position badge — click releases the node back to auto-layout */
+.node .pin-badge { cursor: pointer; }
+.node .pin-bg { fill: var(--surface); stroke: var(--border-strong); stroke-width: 1; }
+.node .pin-glyph { fill: var(--accent); }
+.node .pin-dot { fill: var(--surface); }
+.node .pin-badge:hover .pin-bg { fill: var(--accent); stroke: var(--accent); }
+.node .pin-badge:hover .pin-glyph { fill: var(--accent-ink); }
+.node .pin-badge:hover .pin-dot { fill: var(--accent); }
+.pin-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pin-row .pin-info { font-size: 12.5px; color: var(--muted); }
 
 .node .count-chip-bg { fill: var(--surface-2); stroke: var(--border); stroke-width: 1; }
 .node:hover .count-chip-bg { fill: var(--accent); stroke: var(--accent); }

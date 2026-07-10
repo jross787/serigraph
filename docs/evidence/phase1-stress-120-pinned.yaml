@@ -1,0 +1,820 @@
+name: Stress 120
+description: Synthetic map generated for testing — target 120 nodes, depth 3, seed 7.
+nodes:
+  - id: n1
+    type: process
+    label: Approve the submission
+    description: The on-call engineer completes this within a couple of days, and flags anomalies for review. A summary is posted to the ops channel.
+    children:
+      nodes:
+        - id: n1-1
+          type: process
+          label: Approve the invoice
+          children:
+            nodes:
+              - id: n1-1-1
+                type: process
+                label: Merge case
+                description: Whoever owns the queue completes this within the same day, and logs the result for audit.
+              - id: n1-1-2
+                type: decision
+                label: Fraud score ready to ship?
+                description: Branches the flow based on a manual review.
+              - id: n1-1-3
+                type: system
+                position: { x: 620, y: 400 }
+                label: Jira
+              - id: n1-1-4
+                type: process
+                label: Flag invoice
+              - id: n1-1-5
+                type: process
+                label: Merge document
+                description: Whoever owns the queue completes this within a couple of days, and logs the result for audit.
+              - id: n1-1-6
+                type: process
+                label: Sync and log order
+                description: The assigned analyst completes this within ten minutes, then closes out the step.
+              - id: n1-1-7
+                type: process
+                label: Finalize claim to the queue
+                description: The reviewing manager completes this within a couple of days, then hands off to the next stage.
+              - id: n1-1-8
+                type: process
+                label: Reconcile the submission
+                description: The on-call engineer completes this within one business day, and flags anomalies for review.
+            edges:
+              - from: n1-1-1
+                to: n1-1-2
+              - from: n1-1-2
+                to: n1-1-4
+                label: on file
+              - from: n1-1-2
+                to: n1-1-8
+                label: missing
+              - from: n1-1-4
+                to: n1-1-5
+              - from: n1-1-5
+                to: n1-1-6
+              - from: n1-1-6
+                to: n1-1-7
+              - from: n1-1-7
+                to: n1-1-8
+              - from: n1-1-4
+                to: n1-1-3
+        - id: n1-2
+          type: system
+          label: internal CRM
+          description: Provides the source of truth for downstream teams.
+          children:
+            nodes:
+              - id: n1-2-1
+                type: artifact
+                label: Audit Log
+              - id: n1-2-2
+                type: process
+                label: Digitize the document
+                description: The intake team completes this within a few minutes, and notifies downstream systems.
+              - id: n1-2-3
+                type: process
+                label: Terminate the invoice
+            edges:
+              - from: n1-2-2
+                to: n1-2-3
+              - from: n1-2-3
+                to: n1-2-1
+        - id: n1-3
+          type: decision
+          label: Payment ready to ship?
+          description: Branches the flow based on a manual review.
+        - id: n1-4
+          type: process
+          label: Redact return to the archive
+          description: The regional lead completes this within an hour, then hands off to the next stage.
+          children:
+            nodes:
+              - id: n1-4-1
+                type: role
+                label: Dispatcher
+                description: Reviews edge cases and signs off before it moves on.
+              - id: n1-4-2
+                type: decision
+                label: Inventory matched?
+                description: Branches the flow based on policy thresholds.
+              - id: n1-4-3
+                type: decision
+                label: Payment verified?
+                description: Branches the flow based on policy thresholds.
+            edges:
+              - from: n1-4-2
+                to: n1-4-3
+                label: complete
+              - from: n1-4-2
+                to: n1-4-3
+                label: incomplete
+              - from: n1-4-3
+                to: n1-4-1
+                label: on file
+              - from: n1-4-3
+                to: n1-4-1
+                label: missing
+              - from: n1-4-1
+                to: n1-4-3
+        - id: n1-5
+          type: role
+          label: Vendor Manager
+        - id: n1-6
+          type: process
+          label: Onboard and log webhook
+          children:
+            nodes:
+              - id: n1-6-1
+                type: role
+                label: Onboarding Specialist
+        - id: n1-7
+          type: process
+          label: Merge return
+          links:
+            - label: API docs
+              url: https://docs.example.com/n1-7
+          children:
+            nodes:
+              - id: n1-7-1
+                type: role
+                label: Fraud Analyst
+        - id: n1-8
+          type: process
+          label: Flag customer to the fulfillment center
+          description: The on-call engineer completes this within ten minutes, then hands off to the next stage. Retries happen automatically up to three times.
+          children:
+            nodes:
+              - id: n1-8-1
+                type: system
+                label: Salesforce
+                links:
+                  - label: Onboarding guide
+                    url: https://docs.example.com/n1-8-1
+        - id: n1-9
+          type: process
+          label: Confirm the subscription
+          children:
+            nodes:
+              - id: n1-9-1
+                type: system
+                label: SAP
+              - id: n1-9-2
+                type: role
+                label: Fraud Analyst
+            edges:
+              - from: n1-9-2
+                to: n1-9-1
+                label: uses
+              - from: n1-9-2
+                to: n1-9-1
+        - id: n1-10
+          type: process
+          label: Review ticket
+          description: A designated approver completes this within ten minutes, then updates the record.
+          children:
+            nodes:
+              - id: n1-10-1
+                type: process
+                label: Verify shipment
+                description: The regional lead completes this within an hour, and notifies downstream systems. Exceptions are routed to a human for manual review.
+                links:
+                  - label: Wiki page
+                    url: https://docs.example.com/n1-10-1
+              - id: n1-10-2
+                type: role
+                label: Ops Coordinator
+                description: Owns this part of the process end to end.
+              - id: n1-10-3
+                type: role
+                label: Onboarding Specialist
+                description: Coordinates with other teams to keep things moving.
+              - id: n1-10-4
+                type: role
+                label: Data Steward
+              - id: n1-10-5
+                type: decision
+                label: Approval matched?
+              - id: n1-10-6
+                type: decision
+                label: Applicant above threshold?
+              - id: n1-10-7
+                type: artifact
+                label: Dispute Case File
+                description: Gets archived once the case closes.
+            edges:
+              - from: n1-10-1
+                to: n1-10-5
+              - from: n1-10-5
+                to: n1-10-6
+                label: on file
+              - from: n1-10-5
+                to: n1-10-6
+                label: missing
+              - from: n1-10-6
+                to: n1-10-2
+                label: above threshold
+              - from: n1-10-6
+                to: n1-10-3
+                label: below threshold
+              - from: n1-10-2
+                to: n1-10-1
+              - from: n1-10-3
+                to: n1-10-1
+                label: performs
+              - from: n1-10-4
+                to: n1-10-1
+              - from: n1-10-7
+                to: n1-10-6
+        - id: n1-11
+          type: process
+          label: Invoice and log appointment
+          description: A designated approver completes this within ten minutes, before escalating exceptions.
+        - id: n1-12
+          type: process
+          label: Invoice the batch
+          description: A designated approver completes this within 24 hours, before escalating exceptions.
+          children:
+            nodes:
+              - id: n1-12-1
+                type: system
+                label: DocuSign
+              - id: n1-12-2
+                type: role
+                label: Shift Supervisor
+                description: Coordinates with other teams to keep things moving.
+            edges:
+              - from: n1-12-2
+                to: n1-12-1
+        - id: n1-13
+          type: decision
+          label: Refund approved?
+        - id: n1-14
+          type: artifact
+          label: Inventory Snapshot
+          description: Gets archived once the case closes.
+        - id: n1-15
+          type: process
+          label: Onboard transaction
+          description: The intake team completes this within a few minutes, and flags anomalies for review. Metrics from this step feed the weekly report.
+          children:
+            nodes:
+              - id: n1-15-1
+                type: decision
+                label: Approval in stock?
+                description: Branches the flow based on an automated risk score.
+              - id: n1-15-2
+                type: decision
+                label: Refund valid?
+              - id: n1-15-3
+                type: system
+                label: internal LOS
+              - id: n1-15-4
+                type: process
+                label: Draft queue
+                description: The on-call engineer completes this within one business day, and notifies downstream systems. Exceptions are routed to a human for manual review.
+            edges:
+              - from: n1-15-1
+                to: n1-15-2
+                label: on file
+              - from: n1-15-1
+                to: n1-15-4
+                label: missing
+              - from: n1-15-2
+                to: n1-15-4
+                label: on file
+              - from: n1-15-2
+                to: n1-15-4
+                label: missing
+              - from: n1-15-2
+                to: n1-15-3
+                label: uses
+      edges:
+        - from: n1-1
+          to: n1-3
+        - from: n1-1
+          to: n1-8
+        - from: n1-3
+          to: n1-4
+          label: in stock
+        - from: n1-3
+          to: n1-11
+          label: backordered
+        - from: n1-4
+          to: n1-6
+        - from: n1-6
+          to: n1-7
+        - from: n1-6
+          to: n1-9
+        - from: n1-7
+          to: n1-8
+        - from: n1-7
+          to: n1-11
+        - from: n1-8
+          to: n1-9
+        - from: n1-9
+          to: n1-10
+        - from: n1-10
+          to: n1-11
+        - from: n1-10
+          to: n1-15
+        - from: n1-11
+          to: n1-12
+        - from: n1-12
+          to: n1-13
+        - from: n1-13
+          to: n1-15
+          label: above threshold
+        - from: n1-13
+          to: n1-15
+          label: below threshold
+        - from: n1-8
+          to: n1-2
+          label: uses
+        - from: n1-5
+          to: n1-12
+          label: performs
+        - from: n1-14
+          to: n1-12
+          label: feeds
+  - id: n2
+    type: artifact
+    label: Payment Receipt
+  - id: n3
+    type: system
+    label: internal API gateway
+    description: Stores and syncs data used by this part of the process.
+  - id: n4
+    type: decision
+    position: { x: 320, y: 780 }
+    label: Shipment on file?
+    children:
+      nodes:
+        - id: n4-1
+          type: role
+          label: Support Agent
+          description: Handles exceptions that automation can't resolve.
+        - id: n4-2
+          type: process
+          label: Confirm the statement
+          description: Whoever owns the queue completes this within a few minutes, and notifies downstream systems. Exceptions are routed to a human for manual review.
+          children:
+            nodes:
+              - id: n4-2-1
+                type: decision
+                label: Inventory above threshold?
+        - id: n4-3
+          type: role
+          label: Case Manager
+        - id: n4-4
+          type: system
+          label: Looker
+          children:
+            nodes:
+              - id: n4-4-1
+                type: system
+                label: HubSpot
+              - id: n4-4-2
+                type: system
+                label: internal CRM
+                description: Provides the source of truth for downstream teams. Exceptions are routed to a human for manual review.
+              - id: n4-4-3
+                type: process
+                label: Approve the order
+                description: A designated approver completes this within 24 hours, before escalating exceptions.
+              - id: n4-4-4
+                type: role
+                label: Underwriter
+                description: Reviews edge cases and signs off before it moves on.
+            edges:
+              - from: n4-4-3
+                to: n4-4-1
+              - from: n4-4-3
+                to: n4-4-2
+                label: uses
+              - from: n4-4-4
+                to: n4-4-3
+                label: performs
+        - id: n4-5
+          type: decision
+          label: Application past due?
+          description: Branches the flow based on a rules engine check.
+      edges:
+        - from: n4-2
+          to: n4-5
+        - from: n4-5
+          to: n4-1
+          label: "true"
+        - from: n4-5
+          to: n4-3
+          label: "false"
+        - from: n4-1
+          to: n4-5
+          label: performs
+        - from: n4-1
+          to: n4-2
+          label: performs
+        - from: n4-3
+          to: n4-5
+        - from: n4-5
+          to: n4-4
+  - id: n5
+    type: process
+    label: Screen batch
+    children:
+      nodes:
+        - id: n5-1
+          type: system
+          label: Stripe
+          description: Provides the source of truth for downstream teams. Retries happen automatically up to three times.
+          children:
+            nodes:
+              - id: n5-1-1
+                type: decision
+                label: Signature ready to ship?
+        - id: n5-2
+          type: process
+          label: Redact and log policy
+          description: The assigned analyst completes this within a couple of days, and logs the result for audit. Retries happen automatically up to three times.
+        - id: n5-3
+          type: process
+          label: Score payload to the fulfillment center
+          description: A team member completes this within a few minutes, then hands off to the next stage.
+          children:
+            nodes:
+              - id: n5-3-1
+                type: role
+                label: Underwriter
+              - id: n5-3-2
+                type: role
+                label: Underwriter
+                description: Handles exceptions that automation can't resolve. This step is skipped for low-risk cases.
+            edges:
+              - from: n5-3-1
+                to: n5-3-2
+              - from: n5-3-2
+                to: n5-3-1
+                label: performs
+              - from: n5-3-2
+                to: n5-3-1
+        - id: n5-4
+          type: artifact
+          label: Onboarding Packet
+        - id: n5-5
+          type: process
+          label: Terminate record
+          children:
+            nodes:
+              - id: n5-5-1
+                type: process
+                label: Score account to the review board
+                description: Whoever owns the queue completes this within four business hours, then closes out the step.
+              - id: n5-5-2
+                type: process
+                label: Classify record to the queue
+                description: The reviewing manager completes this within one business day, and notifies downstream systems.
+              - id: n5-5-3
+                type: role
+                label: Finance Analyst
+                description: Is the point of contact when something goes wrong.
+              - id: n5-5-4
+                type: artifact
+                label: Inventory Snapshot
+              - id: n5-5-5
+                type: role
+                label: HR Partner
+                description: Owns this part of the process end to end.
+              - id: n5-5-6
+                type: role
+                label: Support Agent
+                description: Reviews edge cases and signs off before it moves on.
+              - id: n5-5-7
+                type: artifact
+                label: Purchase Order
+              - id: n5-5-8
+                type: process
+                label: Submit manifest
+              - id: n5-5-9
+                type: artifact
+                label: Reconciliation Report
+                description: Must be signed off before it moves forward.
+              - id: n5-5-10
+                type: process
+                label: Flag case to the review board
+              - id: n5-5-11
+                type: system
+                label: Stripe
+                description: Stores and syncs data used by this part of the process. Retries happen automatically up to three times.
+                links:
+                  - label: Wiki page
+                    url: https://docs.example.com/n5-5-11
+              - id: n5-5-12
+                type: decision
+                label: Refund verified?
+                links:
+                  - label: Wiki page
+                    url: https://docs.example.com/n5-5-12
+            edges:
+              - from: n5-5-1
+                to: n5-5-2
+              - from: n5-5-2
+                to: n5-5-8
+              - from: n5-5-8
+                to: n5-5-10
+              - from: n5-5-10
+                to: n5-5-12
+              - from: n5-5-12
+                to: n5-5-3
+                label: yes
+              - from: n5-5-12
+                to: n5-5-4
+                label: no
+              - from: n5-5-3
+                to: n5-5-12
+              - from: n5-5-10
+                to: n5-5-4
+              - from: n5-5-5
+                to: n5-5-8
+              - from: n5-5-6
+                to: n5-5-10
+                label: performs
+              - from: n5-5-7
+                to: n5-5-12
+                label: feeds
+              - from: n5-5-7
+                to: n5-5-10
+                label: feeds
+              - from: n5-5-8
+                to: n5-5-9
+              - from: n5-5-8
+                to: n5-5-11
+        - id: n5-6
+          type: process
+          label: Review manifest
+          description: The regional lead completes this within the same day, then closes out the step.
+          children:
+            nodes:
+              - id: n5-6-1
+                type: role
+                label: HR Partner
+                description: Coordinates with other teams to keep things moving.
+              - id: n5-6-2
+                type: system
+                label: internal LOS
+                description: Integrates with upstream systems via webhook.
+              - id: n5-6-3
+                type: role
+                label: Regional Manager
+                description: Handles exceptions that automation can't resolve.
+            edges:
+              - from: n5-6-1
+                to: n5-6-2
+              - from: n5-6-3
+                to: n5-6-2
+        - id: n5-7
+          type: process
+          label: Validate shipment to accounts payable
+          description: Whoever owns the queue completes this within 24 hours, then hands off to the next stage. Retries happen automatically up to three times.
+          children:
+            nodes:
+              - id: n5-7-1
+                type: system
+                label: internal billing service
+                description: Provides the source of truth for downstream teams. A summary is posted to the ops channel.
+              - id: n5-7-2
+                type: process
+                label: Schedule label to the warehouse
+                description: A designated approver completes this within ten minutes, then closes out the step.
+            edges:
+              - from: n5-7-2
+                to: n5-7-1
+        - id: n5-8
+          type: role
+          label: Dispatcher
+          description: Is the point of contact when something goes wrong. Exceptions are routed to a human for manual review.
+        - id: n5-9
+          type: system
+          label: Stripe
+      edges:
+        - from: n5-2
+          to: n5-3
+        - from: n5-3
+          to: n5-5
+        - from: n5-5
+          to: n5-6
+        - from: n5-6
+          to: n5-7
+        - from: n5-3
+          to: n5-1
+          label: uses
+        - from: n5-7
+          to: n5-4
+          label: produces
+        - from: n5-8
+          to: n5-2
+        - from: n5-3
+          to: n5-9
+  - id: n6
+    type: process
+    position: { x: 1650, y: -260 }
+    label: Merge shipment
+    description: The reviewing manager completes this within the same day, and notifies downstream systems. Metrics from this step feed the weekly report.
+  - id: n7
+    type: process
+    label: Renew the order
+    description: The reviewing manager completes this within a few minutes, and notifies downstream systems.
+    children:
+      nodes:
+        - id: n7-1
+          type: process
+          label: Register appointment to the support desk
+          children:
+            nodes:
+              - id: n7-1-1
+                type: system
+                label: Salesforce
+              - id: n7-1-2
+                type: system
+                label: Jira
+              - id: n7-1-3
+                type: artifact
+                label: Delivery Confirmation
+              - id: n7-1-4
+                type: artifact
+                label: Term Sheet
+                description: Gets archived once the case closes.
+              - id: n7-1-5
+                type: process
+                label: Transfer case to the ledger
+              - id: n7-1-6
+                type: process
+                label: Digitize the package
+                description: A designated approver completes this within the same day, then hands off to the next stage.
+              - id: n7-1-7
+                type: process
+                label: Merge batch
+                description: The regional lead completes this within an hour, then updates the record.
+            edges:
+              - from: n7-1-5
+                to: n7-1-6
+              - from: n7-1-6
+                to: n7-1-7
+              - from: n7-1-7
+                to: n7-1-1
+                label: uses
+              - from: n7-1-5
+                to: n7-1-2
+                label: uses
+              - from: n7-1-3
+                to: n7-1-5
+                label: feeds
+              - from: n7-1-6
+                to: n7-1-3
+              - from: n7-1-5
+                to: n7-1-4
+        - id: n7-2
+          type: process
+          label: Sync shipment
+          description: The reviewing manager completes this within a couple of days, before escalating exceptions.
+          children:
+            nodes:
+              - id: n7-2-1
+                type: decision
+                label: Balance in stock?
+                links:
+                  - label: SOP
+                    url: https://docs.example.com/n7-2-1
+              - id: n7-2-2
+                type: artifact
+                label: Payment Receipt
+                description: Serves as the audit trail for this part of the process. Metrics from this step feed the weekly report.
+            edges:
+              - from: n7-2-1
+                to: n7-2-2
+                label: complete
+              - from: n7-2-1
+                to: n7-2-2
+                label: incomplete
+              - from: n7-2-1
+                to: n7-2-2
+        - id: n7-3
+          type: artifact
+          label: Inventory Snapshot
+        - id: n7-4
+          type: system
+          label: internal ledger service
+          description: Stores and syncs data used by this part of the process.
+        - id: n7-5
+          type: system
+          label: internal fraud engine
+          description: Stores and syncs data used by this part of the process.
+          children:
+            nodes:
+              - id: n7-5-1
+                type: process
+                label: Schedule and log refund
+                description: The on-call engineer completes this within an hour, and notifies downstream systems.
+              - id: n7-5-2
+                type: system
+                label: Snowflake warehouse
+                description: Sends notifications and tracks status changes.
+              - id: n7-5-3
+                type: artifact
+                label: Signed Contract
+              - id: n7-5-4
+                type: role
+                label: Escalations Lead
+            edges:
+              - from: n7-5-1
+                to: n7-5-2
+              - from: n7-5-3
+                to: n7-5-1
+              - from: n7-5-4
+                to: n7-5-1
+        - id: n7-6
+          type: system
+          label: DocuSign
+          description: Sends notifications and tracks status changes. Exceptions are routed to a human for manual review.
+          children:
+            nodes:
+              - id: n7-6-1
+                type: decision
+                label: Order verified?
+        - id: n7-7
+          type: system
+          label: S3 bucket
+          description: Stores and syncs data used by this part of the process. Exceptions are routed to a human for manual review.
+          links:
+            - label: Runbook
+              url: https://docs.example.com/n7-7
+          children:
+            nodes:
+              - id: n7-7-1
+                type: artifact
+                label: Inventory Snapshot
+                description: Produced at this stage and consumed by the next.
+        - id: n7-8
+          type: system
+          label: Slack
+          description: Stores and syncs data used by this part of the process.
+          children:
+            nodes:
+              - id: n7-8-1
+                type: process
+                label: Close the queue
+                description: The intake team completes this within ten minutes, then closes out the step.
+      edges:
+        - from: n7-1
+          to: n7-2
+        - from: n7-2
+          to: n7-3
+          label: produces
+        - from: n7-1
+          to: n7-4
+        - from: n7-2
+          to: n7-5
+          label: uses
+        - from: n7-1
+          to: n7-6
+          label: uses
+        - from: n7-2
+          to: n7-7
+        - from: n7-1
+          to: n7-8
+          label: uses
+  - id: n8
+    type: process
+    label: Review lead to accounts payable
+    children:
+      nodes:
+        - id: n8-1
+          type: process
+          label: Validate credential
+          children:
+            nodes:
+              - id: n8-1-1
+                type: process
+                label: Renew asset
+                description: The regional lead completes this within one business day, and flags anomalies for review.
+edges:
+  - from: n1
+    to: n4
+  - from: n4
+    to: n5
+    label: "true"
+  - from: n4
+    to: n6
+    label: "false"
+  - from: n5
+    to: n6
+  - from: n6
+    to: n7
+  - from: n7
+    to: n8
+  - from: n2
+    to: n5
+  - from: n6
+    to: n3

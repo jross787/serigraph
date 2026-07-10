@@ -49,6 +49,19 @@ function wireCanvasEvents() {
 
   bus.on('dive-request', (id) => { if (!state.presenting) ctrl.diveInto(id); });
 
+  // a finished node drag pins the node where it was dropped
+  bus.on('node-moved', (id, pos) => {
+    if (state.presenting || state.standalone) return;
+    ctrl.commit(() => edit.setNodePosition(id, pos))
+      .then((ok) => { if (!ok) canvas.refreshScope(state.model); });
+  });
+
+  bus.on('unpin-request', (id) => {
+    if (state.presenting || state.standalone) return;
+    ctrl.commit(() => edit.clearNodePosition(id))
+      .then((ok) => { if (ok) ui.toast('Released — back to auto-layout'); });
+  });
+
   bus.on('edge-click', (index) => {
     if (state.presenting || state.connectFrom) return;
     ctrl.selectEdge(index);

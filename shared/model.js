@@ -104,11 +104,24 @@ export function parseMap(source) {
         }
       }
 
+      // optional pinned position — { x, y } is the node's CENTER in the
+      // layout coordinates of the scope it lives in (see docs/FORMAT.md)
+      let position = null;
+      if (raw.position != null) {
+        const p = raw.position;
+        if (p && typeof p === 'object' && !Array.isArray(p) && Number.isFinite(p.x) && Number.isFinite(p.y)) {
+          position = { x: p.x, y: p.y };
+        } else {
+          err([...npath, 'position'], `Node "${id}": "position:" must be a map of two numbers, e.g. position: { x: 340, y: 120 }.`);
+        }
+      }
+
       const node = {
         id, type,
         label: label ?? id,
         description: typeof raw.description === 'string' ? raw.description : '',
         links,
+        position,
         children: null,
         ownerId,
         depth,

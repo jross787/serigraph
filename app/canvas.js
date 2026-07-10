@@ -1,7 +1,7 @@
 // The map canvas: SVG rendering, camera (pan/zoom), semantic-zoom dive/rise
 // transitions, selection visuals, connect-mode, and the minimap.
 import { bus, state } from './state.js';
-import { layoutScope, miniTransform, edgePath } from './layout.js';
+import { layoutScope, miniTransform, edgePath, routeDirect, invalidateLayouts } from './layout.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const el = (tag, attrs = {}, cls = '') => {
@@ -29,6 +29,16 @@ let currentLayer = null;
 let animToken = 0;
 let transitioning = false;
 const scopeCameras = new Map(); // ownerId -> camera (restore on revisit)
+
+// cameras are per-map state: opening another map must not inherit them
+// (node ids can collide across maps, and pinned nodes make a stale camera
+// visibly wrong instead of merely off-center). The pending flag also stops
+// the NEXT showScope from re-saving the outgoing map's camera.
+let camerasResetPending = false;
+export function resetScopeCameras() {
+  scopeCameras.clear();
+  camerasResetPending = true;
+}
 
 const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
@@ -136,9 +146,11 @@ export function animateCamera(target, ms = 420) {
   });
 }
 
+const layoutBounds = (l) => ({ x: l.x ?? 0, y: l.y ?? 0, w: l.w, h: l.h });
+
 export function fit(ms = 420) {
   if (!currentLayout) return;
-  const target = fitCamera({ x: 0, y: 0, w: currentLayout.w, h: currentLayout.h });
+  const target = fitCamera(layoutBounds(currentLayout));
   return ms ? animateCamera(target, ms) : setCamera(target);
 }
 
@@ -257,6 +269,26 @@ function buildNode(n) {
     g.appendChild(textLines(n.lines, 44, (n.h - totalH) / 2 + 13, 'label'));
   }
 
+  // pinned nodes wear a small pin badge; clicking it releases to auto-layout
+  if (node.position) {
+    const pb = el('g', { transform: `translate(${n.w - 6},${-2})` }, 'pin-badge');
+    pb.appendChild(el('circle', { r: 9.5 }, 'pin-bg'));
+    pb.appendChild(el('path', {
+      d: 'M0 4.6 C-3.2 1 -4.1 -0.6 -4.1 -2.1 A4.1 4.1 0 1 1 4.1 -2.1 C4.1 -0.6 3.2 1 0 4.6 Z',
+    }, 'pin-glyph'));
+    pb.appendChild(el('circle', { cx: 0, cy: -2.1, r: 1.5 }, 'pin-dot'));
+    const pt = el('title');
+    if (state.standalone) {
+      pt.textContent = 'Pinned position';
+      pb.style.cursor = 'default';
+    } else {
+      pt.textContent = 'Pinned — click to release back to auto-layout';
+      pb.dataset.unpin = node.id;
+    }
+    pb.appendChild(pt);
+    g.appendChild(pb);
+  }
+
   if (node.links.length) {
     const lg = el('path', {
       d: 'M6.5 9.5l3-3M5 7l-1.8 1.8a2.3 2.3 0 0 0 3.2 3.2L8.2 10M8 5l1.8-1.8a2.3 2.3 0 0 1 3.2 3.2L11.2 8',
@@ -318,7 +350,10 @@ export function showScope(model, ownerId, { transition = null, focusId = null } 
   if (transition === 'dive' && currentLayout) return diveTo(model, ownerId, focusId);
   if (transition === 'rise' && currentLayout) return riseTo(model, ownerId);
 
-  if (state.scopeId !== undefined && currentLayout) scopeCameras.set(currentLayout.ownerId ?? null, { ...camera });
+  if (!camerasResetPending && state.scopeId !== undefined && currentLayout) {
+    scopeCameras.set(currentLayout.ownerId ?? null, { ...camera });
+  }
+  camerasResetPending = false;
   const { layer, layout } = renderScope(model, ownerId);
   layersG.replaceChildren(layer);
   currentLayer = layer;
@@ -326,12 +361,12 @@ export function showScope(model, ownerId, { transition = null, focusId = null } 
   renderMinimapNodes(layout);
   const saved = scopeCameras.get(ownerId ?? null);
   if (focusId) {
-    setCamera(fitCamera({ x: 0, y: 0, w: layout.w, h: layout.h }));
+    setCamera(fitCamera(layoutBounds(layout)));
     centerOn(focusId, 0);
   } else if (saved) {
     setCamera(saved);
   } else {
-    setCamera(fitCamera({ x: 0, y: 0, w: layout.w, h: layout.h }));
+    setCamera(fitCamera(layoutBounds(layout)));
   }
   return Promise.resolve(true);
 }
@@ -357,7 +392,8 @@ async function diveTo(model, containerId, focusId) {
   oldLayer.style.pointerEvents = 'none'; // the fading scope must not eat clicks
   layersG.appendChild(newLayer);
 
-  const worldRect = { x: T.x, y: T.y, w: childLayout.w * T.k, h: childLayout.h * T.k };
+  const cb = layoutBounds(childLayout);
+  const worldRect = { x: T.x + cb.x * T.k, y: T.y + cb.y * T.k, w: cb.w * T.k, h: cb.h * T.k };
   const camTarget = fitCamera(worldRect, 60, Infinity);
   const from = { ...camera };
 
@@ -388,7 +424,7 @@ async function diveTo(model, containerId, focusId) {
   // leave the layers half-swapped — snap, then settle onto the new scope.
   if (pendingFinish === myFinish) {
     finishTransition();
-    await animateCamera(fitCamera({ x: 0, y: 0, w: childLayout.w, h: childLayout.h }), 300);
+    await animateCamera(fitCamera(layoutBounds(childLayout)), 300);
   }
   return true;
 }
@@ -411,7 +447,7 @@ async function riseTo(model, parentOwnerId) {
   layersG.insertBefore(parentLayer, childLayer);
 
   const saved = scopeCameras.get(parentOwnerId ?? null);
-  const camTarget = saved ?? fitCamera({ x: 0, y: 0, w: parentLayout.w, h: parentLayout.h });
+  const camTarget = saved ?? fitCamera(layoutBounds(parentLayout));
   const from = { ...camera };
 
   const myFinish = () => {
@@ -507,9 +543,37 @@ export function dimExcept(nodeId) {
 }
 
 // ── pointer interactions ─────────────────────────────────────────────
+
+// While a node is being dragged, every edge touching it re-routes live as a
+// direct line; the definitive layout is recomputed on commit.
+function updateEdgesFor(ln) {
+  if (!currentLayout || !currentLayer) return;
+  const byId = new Map(currentLayout.nodes.map((n) => [n.id, n]));
+  for (const e of currentLayout.edges) {
+    if (e.edge.from !== ln.id && e.edge.to !== ln.id) continue;
+    Object.assign(e, routeDirect(byId.get(e.edge.from), byId.get(e.edge.to)));
+    const old = currentLayer.querySelector(`.edge[data-index="${e.index}"]`);
+    if (!old) continue;
+    const fresh = buildEdge(e);
+    fresh.setAttribute('class', old.getAttribute('class'));
+    old.replaceWith(fresh);
+  }
+}
+
 function wirePointer() {
   let down = null;
   let moved = false;
+  let nodeDrag = null; // { ln, el, ox, oy, active } while a node is grabbed
+
+  // an interrupted drag mutated the cached layout — rebuild it from the model
+  const revertNodeDrag = () => {
+    const wasActive = nodeDrag?.active;
+    nodeDrag = null;
+    if (wasActive && state.model) {
+      invalidateLayouts();
+      refreshScope(state.model);
+    }
+  };
 
   svg.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0) return;
@@ -518,9 +582,20 @@ function wirePointer() {
     // use this, never ev.target of the up event.
     down = { px: ev.clientX, py: ev.clientY, cam: { ...camera }, target: ev.target, pointerId: ev.pointerId };
     moved = false;
+    // grabbing a node moves the node; grabbing the background pans
+    nodeDrag = null;
+    if (!state.presenting && !state.standalone && !state.connectFrom && !transitioning) {
+      const nodeEl = ev.target.closest?.('.node');
+      if (nodeEl && currentLayer?.contains(nodeEl)) {
+        const ln = currentLayout?.nodes.find((x) => x.id === nodeEl.dataset.id);
+        if (ln) nodeDrag = { ln, el: nodeEl, ox: ln.x, oy: ln.y, active: false };
+      }
+    }
   });
   const clearDrag = () => {
     svg.classList.remove('panning');
+    svg.classList.remove('dragging-node');
+    revertNodeDrag();
     down = null; moved = false;
   };
   // releases outside the svg (uncaptured non-drag presses) must not leave a
@@ -536,27 +611,54 @@ function wirePointer() {
     const dx = ev.clientX - down.px, dy = ev.clientY - down.py;
     if (!moved && Math.hypot(dx, dy) > 4) {
       moved = true;
-      svg.classList.add('panning');
+      if (nodeDrag) {
+        nodeDrag.active = true;
+        svg.classList.add('dragging-node');
+        nodeDrag.el.parentNode?.appendChild(nodeDrag.el); // dragged node on top
+      } else {
+        svg.classList.add('panning');
+      }
       // capture only once a drag actually starts, so plain clicks and
       // dblclicks keep their natural targets
       try { svg.setPointerCapture(down.pointerId); } catch { /* stale pointer */ }
     }
     if (moved) {
-      camera = { ...camera, x: down.cam.x + dx, y: down.cam.y + dy };
-      applyCamera();
+      if (nodeDrag?.active) {
+        nodeDrag.ln.x = nodeDrag.ox + dx / camera.k;
+        nodeDrag.ln.y = nodeDrag.oy + dy / camera.k;
+        nodeDrag.el.setAttribute('transform', `translate(${nodeDrag.ln.x},${nodeDrag.ln.y})`);
+        updateEdgesFor(nodeDrag.ln);
+      } else {
+        camera = { ...camera, x: down.cam.x + dx, y: down.cam.y + dy };
+        applyCamera();
+      }
     }
   });
   svg.addEventListener('pointerup', (ev) => {
     if (ev.button !== 0) return; // a chord's secondary release must not end the press
     svg.classList.remove('panning');
+    svg.classList.remove('dragging-node');
     const wasDrag = moved;
     const target = down?.target;
+    const finishedNodeDrag = nodeDrag?.active ? nodeDrag : null;
+    nodeDrag = null; // consumed — clearDrag/revert must not undo a completed drop
     if (down && svg.hasPointerCapture?.(down.pointerId)) {
       try { svg.releasePointerCapture(down.pointerId); } catch { /* already released */ }
     }
     down = null; moved = false;
-    if (wasDrag || !target) return;
+    if (wasDrag || !target) {
+      if (finishedNodeDrag) {
+        const ln = finishedNodeDrag.ln;
+        bus.emit('node-moved', ln.id, {
+          x: Math.round(ln.x + ln.w / 2),
+          y: Math.round(ln.y + ln.h / 2),
+        });
+      }
+      return;
+    }
 
+    const unpin = target.closest?.('[data-unpin]');
+    if (unpin) { bus.emit('unpin-request', unpin.dataset.unpin); return; }
     const dive = target.closest?.('[data-dive]');
     if (dive) { bus.emit('dive-request', dive.dataset.dive); return; }
     const nodeEl = target.closest?.('.node');
@@ -566,6 +668,17 @@ function wirePointer() {
     bus.emit('bg-click');
   });
   svg.addEventListener('pointercancel', clearDrag);
+
+  // Escape during a node drag cancels it (and must not also rise a scope)
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape' || !nodeDrag?.active) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (down && svg.hasPointerCapture?.(down.pointerId)) {
+      try { svg.releasePointerCapture(down.pointerId); } catch { /* already released */ }
+    }
+    clearDrag();
+  }, true);
 
   svg.addEventListener('dblclick', (ev) => {
     const nodeEl = ev.target.closest?.('.node');
@@ -598,7 +711,11 @@ function renderMinimapNodes(layout) {
   mmNodesG.replaceChildren();
   if (!layout || !layout.w) { mmView.setAttribute('width', 0); return; }
   mmScale = Math.min((W - mmPad * 2) / layout.w, (H - mmPad * 2) / layout.h);
-  mmOff = { x: (W - layout.w * mmScale) / 2, y: (H - layout.h * mmScale) / 2 };
+  const lb = layoutBounds(layout);
+  mmOff = {
+    x: (W - layout.w * mmScale) / 2 - lb.x * mmScale,
+    y: (H - layout.h * mmScale) / 2 - lb.y * mmScale,
+  };
   for (const n of layout.nodes) {
     mmNodesG.appendChild(el('rect', {
       x: mmOff.x + n.x * mmScale,

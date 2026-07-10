@@ -73,6 +73,7 @@ function nodeToPlain(fields) {
   const obj = { id: fields.id, type: fields.type, label: fields.label };
   if (fields.description?.trim()) obj.description = fields.description;
   if (fields.links?.length) obj.links = fields.links.map((l) => ({ label: l.label || l.url, url: l.url }));
+  if (fields.position) obj.position = { x: fields.position.x, y: fields.position.y };
   if (fields.children) obj.children = fields.children;
   return obj;
 }
@@ -104,9 +105,27 @@ export function updateNode(nodeId, fields) {
   tidyKeyOrder(doc, p);
 }
 
-// keep files predictable: id, type, label, description, links, children —
-// unknown keys keep their relative order at the end
-const KEY_ORDER = ['id', 'type', 'label', 'description', 'links', 'children'];
+// Pin a node where the user dropped it: position is the node's CENTER in its
+// scope's layout coordinates, written as a one-line flow map so files stay
+// human-readable. Clearing it returns the node to automatic layout.
+export function setNodePosition(nodeId, { x, y }) {
+  const doc = state.doc;
+  const p = findNodePath(doc, nodeId);
+  if (!p) throw new Error(`node "${nodeId}" not found in file`);
+  doc.setIn([...p, 'position'], doc.createNode({ x: Math.round(x), y: Math.round(y) }, { flow: true }));
+  tidyKeyOrder(doc, p);
+}
+
+export function clearNodePosition(nodeId) {
+  const doc = state.doc;
+  const p = findNodePath(doc, nodeId);
+  if (!p) throw new Error(`node "${nodeId}" not found in file`);
+  if (doc.getIn([...p, 'position'], true)) doc.deleteIn([...p, 'position']);
+}
+
+// keep files predictable: id, type, label, description, links, position,
+// children — unknown keys keep their relative order at the end
+const KEY_ORDER = ['id', 'type', 'label', 'description', 'links', 'position', 'children'];
 function tidyKeyOrder(doc, nodePath) {
   const map = doc.getIn(nodePath, true);
   if (!isMap(map)) return;
@@ -217,6 +236,7 @@ export function insertTemplate(ownerId, templateModel) {
     nodes: scope.nodes.map((n) => nodeToPlain({
       id: rid(n.id), type: n.type, label: n.label,
       description: n.description, links: n.links,
+      position: n.position,
       children: n.children ? plainScope(n.children) : undefined,
     })),
     edges: scope.edges.map((e) => {
@@ -227,9 +247,26 @@ export function insertTemplate(ownerId, templateModel) {
   });
   const plain = plainScope(templateModel.root);
 
+  // position maps stay one-liners even when grafted from a template
+  const flowPositions = (node) => {
+    if (isMap(node)) {
+      for (const pair of node.items) {
+        const k = typeof pair.key === 'string' ? pair.key : pair.key?.value;
+        if (k === 'position' && isMap(pair.value)) pair.value.flow = true;
+        else flowPositions(pair.value);
+      }
+    } else if (isSeq(node)) {
+      for (const it of node.items) flowPositions(it);
+    }
+  };
+
   const scope = ensureScope(doc, ownerId);
   if (!scope) throw new Error(`can't find scope for "${ownerId}"`);
-  for (const n of plain.nodes) doc.addIn(scope.nodesPath, doc.createNode(n));
+  for (const n of plain.nodes) {
+    const created = doc.createNode(n);
+    flowPositions(created);
+    doc.addIn(scope.nodesPath, created);
+  }
   for (const e of plain.edges) doc.addIn(scope.edgesPath, doc.createNode(e));
 
   return plain.nodes.map((n) => n.id);

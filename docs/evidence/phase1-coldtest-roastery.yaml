@@ -1,0 +1,161 @@
+name: Driftwood Coffee Roasters
+description: Small specialty roastery; sources micro-lots, roasts to order, sells wholesale and direct.
+
+nodes:
+  # --- Pinned standalone card, above and left of the auto-laid flow ---
+  - id: roastery-values
+    type: artifact
+    label: Roastery values
+    description: |
+      One-page charter: pay farm-gate premiums above Fair Trade minimums,
+      publish transparency reports yearly, roast nothing older than
+      10 months past harvest. Every sourcing and QC decision below
+      is checked against this card.
+    position: { x: -120, y: -280 }
+
+  # --- Auto-laid main flow ---
+  - id: green-sourcing
+    type: process
+    label: Green coffee sourcing
+    description: |
+      Head roaster works with two importers and one direct-trade farm in
+      Huila. Micro-lots are booked from pre-shipment samples; contracts
+      target 6-8 lots per season.
+    links:
+      - label: Importer offering sheets
+        url: https://example.com/offerings
+
+  - id: head-roaster
+    type: role
+    label: Head roaster
+    description: Owns sourcing, profile development, and final lot approval.
+
+  - id: sample-roast
+    type: process
+    label: Sample roasting
+    description: |
+      100 g samples roasted on the Ikawa to a standard curve so lots can
+      be compared like-for-like before purchase.
+
+  - id: lot-approval
+    type: decision
+    label: Lot approved?
+    description: Cupping score >= 86 and no defects in two sessions.
+
+  - id: roast-production
+    type: process
+    label: Production roasting
+    description: |
+      Twice-weekly roast days. Batches of 12-15 kg on the drum roaster,
+      each tracked against its reference profile.
+    children:
+      nodes:
+        - id: roaster-operator
+          type: role
+          label: Roaster operator
+          description: Charges the drum, rides gas and airflow, drops the batch.
+        - id: drum-roaster
+          type: system
+          label: 15 kg drum roaster
+          description: Probe-instrumented drum roaster with profiling software attached.
+        - id: reference-profile
+          type: artifact
+          label: Reference roast profile
+          description: |
+            The approved curve for each lot: charge temp, gas steps,
+            first-crack target, development ratio.
+        - id: drop-and-cool
+          type: process
+          label: Drop, cool & rest
+          description: Batch dropped at target, cooled in 4 minutes, rested 24-72 h before QC.
+        # --- Pinned child, clearly below its auto-laid siblings ---
+        - id: roaster-maintenance
+          type: process
+          label: Weekly roaster maintenance
+          description: |
+            Off-flow standing task: chaff collector emptied every roast day,
+            flue brushed weekly, bearings and belts checked monthly.
+          position: { x: 140, y: 420 }
+      edges:
+        - from: roaster-operator
+          to: drum-roaster
+          label: charges & rides the curve
+        - from: reference-profile
+          to: roaster-operator
+          label: target curve
+        - from: drum-roaster
+          to: drop-and-cool
+          label: batch dropped
+        - from: drum-roaster
+          to: roaster-maintenance
+          label: weekly cleaning cycle
+
+  - id: roast-log
+    type: artifact
+    label: Roast log
+    description: Per-batch record of actual curve vs reference, weight loss, and QC result.
+
+  - id: packaging
+    type: process
+    label: Packaging & labeling
+    description: Rested coffee weighed into 250 g and 1 kg bags, roast date stamped, lot code applied.
+
+  - id: fulfillment
+    type: process
+    label: Order fulfillment
+    description: Daily pick-pack for web orders; weekly pallet runs for wholesale cafes.
+
+  - id: shopify
+    type: system
+    label: Shopify storefront
+    description: Retail subscriptions and one-off orders; syncs stock from packaged inventory.
+
+  # --- Pinned right-side column, below and right of the auto-laid flow ---
+  - id: qa-lab
+    type: process
+    label: QC cupping lab
+    description: |
+      Post-roast quality control: every production batch cupped blind
+      48 h after roast; fails trigger a re-roast against the reference profile.
+    position: { x: 1050, y: 480 }
+
+  - id: sensory-panel
+    type: role
+    label: Sensory panel
+    description: Three trained staff who score QC tables; calibrate monthly against shared samples.
+    position: { x: 1050, y: 620 }
+
+edges:
+  - from: green-sourcing
+    to: sample-roast
+    label: pre-shipment samples
+  - from: head-roaster
+    to: green-sourcing
+    label: books lots
+  - from: sample-roast
+    to: lot-approval
+    label: cupping table
+  - from: lot-approval
+    to: roast-production
+    label: "yes — contract signed"
+  - from: lot-approval
+    to: green-sourcing
+    label: "no — request new samples"
+  - from: roast-production
+    to: roast-log
+    label: records every batch
+  - from: roast-production
+    to: packaging
+    label: rested coffee
+  - from: packaging
+    to: fulfillment
+    label: finished inventory
+  - from: shopify
+    to: fulfillment
+    label: daily order feed
+  - from: roast-production
+    to: qa-lab
+    label: 48 h QC samples
+  - from: sensory-panel
+    to: qa-lab
+    label: staffs & scores

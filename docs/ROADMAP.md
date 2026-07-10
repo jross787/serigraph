@@ -6,7 +6,7 @@
 
 ---
 
-## Phase 1 — Manual layout adjustment with persistence  ·  *next*
+## Phase 1 — Manual layout adjustment with persistence  ·  *✅ shipped*
 
 The most-requested gap: Mermaid-style auto-layout you can't override. Let a user **drag a node to reposition it and have that position persist** across reloads and file edits, while auto-layout stays the default and the YAML structure is untouched.
 
@@ -16,7 +16,9 @@ The most-requested gap: Mermaid-style auto-layout you can't override. Let a user
 - Positions are per-scope, coordinate-stable, and round-trip through the existing comment-preserving YAML pipeline.
 - The position format is documented in `FORMAT.md` as part of the public contract.
 
-*This is the foundation for all of Phase 2 — every drag gesture depends on "a node can own a position that's saved to the file."* A dedicated build prompt for this exists.
+*This is the foundation for all of Phase 2 — every drag gesture depends on "a node can own a position that's saved to the file."*
+
+Shipped as: drag a node to pin it (`position: { x, y }` = the node's center in its scope's plane, one line in the file); background drag still pans; pin badge / detail panel release the override; dagre still lays out the full graph so pinning never reshuffles siblings, auto nodes are pushed clear of pins, and edges touching a moved node route directly. Contract documented in [FORMAT.md](FORMAT.md); verification in [VERIFICATION.md](VERIFICATION.md#phase-1--pinned-positions-drag-to-reposition-persisted).
 
 ## Phase 2 — Direct-manipulation authoring
 

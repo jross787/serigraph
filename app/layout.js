@@ -137,6 +137,70 @@ function shelfPack(blocks, gap = 72) {
   return { w, h: y + rowH };
 }
 
+// ── pinned positions ─────────────────────────────────────────────────
+// A node with a `position` in the file is "pinned": it renders with its
+// center at exactly those scope coordinates. Everything else keeps the
+// dagre layout (computed over the FULL graph, pinned nodes included, so
+// pinning one node never reshuffles its siblings), then gets pushed out
+// from under pinned nodes, and edges that touch a moved node re-route as
+// direct lines. With zero pinned nodes none of this runs.
+
+const centerOf = (n) => ({ x: n.x + n.w / 2, y: n.y + n.h / 2 });
+
+// point where the segment from n's center toward `toward` crosses n's
+// outline (diamond for decisions, bounding rect for everything else)
+function boundaryPoint(n, toward) {
+  const c = centerOf(n);
+  const dx = toward.x - c.x, dy = toward.y - c.y;
+  if (!dx && !dy) return c;
+  let s;
+  if (n.node?.type === 'decision' && !n.node.children) {
+    const t = Math.abs(dx) / (n.w / 2) + Math.abs(dy) / (n.h / 2);
+    s = Math.min(t ? 1 / t : 1, 1);
+  } else {
+    const sx = dx ? (n.w / 2) / Math.abs(dx) : Infinity;
+    const sy = dy ? (n.h / 2) / Math.abs(dy) : Infinity;
+    s = Math.min(sx, sy, 1);
+  }
+  return { x: c.x + dx * s, y: c.y + dy * s };
+}
+
+// Direct edge route between two layout nodes: boundary to boundary.
+// Exported so the canvas can re-route live while a node is being dragged.
+export function routeDirect(a, b) {
+  const p1 = boundaryPoint(a, centerOf(b));
+  const p2 = boundaryPoint(b, centerOf(a));
+  return { points: [p1, p2], labelPos: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 } };
+}
+
+// Push auto nodes out of (inflated) pinned rects, minimal-displacement axis
+// first. Deterministic; pinned nodes never move. Returns ids it moved.
+function resolvePinnedOverlaps(nodes, movedIds, margin = 18) {
+  const pinned = nodes.filter((n) => n.pinned);
+  if (!pinned.length) return;
+  for (let pass = 0; pass < 8; pass++) {
+    let any = false;
+    for (const a of nodes) {
+      if (a.pinned) continue;
+      for (const p of pinned) {
+        const px1 = p.x - margin, py1 = p.y - margin;
+        const px2 = p.x + p.w + margin, py2 = p.y + p.h + margin;
+        if (a.x + a.w <= px1 || a.x >= px2 || a.y + a.h <= py1 || a.y >= py2) continue;
+        const pushRight = px2 - a.x, pushLeft = a.x + a.w - px1;
+        const pushDown = py2 - a.y, pushUp = a.y + a.h - py1;
+        const min = Math.min(pushRight, pushLeft, pushDown, pushUp);
+        if (min === pushRight) a.x += pushRight;
+        else if (min === pushLeft) a.x -= pushLeft;
+        else if (min === pushDown) a.y += pushDown;
+        else a.y -= pushUp;
+        movedIds.add(a.id);
+        any = true;
+      }
+    }
+    if (!any) return;
+  }
+}
+
 // ── public API ───────────────────────────────────────────────────────
 const cache = new Map();
 
@@ -153,7 +217,7 @@ export function layoutScope(model, ownerId) {
 
   const scope = ownerId == null ? model.root : model.byId.get(ownerId)?.children;
   if (!scope || !scope.nodes.length) {
-    const empty = { nodes: [], edges: [], w: 0, h: 0 };
+    const empty = { nodes: [], edges: [], x: 0, y: 0, w: 0, h: 0 };
     cache.set(key, empty);
     return empty;
   }
@@ -174,9 +238,11 @@ export function layoutScope(model, ownerId) {
         : 0.1;
       s.mini = {
         child, frameW, frameH, headerH, scale,
-        // offsets that center the child layout inside the frame (node-local coords)
-        dx: 13 + (frameW - child.w * (child.w ? Math.min(frameW / child.w, frameH / child.h, 0.24) : 0.1)) / 2,
-        dy: headerH + (frameH - child.h * (child.h ? Math.min(frameW / child.w, frameH / child.h, 0.24) : 0.1)) / 2,
+        // offsets that center the child layout inside the frame (node-local
+        // coords) — child.x/child.y is the child layout's own origin, which
+        // is non-zero when the child scope contains pinned nodes
+        dx: 13 + (frameW - child.w * scale) / 2 - child.x * scale,
+        dy: headerH + (frameH - child.h * scale) / 2 - child.y * scale,
       };
     }
     sized.set(n.id, s);
@@ -200,7 +266,43 @@ export function layoutScope(model, ownerId) {
     }
   }
 
-  const result = { ownerId, nodes, edges, w: packed.w, h: packed.h };
+  // pinned nodes: move each to its file position (center-based), push auto
+  // nodes out from under them, and re-route every edge that touches a node
+  // that is no longer where dagre put it
+  const movedIds = new Set();
+  for (const n of nodes) {
+    const pos = n.node.position;
+    if (!pos) continue;
+    n.pinned = true;
+    n.x = pos.x - n.w / 2;
+    n.y = pos.y - n.h / 2;
+    movedIds.add(n.id);
+  }
+
+  let bounds = { x: 0, y: 0, w: packed.w, h: packed.h };
+  if (movedIds.size) {
+    resolvePinnedOverlaps(nodes, movedIds);
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    for (const e of edges) {
+      if (movedIds.has(e.edge.from) || movedIds.has(e.edge.to)) {
+        Object.assign(e, routeDirect(byId.get(e.edge.from), byId.get(e.edge.to)));
+      }
+    }
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const n of nodes) {
+      x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y);
+      x1 = Math.max(x1, n.x + n.w); y1 = Math.max(y1, n.y + n.h);
+    }
+    for (const e of edges) {
+      for (const p of e.points) {
+        x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y);
+        x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y);
+      }
+    }
+    bounds = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  }
+
+  const result = { ownerId, nodes, edges, ...bounds };
   cache.set(key, result);
   return result;
 }

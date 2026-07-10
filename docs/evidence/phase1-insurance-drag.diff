@@ -1,0 +1,12 @@
+diff --git a/maps/insurance.yaml b/maps/insurance.yaml
+index 5e4ccfe..17e7fa0 100644
+--- a/maps/insurance.yaml
++++ b/maps/insurance.yaml
+@@ -22,6 +22,7 @@ nodes:
+     type: system
+     label: Applied Epic (AMS)
+     description: Agency management system of record — accounts, policies, activities, and documents all live here.
++    position: { x: 696, y: -295 }
+ 
+   - id: risk-decision
+     type: decision

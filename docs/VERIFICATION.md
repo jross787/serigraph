@@ -22,10 +22,28 @@ Every requirement was tested by **fresh-context reviewers** — agents with no m
 
 Round 1 found a **critical** bug invisible to synthetic-event testing: `setPointerCapture` made Chrome retarget clicks to the SVG, killing all real mouse interaction with nodes. It also found Escape double-pressing, a `deleteNode` no-op on list-form children, export corruption via `$&` in map content, and dead multi-tab sync. Round 2 confirmed those fixes and caught three defects *the fixes introduced* (transition wedge, a right-edge double-click dead zone, a drag-state leak). Round 3's interrupt storm caught stale input reaching fading transition layers. Round 4 re-ran the storm — 16/16 rounds plus 9 boundary races consistent, chords and real multi-touch clean, and a line-level review of the final diff (with 300-operation randomized interleavings) confirmed **zero new defects**. Round 4's only findings were two pre-existing minors: selecting an edge right after a node left a stale URL/panel (fixed and re-verified), and two *simultaneous* touches on the canvas resolve to the last one (accepted single-selection behavior).
 
+## Phase 1 — pinned positions (drag to reposition, persisted)
+
+Verified July 2026 with the same method: a fresh-context adversarial reviewer drove the running app through real browser input, and a second cold-context agent authored a pinned map from [FORMAT.md](FORMAT.md) alone. Evidence in [docs/evidence/phase1-*](evidence/).
+
+| Claim | How it was attacked | Evidence |
+|---|---|---|
+| Drag writes exactly one `position: { x, y }` line | Drag → `git diff`: +1 line, all comments/formatting intact, validator PASS; reload → same spot (node transform identical pre/post) | `phase1-insurance-drag.diff`, `phase1-insurance-pinned.png` |
+| No position data ⇒ identical rendering | Old code (worktree at previous HEAD) vs new code, same session: per-element SHA-256 of every node/edge group + camera — identical on insurance, stress-120 root, and a nested scope | `phase1-invariant.md` |
+| Pinned + auto coexist on ≥100 nodes | Seed-7 120-node map with a pinned container, a pinned leaf, and a nested pin: auto nodes flow with zero rect overlaps against pins (programmatic check), long direct edges route to pins | `phase1-stress-root-mixed.png`, `phase1-stress-nested-pin.png`, `phase1-stress-120-pinned.yaml` |
+| Per-scope positions survive dive/rise/reload | Pins in root + nested scopes; Escape out, double-click in, full reload: transforms byte-identical; container miniature keeps all children in-frame | reviewer log |
+| Hand-edit coexistence | With a pin present, an unrelated node+edge added on disk: canvas live-updated, pin unmoved, new node auto-flowed, zero overlaps | reviewer log |
+| Release returns to auto | Pin badge click and panel "Release to auto-layout": position line removed (file byte-identical to HEAD), node visibly returns | reviewer log |
+| Undo/redo | Cmd+Z removes the pin line + node returns; Cmd+Shift+Z re-pins | reviewer log |
+| Cold LLM can author pins from FORMAT.md alone | Agent read only FORMAT.md, wrote a 17-node roastery map with 4 deliberate pins (above-flow card, right-side column, nested below-siblings) — rendered exactly as it stated it intended | `phase1-coldtest-roastery.yaml`, `phase1-coldtest-roastery.png` |
+| Break-it storm | Sub-4px drags stay clicks (no write); Escape cancels a drag; drags during transitions/presentation/connect-mode don't pin; negative coordinates persist and stay in camera fit; two pins on one spot allowed; 120-node drag ≤1.3 ms/move; zero console errors | reviewer log |
+
+What the loop caught (fixed and re-verified): the YAML serializer re-wrapping long untouched lines at 80 columns (now `lineWidth: 0`); per-scope cameras bleeding across maps on hash navigation (now reset per map open — pre-existing, exposed by far-flung pins); `P` not exiting presentation mode (pre-existing); Escape mid-drag inconsistently rising a scope (now cancels the drag).
+
 ## Re-running the checks
 
 ```
-npm test                                  # 26 unit/regression tests
+npm test                                  # 34 unit/regression tests
 npm run validate                          # every map + template
 node tools/generate-map.mjs --nodes 1000 --depth 8 --unicode --seed 9 --out maps/stress.yaml
 ```

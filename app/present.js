@@ -91,7 +91,7 @@ export function enterPresent() {
   state.presenting = true;
   document.body.classList.add('presenting');
   keyHandler = (ev) => {
-    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); exitPresent(); }
+    if (ev.key === 'Escape' || ev.key === 'p' || ev.key === 'P') { ev.preventDefault(); ev.stopPropagation(); exitPresent(); }
     else if (ev.key === 'ArrowRight' || ev.key === ' ' || ev.key === 'PageDown') { ev.preventDefault(); ev.stopPropagation(); go(index + 1); }
     else if (ev.key === 'ArrowLeft' || ev.key === 'PageUp') { ev.preventDefault(); ev.stopPropagation(); go(index - 1); }
   };

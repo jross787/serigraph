@@ -212,7 +212,8 @@ export function helpDialog() {
     ['P', 'Presentation mode'],
     ['+ / − / 0', 'Zoom in / out / fit'],
     ['⌘Z / ⌘⇧Z', 'Undo / redo'],
-    ['drag', 'Pan the canvas'],
+    ['drag a node', 'Move it — pins its position (click the pin badge to release)'],
+    ['drag the background', 'Pan the canvas'],
     ['scroll · pinch', 'Pan · zoom'],
   ];
   const grid = h('div', { class: 'kbd-grid' });
@@ -288,6 +289,18 @@ function renderDetail() {
               h('span', {}, l.label, h('span', { class: 'url' }, l.url)));
           })
         : h('div', { class: 'no-links' }, ro ? 'No links.' : 'No links yet — SOPs, repos, dashboards…')));
+
+    if (node.position) {
+      body.append(h('div', { class: 'panel-section' },
+        h('h3', {}, 'Layout'),
+        h('div', { class: 'pin-row' },
+          h('span', { class: 'pin-info' }, `Pinned at ${node.position.x}, ${node.position.y}`),
+          ro ? null : h('button', {
+            class: 'pa-btn', title: 'Remove the pinned position — the node returns to automatic layout',
+            onClick: () => ctrl.commit(() => edit.clearNodePosition(node.id))
+              .then((ok) => ok && toast('Released — back to auto-layout')),
+          }, 'Release to auto-layout'))));
+    }
 
     if (node.children) {
       body.append(h('div', { class: 'panel-section' },
