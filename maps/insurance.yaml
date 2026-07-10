@@ -1,0 +1,98 @@
+# Summit Insurance — Agency Operations (single-level example)
+name: Summit Insurance — Agency Operations
+description: An independent P&C agency, from new prospect through bind, billing, claims, and renewal.
+
+nodes:
+  - id: prospect
+    type: process
+    label: New prospect
+    description: Inbound lead from the website, referrals, or a walk-in. The producer captures contact info and the coverage need.
+
+  - id: producer
+    type: role
+    label: Producer / Agent
+    description: Licensed agent who owns the relationship — gathers underwriting info, markets the risk to carriers, and presents options.
+
+  - id: quote
+    type: process
+    label: Quote & rate
+    description: Enter the application, pull MVR/loss runs, and rate across appointed carriers to build a comparison.
+
+  - id: ams
+    type: system
+    label: Applied Epic (AMS)
+    description: Agency management system of record — accounts, policies, activities, and documents all live here.
+
+  - id: risk-decision
+    type: decision
+    label: Risk acceptable?
+
+  - id: bind
+    type: process
+    label: Bind & issue
+    description: Selected carrier confirms terms; the agent binds coverage and the policy is issued.
+
+  - id: policy
+    type: artifact
+    label: Policy document
+    description: The issued policy, dec page, and ID cards delivered to the insured and filed in the AMS.
+
+  - id: billing
+    type: process
+    label: Billing & payment
+    description: Set up direct-bill or agency-bill, collect the down payment, and confirm the payment plan.
+
+  - id: refer
+    type: process
+    label: Decline / refer out
+    description: Risk falls outside carrier appetite — decline politely or refer to a surplus-lines broker.
+
+  - id: claim
+    type: process
+    label: Claims intake
+    description: First notice of loss taken from the insured, logged, and reported to the carrier the same day.
+
+  - id: adjuster
+    type: role
+    label: Claims adjuster
+    description: Carrier-side adjuster who investigates the loss, sets reserves, and settles the claim.
+
+  - id: renewal
+    type: process
+    label: Renewal review
+    description: 60 days out, re-shop or re-rate the account, review coverage gaps, and re-market if needed.
+
+edges:
+  - from: prospect
+    to: quote
+    label: submits info
+  - from: producer
+    to: quote
+    label: prepares
+  - from: quote
+    to: ams
+    label: logged in
+  - from: quote
+    to: risk-decision
+    label: rated
+  - from: risk-decision
+    to: bind
+    label: approved
+  - from: risk-decision
+    to: refer
+    label: declined
+  - from: bind
+    to: policy
+    label: issues
+  - from: bind
+    to: billing
+    label: invoices
+  - from: policy
+    to: renewal
+    label: at term
+  - from: policy
+    to: claim
+    label: loss reported
+  - from: claim
+    to: adjuster
+    label: assigned
