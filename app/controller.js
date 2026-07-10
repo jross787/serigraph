@@ -254,6 +254,10 @@ export async function gotoNode(nodeId) {
 }
 
 export function selectNode(nodeId) {
+  // stale input (a click on a fading transition layer, an arrow move on an
+  // outgoing layout) must never select a node outside the current scope
+  const node = state.model?.byId.get(nodeId);
+  if (!node || node.ownerId !== (state.scopeId ?? null)) return;
   state.selectedId = nodeId;
   state.selectedEdge = null;
   canvas.paintSelection();

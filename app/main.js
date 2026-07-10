@@ -76,6 +76,7 @@ function dialogOpen() {
 }
 
 function spatialMove(dir) {
+  if (canvas.isTransitioning()) return; // the layout on screen is mid-swap
   const layout = canvas.getLayout();
   if (!layout?.nodes.length) return;
   const vec = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[dir];

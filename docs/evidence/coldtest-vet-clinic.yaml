@@ -1,0 +1,386 @@
+name: Harbor & Pine Veterinary Clinic
+description: Full-service vet clinic; visits flow from front desk through triage, exam, treatment or surgery, pharmacy, and checkout.
+nodes:
+  - id: pet-owner
+    type: role
+    label: Pet Owner
+    description: |
+      The client. Calls or walks in to start a visit, receives the discharge
+      summary after surgery, pays the invoice, and gets follow-up calls and
+      vaccine-due emails.
+  - id: front-desk
+    type: process
+    label: Front Desk
+    description: |
+      Entry point for every visit. Takes appointment calls and handles
+      walk-ins, then checks the patient in for triage.
+    children:
+      nodes:
+        - id: receptionist
+          type: role
+          label: Receptionist
+          description: Answers the phones and greets walk-in clients.
+        - id: appointment-calls
+          type: process
+          label: Appointment calls
+          description: Phone bookings scheduled into open exam slots.
+        - id: walk-ins
+          type: process
+          label: Walk-ins
+          description: Unscheduled arrivals worked into the day's schedule.
+      edges:
+        - from: receptionist
+          to: appointment-calls
+          label: answers
+        - from: receptionist
+          to: walk-ins
+          label: greets
+  - id: triage
+    type: process
+    label: Triage & Vitals
+    description: |
+      Every visit starts here. A vet tech takes vitals and a presenting
+      complaint, and logs everything in Cornerstone before the vet sees
+      the patient.
+    children:
+      nodes:
+        - id: vet-tech
+          type: role
+          label: Vet Tech
+          description: Performs triage and vitals on every incoming patient.
+        - id: vitals
+          type: process
+          label: Vitals check
+          description: Weight, temperature, heart rate, and presenting complaint.
+        - id: triage-notes
+          type: artifact
+          label: Triage notes
+          description: The recorded vitals and complaint for this visit.
+        - id: cornerstone
+          type: system
+          label: Cornerstone PMS
+          description: Practice-management system of record for all visit data.
+      edges:
+        - from: vet-tech
+          to: vitals
+          label: performs
+        - from: vitals
+          to: triage-notes
+          label: produces
+        - from: triage-notes
+          to: cornerstone
+          label: logged in
+  - id: exam
+    type: process
+    label: Veterinarian Exam
+    description: |
+      The vet examines the patient using the triage notes and decides the
+      care path: treat in-room, order diagnostics, or schedule surgery.
+    children:
+      nodes:
+        - id: veterinarian
+          type: role
+          label: Veterinarian
+          description: Examines the patient and chooses the care path.
+      edges: []
+  - id: care-path
+    type: decision
+    label: Care path?
+    description: The exam branches three ways depending on what the vet finds.
+  - id: treat-in-room
+    type: process
+    label: Treat in-room
+    description: |
+      Minor conditions handled during the exam itself — vaccines, wound
+      care, medication administered on the spot.
+  - id: diagnostics
+    type: process
+    label: Diagnostics
+    description: |
+      In-house lab runs bloodwork and imaging ordered by the vet. Results
+      go into the patient chart and back to the vet for review.
+    children:
+      nodes:
+        - id: bloodwork
+          type: process
+          label: Bloodwork
+          description: Blood panels run on the in-house analyzer.
+        - id: imaging
+          type: process
+          label: Imaging
+          description: X-ray and ultrasound studies.
+        - id: lab-analyzer
+          type: system
+          label: In-house lab analyzer
+          description: Bench analyzer that processes blood panels on site.
+        - id: lab-results
+          type: artifact
+          label: Lab results
+          description: Combined bloodwork values and imaging studies for the visit.
+      edges:
+        - from: bloodwork
+          to: lab-analyzer
+          label: run on
+        - from: lab-analyzer
+          to: lab-results
+          label: outputs
+        - from: imaging
+          to: lab-results
+          label: images attached
+  - id: surgery
+    type: process
+    label: Surgery
+    description: |
+      Scheduled surgical cases. Flow: pre-op bloodwork clearance, anesthesia
+      protocol sign-off by the lead vet, the procedure, recovery monitoring,
+      and a discharge summary for the owner.
+    children:
+      nodes:
+        - id: pre-op-bloodwork
+          type: process
+          label: Pre-op bloodwork
+          description: Clearance panel drawn and reviewed before any anesthesia.
+        - id: bloodwork-clear
+          type: decision
+          label: Bloodwork clear?
+          description: Abnormal values postpone the procedure.
+        - id: postpone-surgery
+          type: process
+          label: Postpone & reschedule
+          description: |
+            Abnormal pre-op results send the case back to the vet; surgery is
+            rescheduled once the underlying issue is addressed.
+        - id: anesthesia-signoff
+          type: process
+          label: Anesthesia sign-off
+          description: |
+            The anesthesia protocol for this patient must be reviewed and
+            signed by the lead vet before the procedure can start.
+          children:
+            nodes:
+              - id: lead-vet
+                type: role
+                label: Lead Vet
+                description: Reviews and signs every anesthesia protocol.
+              - id: anesthesia-protocol
+                type: artifact
+                label: Anesthesia protocol
+                description: Drug choices, dosages, and monitoring plan for this patient.
+            edges:
+              - from: lead-vet
+                to: anesthesia-protocol
+                label: reviews & signs
+        - id: procedure
+          type: process
+          label: Procedure
+          description: The surgery itself, performed by the veterinarian with tech support.
+        - id: recovery
+          type: process
+          label: Recovery monitoring
+          description: Post-anesthesia monitoring until the patient is stable and awake.
+        - id: discharge-summary
+          type: artifact
+          label: Discharge summary
+          description: |
+            Document for the owner covering what was done, medications,
+            activity restrictions, and warning signs.
+      edges:
+        - from: pre-op-bloodwork
+          to: bloodwork-clear
+        - from: bloodwork-clear
+          to: anesthesia-signoff
+          label: clear
+        - from: bloodwork-clear
+          to: postpone-surgery
+          label: abnormal
+        - from: anesthesia-signoff
+          to: procedure
+          label: protocol approved
+        - from: procedure
+          to: recovery
+        - from: recovery
+          to: discharge-summary
+          label: produces
+  - id: patient-chart
+    type: artifact
+    label: Patient chart
+    description: |
+      The permanent medical record. Triage notes, exam findings, lab
+      results, and surgical records all land here in Cornerstone.
+  - id: pharmacy
+    type: process
+    label: In-house Pharmacy
+    description: Fills all prescriptions before the client reaches checkout.
+    children:
+      nodes:
+        - id: prescription
+          type: artifact
+          label: Prescription
+          description: Written by the vet during the exam or at surgical discharge.
+        - id: fill-prescription
+          type: process
+          label: Fill & label
+          description: Medication counted, labeled, and staged for checkout.
+      edges:
+        - from: prescription
+          to: fill-prescription
+          label: queued for
+  - id: checkout
+    type: process
+    label: Checkout
+    description: |
+      Front desk collects payment for the visit, meds, and any procedures,
+      and files insurance claims for Trupanion-covered patients.
+  - id: invoice
+    type: artifact
+    label: Itemized invoice
+    description: Line items for exam, diagnostics, surgery, and medications.
+  - id: balance-paid
+    type: decision
+    label: Balance paid?
+    description: Unpaid balances enter the reminder sequence.
+  - id: collections
+    type: process
+    label: Reminder sequence
+    description: |
+      Three-step reminder sequence for unpaid balances, handled by the
+      office manager.
+    children:
+      nodes:
+        - id: office-manager
+          type: role
+          label: Office Manager
+          description: Owns the unpaid-balance process end to end.
+        - id: reminder-1
+          type: process
+          label: Reminder 1
+          description: First notice, sent shortly after the visit.
+        - id: reminder-2
+          type: process
+          label: Reminder 2
+          description: Second notice with a call from the office manager.
+        - id: reminder-3
+          type: process
+          label: Reminder 3 (final)
+          description: Final notice before the account is escalated.
+      edges:
+        - from: office-manager
+          to: reminder-1
+          label: sends
+        - from: reminder-1
+          to: reminder-2
+          label: still unpaid
+        - from: reminder-2
+          to: reminder-3
+          label: still unpaid
+  - id: insurance-filing
+    type: process
+    label: Insurance claims
+    description: Pet-insurance claims filed for covered patients.
+    links:
+      - label: Trupanion provider portal
+        url: https://trupanion.com/vets
+    children:
+      nodes:
+        - id: claim-form
+          type: artifact
+          label: Claim
+          description: Invoice and medical notes packaged for the insurer.
+        - id: trupanion-portal
+          type: system
+          label: Trupanion portal
+          description: Insurer's online portal for direct claim submission.
+      edges:
+        - from: claim-form
+          to: trupanion-portal
+          label: submitted via
+  - id: follow-up
+    type: process
+    label: Follow-up
+    description: |
+      Techs call owners 48 hours after surgery; the reminders system emails
+      vaccine-due notices monthly.
+    children:
+      nodes:
+        - id: follow-up-tech
+          type: role
+          label: Tech (follow-up duty)
+          description: Makes the 48-hour post-op calls.
+        - id: post-op-call
+          type: process
+          label: 48-hour post-op call
+          description: Checks on recovery, appetite, and incision healing.
+        - id: vaccine-notices
+          type: process
+          label: Vaccine-due notices
+          description: Monthly email batch to owners with vaccines coming due.
+        - id: reminders-system
+          type: system
+          label: Reminders system
+          description: Automated email system driven by Cornerstone due dates.
+      edges:
+        - from: follow-up-tech
+          to: post-op-call
+          label: makes
+        - from: reminders-system
+          to: vaccine-notices
+          label: emails monthly
+edges:
+  - from: pet-owner
+    to: front-desk
+    label: calls or walks in
+  - from: front-desk
+    to: triage
+    label: checks in patient
+  - from: triage
+    to: exam
+    label: vitals logged
+  - from: triage
+    to: patient-chart
+    label: notes filed to
+  - from: exam
+    to: care-path
+  - from: care-path
+    to: treat-in-room
+    label: treat in-room
+  - from: care-path
+    to: diagnostics
+    label: order diagnostics
+  - from: care-path
+    to: surgery
+    label: schedule surgery
+  - from: diagnostics
+    to: patient-chart
+    label: results filed to
+  - from: diagnostics
+    to: exam
+    label: results reviewed
+  - from: treat-in-room
+    to: pharmacy
+    label: prescriptions to fill
+  - from: surgery
+    to: pharmacy
+    label: take-home meds
+  - from: surgery
+    to: follow-up
+    label: 48-hr call scheduled
+  - from: pharmacy
+    to: checkout
+    label: meds ready
+  - from: checkout
+    to: invoice
+    label: produces
+  - from: checkout
+    to: insurance-filing
+    label: Trupanion-insured
+  - from: invoice
+    to: balance-paid
+  - from: balance-paid
+    to: follow-up
+    label: paid
+  - from: balance-paid
+    to: collections
+    label: unpaid
+  - from: follow-up
+    to: pet-owner
+    label: calls & emails

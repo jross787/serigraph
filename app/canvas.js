@@ -87,7 +87,12 @@ function applyCamera() {
 }
 
 export const getCamera = () => ({ ...camera });
-export function setCamera(c) { camera = { ...c }; applyCamera(); }
+export const isTransitioning = () => transitioning;
+export function setCamera(c) {
+  animToken++; // an explicit camera set cancels any in-flight camera animation
+  camera = { ...c };
+  applyCamera();
+}
 
 const screenToWorld = (px, py) => ({ x: (px - camera.x) / camera.k, y: (py - camera.y) / camera.k });
 
@@ -349,6 +354,7 @@ async function diveTo(model, containerId, focusId) {
   newLayer.setAttribute('transform', `translate(${T.x},${T.y}) scale(${T.k})`);
   newLayer.style.opacity = 0;
   const oldLayer = currentLayer;
+  oldLayer.style.pointerEvents = 'none'; // the fading scope must not eat clicks
   layersG.appendChild(newLayer);
 
   const worldRect = { x: T.x, y: T.y, w: childLayout.w * T.k, h: childLayout.h * T.k };
@@ -396,6 +402,7 @@ async function riseTo(model, parentOwnerId) {
   transitioning = true;
   const T = miniTransform(ln);
   const childLayer = currentLayer;
+  childLayer.style.pointerEvents = 'none'; // the fading scope must not eat clicks
   childLayer.setAttribute('transform', `translate(${T.x},${T.y}) scale(${T.k})`);
   camera = { k: camera.k / T.k, x: camera.x - (camera.k / T.k) * T.x, y: camera.y - (camera.k / T.k) * T.y };
   applyCamera();
@@ -409,6 +416,7 @@ async function riseTo(model, parentOwnerId) {
 
   const myFinish = () => {
     childLayer.remove();
+    parentLayer.style.opacity = 1; // an interrupt may snap us here mid-fade
     currentLayer = parentLayer;
     currentLayout = parentLayout;
     renderMinimapNodes(parentLayout);
@@ -516,8 +524,11 @@ function wirePointer() {
     down = null; moved = false;
   };
   // releases outside the svg (uncaptured non-drag presses) must not leave a
-  // stale drag state that pans on buttonless hover
-  window.addEventListener('pointerup', () => { if (down && !moved) clearDrag(); });
+  // stale drag state that pans on buttonless hover — but only OUR pointer's
+  // primary-button release counts, or chords/multi-touch swallow clicks
+  window.addEventListener('pointerup', (ev) => {
+    if (down && !moved && ev.pointerId === down.pointerId && ev.button === 0) clearDrag();
+  });
 
   svg.addEventListener('pointermove', (ev) => {
     if (!down) return;
@@ -536,6 +547,7 @@ function wirePointer() {
     }
   });
   svg.addEventListener('pointerup', (ev) => {
+    if (ev.button !== 0) return; // a chord's secondary release must not end the press
     svg.classList.remove('panning');
     const wasDrag = moved;
     const target = down?.target;
