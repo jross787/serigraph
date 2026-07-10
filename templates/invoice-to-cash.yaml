@@ -1,0 +1,119 @@
+name: Invoice to Cash
+description: Drop into a client map for the order-to-cash tail, covering invoicing, dunning of overdue accounts, and payment reconciliation.
+nodes:
+  - id: inv-generate
+    type: process
+    label: Generate Invoice
+    description: Build the invoice from the order or milestone, with line items, tax and payment terms.
+  - id: inv-billing
+    type: system
+    label: Billing / ERP
+    description: The billing or ERP system that issues invoices and holds the accounts-receivable ledger.
+  - id: inv-invoice
+    type: artifact
+    label: Invoice
+    description: The issued invoice with amount due, due date and remittance instructions.
+  - id: inv-send
+    type: process
+    label: Deliver Invoice
+    description: Send the invoice to the customer's billing contact and log the delivery.
+  - id: inv-ar
+    type: role
+    label: AR / Collections
+    description: The accounts-receivable clerk who monitors aging and drives collections.
+  - id: inv-paid
+    type: decision
+    label: Paid by due date?
+    description: Check whether payment cleared on or before the due date.
+  - id: inv-dunning
+    type: process
+    label: Dunning Sequence
+    description: Run the escalating reminder cadence on overdue invoices until they are paid or handed off.
+    children:
+      nodes:
+        - id: inv-remind-1
+          type: process
+          label: Friendly Reminder
+          description: First courtesy nudge a few days after the due date with the invoice attached.
+        - id: inv-remind-2
+          type: process
+          label: Second Notice
+          description: Firmer follow-up mid-cycle restating the amount due and terms.
+        - id: inv-final
+          type: process
+          label: Final Demand
+          description: Final written demand warning of collections or service hold before escalation.
+        - id: inv-collections
+          type: role
+          label: Collections Agency
+          description: External agency or internal collections owner engaged once internal steps are exhausted.
+      edges:
+        - from: inv-remind-1
+          to: inv-remind-2
+          label: "no payment"
+        - from: inv-remind-2
+          to: inv-final
+          label: "no payment"
+        - from: inv-final
+          to: inv-collections
+          label: "still unpaid — hand off"
+  - id: inv-payment
+    type: system
+    label: Payment Gateway / Bank
+    description: The gateway or bank feed that reports settled payments and remittance detail.
+  - id: inv-reconcile
+    type: process
+    label: Reconcile Payment
+    description: Apply the received funds against open invoices and clear the receivable.
+  - id: inv-match
+    type: decision
+    label: Matches open invoice?
+    description: Confirm the payment amount and reference tie out to a specific open invoice.
+  - id: inv-close
+    type: process
+    label: Close & Post
+    description: Mark the invoice paid and post the entry to the general ledger.
+  - id: inv-receipt
+    type: artifact
+    label: Payment Receipt
+    description: The receipt or remittance advice confirming the invoice is settled.
+edges:
+  - from: inv-generate
+    to: inv-invoice
+    label: "produces"
+  - from: inv-generate
+    to: inv-billing
+    label: "posts to"
+  - from: inv-invoice
+    to: inv-send
+  - from: inv-send
+    to: inv-paid
+  - from: inv-paid
+    to: inv-reconcile
+    label: "yes — payment received"
+  - from: inv-paid
+    to: inv-dunning
+    label: "no — past due"
+  - from: inv-ar
+    to: inv-dunning
+    label: "runs"
+  - from: inv-dunning
+    to: inv-paid
+    label: "re-check after reminder"
+  - from: inv-payment
+    to: inv-reconcile
+    label: "posts settlement"
+  - from: inv-reconcile
+    to: inv-match
+  - from: inv-match
+    to: inv-close
+    label: "matched"
+  - from: inv-match
+    to: inv-reconcile
+    label: "discrepancy — re-apply"
+  - from: inv-close
+    to: inv-receipt
+    label: "produces"
+  - from: inv-close
+    to: inv-billing
+    label: "closes in ledger"

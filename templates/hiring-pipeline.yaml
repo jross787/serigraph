@@ -1,0 +1,116 @@
+name: Hiring Pipeline
+description: Drop into a client map to show recruiting from an open requisition through sourcing, interviews, offer, and the onboarding handoff.
+nodes:
+  - id: hire-manager
+    type: role
+    label: Hiring Manager
+    description: Owns the role definition, makes the hire decision, and leads the debrief.
+  - id: hire-req
+    type: process
+    label: Open Requisition
+    description: Approve headcount and publish the role with scorecard, level and compensation band.
+  - id: hire-ats
+    type: system
+    label: Applicant Tracking System
+    description: The ATS that stores candidates, stages and interview feedback (Greenhouse, Lever, etc.).
+  - id: hire-recruiter
+    type: role
+    label: Recruiter
+    description: Drives sourcing, screens candidates, and coordinates the interview loop.
+  - id: hire-source
+    type: process
+    label: Sourcing & Applications
+    description: Build the candidate pipeline from inbound applications, referrals and outbound outreach.
+  - id: hire-screen
+    type: process
+    label: Recruiter Screen
+    description: Initial call to confirm fit, motivation, compensation expectations and logistics.
+  - id: hire-qualified
+    type: decision
+    label: Advance candidate?
+    description: Decide whether the candidate meets the bar to enter the interview loop.
+  - id: hire-interview
+    type: process
+    label: Interview Loop
+    description: Run the structured panel of technical and behavioral interviews against the scorecard.
+  - id: hire-scorecard
+    type: artifact
+    label: Interview Scorecards
+    description: Structured written feedback and ratings from each interviewer.
+  - id: hire-debrief
+    type: process
+    label: Hiring Debrief
+    description: Panel reviews scorecards together to reach a consensus recommendation.
+  - id: hire-decision
+    type: decision
+    label: Make offer?
+    description: Hiring manager decides whether to extend an offer based on the debrief.
+  - id: hire-offer
+    type: process
+    label: Extend Offer
+    description: Assemble compensation, get approvals, and present the offer to the candidate.
+  - id: hire-offer-letter
+    type: artifact
+    label: Offer Letter
+    description: The formal written offer with role, compensation, start date and terms.
+  - id: hire-accept
+    type: decision
+    label: Offer accepted?
+    description: Track whether the candidate accepts, negotiates or declines.
+  - id: hire-onboard
+    type: process
+    label: Onboarding Handoff
+    description: Hand the signed hire to People Ops and IT to provision and schedule day one.
+  - id: hire-reject
+    type: process
+    label: Decline & Keep Warm
+    description: Send a respectful rejection and tag strong candidates for future roles.
+edges:
+  - from: hire-manager
+    to: hire-req
+    label: "requests"
+  - from: hire-req
+    to: hire-ats
+    label: "posted in"
+  - from: hire-req
+    to: hire-source
+  - from: hire-recruiter
+    to: hire-source
+    label: "drives"
+  - from: hire-source
+    to: hire-screen
+  - from: hire-screen
+    to: hire-qualified
+  - from: hire-qualified
+    to: hire-interview
+    label: "yes — advance"
+  - from: hire-qualified
+    to: hire-reject
+    label: "no — decline"
+  - from: hire-interview
+    to: hire-scorecard
+    label: "produces"
+  - from: hire-scorecard
+    to: hire-debrief
+  - from: hire-manager
+    to: hire-debrief
+    label: "leads"
+  - from: hire-debrief
+    to: hire-decision
+  - from: hire-decision
+    to: hire-offer
+    label: "yes — extend"
+  - from: hire-decision
+    to: hire-reject
+    label: "no — pass"
+  - from: hire-offer
+    to: hire-offer-letter
+    label: "produces"
+  - from: hire-offer-letter
+    to: hire-accept
+  - from: hire-accept
+    to: hire-onboard
+    label: "accepted"
+  - from: hire-accept
+    to: hire-source
+    label: "declined — resume search"

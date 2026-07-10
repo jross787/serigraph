@@ -1,0 +1,108 @@
+name: Incident Response
+description: Drop into a client map for on-call operations, covering alert to triage, severity decision, mitigation, and a postmortem artifact.
+nodes:
+  - id: ir-monitor
+    type: system
+    label: Monitoring & Alerting
+    description: The observability stack that watches metrics and logs and fires alerts on threshold breaches.
+  - id: ir-alert
+    type: process
+    label: Alert Fires
+    description: An alert triggers and pages the on-call rotation with the failing signal and context.
+  - id: ir-oncall
+    type: role
+    label: On-Call Engineer
+    description: First responder who acknowledges the page and begins investigating.
+  - id: ir-triage
+    type: process
+    label: Triage & Assess
+    description: Confirm the alert is real, gauge customer impact and blast radius, and gather initial signals.
+  - id: ir-severity
+    type: decision
+    label: Assign severity
+    description: Classify the incident by impact and urgency to set the response path and comms cadence.
+  - id: ir-declare
+    type: process
+    label: Declare Incident
+    description: Open the incident, spin up the response channel, and assign command for major incidents.
+    children:
+      nodes:
+        - id: ir-page
+          type: process
+          label: Assemble Response Team
+          description: Page the needed responders and open a dedicated incident channel or bridge.
+        - id: ir-ic
+          type: role
+          label: Incident Commander
+          description: Coordinates the response, owns decisions, and keeps the timeline moving.
+        - id: ir-comms
+          type: process
+          label: Post Status Updates
+          description: Send regular internal and customer-facing updates at the agreed cadence.
+        - id: ir-scribe
+          type: role
+          label: Scribe
+          description: Records the timeline of actions and decisions for the later postmortem.
+      edges:
+        - from: ir-page
+          to: ir-ic
+          label: "assigns commander"
+        - from: ir-page
+          to: ir-scribe
+          label: "assigns scribe"
+        - from: ir-ic
+          to: ir-comms
+          label: "directs updates"
+  - id: ir-mitigate
+    type: process
+    label: Mitigate & Stabilize
+    description: Apply the workaround, rollback or scale action that stops customer impact.
+  - id: ir-statuspage
+    type: system
+    label: Status Page
+    description: The public status page where customer-facing incident state is published.
+  - id: ir-resolve
+    type: process
+    label: Verify & Resolve
+    description: Confirm the system has recovered, monitor for recurrence, and mark the incident resolved.
+  - id: ir-postmortem
+    type: process
+    label: Postmortem Review
+    description: Blameless review of timeline, root cause and contributing factors within a set SLA.
+  - id: ir-report
+    type: artifact
+    label: Postmortem Report
+    description: The written postmortem with root cause, impact, timeline and tracked action items.
+edges:
+  - from: ir-monitor
+    to: ir-alert
+    label: "threshold breach"
+  - from: ir-alert
+    to: ir-oncall
+    label: "pages"
+  - from: ir-oncall
+    to: ir-triage
+    label: "acknowledges"
+  - from: ir-triage
+    to: ir-severity
+  - from: ir-severity
+    to: ir-declare
+    label: "SEV1 / SEV2 — major"
+  - from: ir-severity
+    to: ir-mitigate
+    label: "SEV3 — minor"
+  - from: ir-declare
+    to: ir-mitigate
+  - from: ir-mitigate
+    to: ir-statuspage
+    label: "posts workaround"
+  - from: ir-mitigate
+    to: ir-resolve
+  - from: ir-resolve
+    to: ir-statuspage
+    label: "posts resolved"
+  - from: ir-resolve
+    to: ir-postmortem
+  - from: ir-postmortem
+    to: ir-report
+    label: "produces"

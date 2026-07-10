@@ -1,0 +1,15 @@
+{
+  "name": "opsmap",
+  "version": "1.0.0",
+  "description": "Map how a business actually operates — a zoomable graph of nested, typed nodes backed by plain YAML files.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server/main.js",
+    "test": "node --test tests/",
+    "validate": "node tools/validate.mjs maps/*.yaml templates/*.yaml"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

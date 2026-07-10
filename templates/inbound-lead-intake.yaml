@@ -1,0 +1,106 @@
+name: Inbound Lead Intake
+description: Drop into a client map wherever inbound leads arrive by email or web form and need to reach an owner in the CRM.
+nodes:
+  - id: lead-form
+    type: system
+    label: Web Form
+    description: The marketing site's lead or demo-request form that posts new prospects into intake.
+  - id: lead-inbox
+    type: system
+    label: Shared Inbox
+    description: The shared sales inbox (e.g. sales@) where prospects email in directly.
+  - id: lead-capture
+    type: process
+    label: Capture & Parse
+    description: Pull each raw lead from its channel, extract the contact fields, and normalize them before matching.
+    children:
+      nodes:
+        - id: lead-parse
+          type: process
+          label: Extract Fields
+          description: Read name, company, email, phone and message out of the form payload or email body.
+        - id: lead-normalize
+          type: process
+          label: Normalize
+          description: Standardize company name, email casing and phone format so matching is reliable.
+        - id: lead-validate
+          type: decision
+          label: Complete contact?
+          description: Check that the minimum viable fields (name plus a work email or phone) are present.
+        - id: lead-bounce
+          type: process
+          label: Request Missing Info
+          description: Auto-reply asking for the missing details, or hold the lead for manual review.
+      edges:
+        - from: lead-parse
+          to: lead-normalize
+          label: "raw fields"
+        - from: lead-normalize
+          to: lead-validate
+        - from: lead-validate
+          to: lead-bounce
+          label: "incomplete"
+  - id: lead-dedupe
+    type: decision
+    label: Duplicate contact?
+    description: Search the CRM for an existing contact or account matching this email or domain.
+  - id: lead-create
+    type: process
+    label: Create Lead Record
+    description: Create a brand-new lead or contact when no match exists.
+  - id: lead-merge
+    type: process
+    label: Merge Into Existing
+    description: Attach the new activity to the matched contact or account instead of duplicating it.
+  - id: lead-crm
+    type: system
+    label: The CRM
+    description: The system of record where leads, contacts and accounts live (Salesforce, HubSpot, etc.).
+  - id: lead-record
+    type: artifact
+    label: Lead Record
+    description: The saved CRM lead with source, timestamp and captured fields, ready for assignment.
+  - id: lead-route
+    type: decision
+    label: Route by segment
+    description: Apply routing rules by deal size, territory or product interest to pick the owner.
+  - id: lead-ae
+    type: role
+    label: Account Executive
+    description: Owns enterprise or high-intent leads and works them directly.
+  - id: lead-sdr
+    type: role
+    label: Sales Development Rep
+    description: Owns SMB and self-serve leads for first-touch qualification.
+edges:
+  - from: lead-form
+    to: lead-capture
+    label: "form submission"
+  - from: lead-inbox
+    to: lead-capture
+    label: "email lead"
+  - from: lead-capture
+    to: lead-dedupe
+  - from: lead-dedupe
+    to: lead-create
+    label: "no match"
+  - from: lead-dedupe
+    to: lead-merge
+    label: "existing match"
+  - from: lead-create
+    to: lead-crm
+    label: "writes new record"
+  - from: lead-merge
+    to: lead-crm
+    label: "updates record"
+  - from: lead-crm
+    to: lead-record
+    label: "produces"
+  - from: lead-record
+    to: lead-route
+  - from: lead-route
+    to: lead-ae
+    label: "enterprise"
+  - from: lead-route
+    to: lead-sdr
+    label: "SMB / self-serve"

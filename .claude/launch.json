@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "opsmap",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server/main.js", "--no-open"],
+      "port": 4700
+    }
+  ]
+}

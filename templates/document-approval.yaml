@@ -1,0 +1,95 @@
+name: Document Approval
+description: Drop into a client map wherever a document must move through a review loop to a decision and a signed-off artifact.
+nodes:
+  - id: doc-author
+    type: role
+    label: Author / Owner
+    description: Owns the document, drafts it, and incorporates reviewer feedback.
+  - id: doc-request
+    type: process
+    label: Draft & Submit
+    description: Create the draft against the required template and submit it for review.
+  - id: doc-draft
+    type: artifact
+    label: Draft Document
+    description: The working draft awaiting review, versioned so changes are tracked.
+  - id: doc-dms
+    type: system
+    label: Document Management System
+    description: The repository that stores versions and controls access (SharePoint, Google Drive, etc.).
+  - id: doc-review
+    type: process
+    label: Circulate For Review
+    description: Route the draft to the required reviewers with a due date and review scope.
+  - id: doc-reviewer
+    type: role
+    label: Reviewer / Approver
+    description: Subject-matter or authority reviewer who comments and votes to approve or reject.
+  - id: doc-comments
+    type: artifact
+    label: Review Comments
+    description: Consolidated feedback, change requests and approval votes from reviewers.
+  - id: doc-decision
+    type: decision
+    label: Approve, revise, or reject?
+    description: Reconcile reviewer input into a single disposition for the document.
+  - id: doc-revise
+    type: process
+    label: Incorporate Feedback
+    description: Apply requested changes and produce an updated version for another review pass.
+  - id: doc-reject
+    type: process
+    label: Reject / Withdraw
+    description: Close out the document as rejected or withdrawn, with the reason recorded.
+  - id: doc-signoff
+    type: process
+    label: Final Sign-Off
+    description: Capture the approver's formal sign-off or e-signature on the approved version.
+  - id: doc-signed
+    type: artifact
+    label: Signed Document
+    description: The approved, signed-off document of record with an audit trail of approvals.
+  - id: doc-publish
+    type: process
+    label: Publish & Notify
+    description: Publish the final version and notify the stakeholders who depend on it.
+edges:
+  - from: doc-author
+    to: doc-request
+    label: "initiates"
+  - from: doc-request
+    to: doc-draft
+    label: "produces"
+  - from: doc-draft
+    to: doc-dms
+    label: "stored in"
+  - from: doc-draft
+    to: doc-review
+  - from: doc-review
+    to: doc-reviewer
+    label: "assigned to"
+  - from: doc-reviewer
+    to: doc-comments
+    label: "produces"
+  - from: doc-comments
+    to: doc-decision
+  - from: doc-decision
+    to: doc-revise
+    label: "changes requested"
+  - from: doc-decision
+    to: doc-signoff
+    label: "approved"
+  - from: doc-decision
+    to: doc-reject
+    label: "rejected"
+  - from: doc-revise
+    to: doc-review
+    label: "re-submit"
+  - from: doc-signoff
+    to: doc-signed
+    label: "produces"
+  - from: doc-signed
+    to: doc-publish
+  - from: doc-publish
+    to: doc-dms
+    label: "final version to"

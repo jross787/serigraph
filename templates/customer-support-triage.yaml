@@ -1,0 +1,100 @@
+name: Customer Support Triage
+description: Drop into a client map for any support desk that intakes tickets, sets severity, and escalates across support tiers.
+nodes:
+  - id: ticket-channel
+    type: system
+    label: Support Channels
+    description: Where customers reach in from (email, chat widget, phone, or self-serve portal).
+  - id: ticket-helpdesk
+    type: system
+    label: Helpdesk Tool
+    description: The ticketing platform that queues, tracks and times tickets (Zendesk, Freshdesk, etc.).
+  - id: ticket-create
+    type: process
+    label: Open Ticket
+    description: Log the contact as a ticket with customer, product area and a first description.
+  - id: ticket-record
+    type: artifact
+    label: Ticket Record
+    description: The tracked ticket with status, priority, owner and full conversation history.
+  - id: ticket-agent
+    type: role
+    label: Support Agent (L1)
+    description: Front-line agent who owns first response and resolves common requests.
+  - id: ticket-triage
+    type: process
+    label: Triage
+    description: Reproduce or clarify the issue, confirm impact, and categorize before setting severity.
+  - id: ticket-severity
+    type: decision
+    label: Severity?
+    description: Rate impact and urgency to choose the handling path and SLA clock.
+  - id: ticket-kb
+    type: process
+    label: Resolve From Knowledge Base
+    description: Answer routine how-to and known-issue tickets using documented solutions.
+  - id: ticket-escalate
+    type: process
+    label: Escalate To Specialist
+    description: Hand complex or product-specific tickets to a tier-2 specialist with context attached.
+  - id: ticket-l2
+    type: role
+    label: Specialist (L2)
+    description: Product or domain specialist who handles deeper technical or account issues.
+  - id: ticket-incident
+    type: process
+    label: Raise Incident
+    description: Trigger the incident process for outages or critical, widespread impact.
+  - id: ticket-eng
+    type: role
+    label: Engineering On-Call
+    description: The on-call engineer paged for suspected bugs, outages or data issues.
+  - id: ticket-resolve
+    type: process
+    label: Resolve & Respond
+    description: Deliver the fix or answer, confirm with the customer, and close the ticket.
+  - id: ticket-csat
+    type: artifact
+    label: CSAT Survey
+    description: Post-resolution satisfaction survey sent to the customer to capture feedback.
+edges:
+  - from: ticket-channel
+    to: ticket-create
+    label: "customer contact"
+  - from: ticket-create
+    to: ticket-record
+    label: "opens"
+  - from: ticket-helpdesk
+    to: ticket-triage
+    label: "queues"
+  - from: ticket-record
+    to: ticket-triage
+  - from: ticket-agent
+    to: ticket-triage
+    label: "performs"
+  - from: ticket-triage
+    to: ticket-severity
+  - from: ticket-severity
+    to: ticket-kb
+    label: "low — how-to"
+  - from: ticket-severity
+    to: ticket-escalate
+    label: "medium — needs specialist"
+  - from: ticket-severity
+    to: ticket-incident
+    label: "critical — outage"
+  - from: ticket-escalate
+    to: ticket-l2
+    label: "assigns"
+  - from: ticket-incident
+    to: ticket-eng
+    label: "pages"
+  - from: ticket-kb
+    to: ticket-resolve
+  - from: ticket-l2
+    to: ticket-resolve
+  - from: ticket-eng
+    to: ticket-resolve
+  - from: ticket-resolve
+    to: ticket-csat
+    label: "sends"
