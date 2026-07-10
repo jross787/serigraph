@@ -91,9 +91,10 @@ export function setCamera(c) { camera = { ...c }; applyCamera(); }
 
 const screenToWorld = (px, py) => ({ x: (px - camera.x) / camera.k, y: (py - camera.y) / camera.k });
 
-function fitCamera(bounds, pad = 70, maxK = 1.15) {
+function fitCamera(bounds, pad = null, maxK = 1.15) {
   const W = vw || window.innerWidth || 1200;
   const H = vh || window.innerHeight || 800;
+  if (pad == null) pad = Math.min(70, W * 0.05);
   const w = Math.max(bounds.w, 1), h = Math.max(bounds.h, 1);
   const k = Math.max(0.02, Math.min(maxK, (W - pad * 2) / w, (H - pad * 2) / h));
   return {

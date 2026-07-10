@@ -52,8 +52,8 @@ bus.on('toast', toast);
 function renderBreadcrumbs() {
   const nav = document.getElementById('breadcrumbs');
   nav.replaceChildren();
-  if (!state.model) return;
-  const chain = state.scopeId ? ancestryOf(state.model, state.scopeId) : [];
+  if (!state.model || state.scopeId == null) return; // at root the switcher already names the map
+  const chain = ancestryOf(state.model, state.scopeId);
   const parts = [{ id: null, label: state.model.name }, ...chain.map((id) => ({ id, label: state.model.byId.get(id)?.label ?? id }))];
   parts.forEach((part, i) => {
     const isLast = i === parts.length - 1;
@@ -114,7 +114,7 @@ function modal(title, body, actions) {
     if (ev.key === 'Escape') { ev.stopPropagation(); close(); }
     if (ev.key === 'Enter' && !ev.shiftKey && ev.target.tagName !== 'TEXTAREA') {
       const primary = actions.find((x) => x.primary);
-      if (primary) { ev.preventDefault(); const r = primary.onClick?.(); if (r !== false) close(); }
+      if (primary) { ev.preventDefault(); ev.stopPropagation(); const r = primary.onClick?.(); if (r !== false) close(); }
     }
   };
   function close() { document.removeEventListener('keydown', onKey, true); backdrop.remove(); }
@@ -163,12 +163,16 @@ export function addNodeDialog(ownerId) {
         if (!text) { label.focus(); return false; }
         const id = edit.uniqueId(state.model, edit.slugify(text));
         ctrl.commit(() => edit.addNode(ownerId, { id, type: seg.value(), label: text, description: desc.value }), { select: id })
-          .then((ok) => {
-            if (ok) {
+          .then(async (ok) => {
+            if (!ok) return;
+            if (ownerId && ownerId !== state.scopeId) {
+              // added inside a container we're not looking at — go show it
+              await ctrl.gotoScope(ownerId, { focusId: id });
+            } else {
               canvas.centerOn(id);
-              showDetail(id);
-              toast(`Added “${text}”`);
             }
+            showDetail(id);
+            toast(`Added “${text}”`);
           });
       },
     },
@@ -498,9 +502,9 @@ export function openSearch() {
   }
   const onKey = (ev) => {
     if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); close(); }
-    else if (ev.key === 'ArrowDown') { ev.preventDefault(); active = Math.min(items.length - 1, active + 1); paint(); results.children[active]?.scrollIntoView({ block: 'nearest' }); }
-    else if (ev.key === 'ArrowUp') { ev.preventDefault(); active = Math.max(0, active - 1); paint(); results.children[active]?.scrollIntoView({ block: 'nearest' }); }
-    else if (ev.key === 'Enter') { ev.preventDefault(); if (items[active]) pick(items[active]); }
+    else if (ev.key === 'ArrowDown') { ev.preventDefault(); ev.stopPropagation(); active = Math.min(items.length - 1, active + 1); paint(); results.children[active]?.scrollIntoView({ block: 'nearest' }); }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); ev.stopPropagation(); active = Math.max(0, active - 1); paint(); results.children[active]?.scrollIntoView({ block: 'nearest' }); }
+    else if (ev.key === 'Enter') { ev.preventDefault(); ev.stopPropagation(); if (items[active]) pick(items[active]); }
   };
   document.addEventListener('keydown', onKey, true);
   overlay.addEventListener('pointerdown', (ev) => { if (ev.target === overlay) close(); }, { once: true });

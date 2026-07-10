@@ -19,11 +19,14 @@ export function parseMap(source) {
   const warnings = [];
 
   const lineOf = (path) => {
-    try {
-      const node = path.length ? doc.getIn(path, true) : doc.contents;
-      if (node && node.range) return lineCounter.linePos(node.range[0]).line;
-    } catch { /* best effort */ }
-    return null;
+    // walk up the path until something with a source range is found
+    for (let p = [...path]; ; p.pop()) {
+      try {
+        const node = p.length ? doc.getIn(p, true) : doc.contents;
+        if (node && node.range) return lineCounter.linePos(node.range[0]).line;
+      } catch { /* keep walking up */ }
+      if (!p.length) return null;
+    }
   };
   const err = (path, message) => errors.push({ message, line: lineOf(path), path: path.join('.') });
   const warn = (path, message) => warnings.push({ message, line: lineOf(path), path: path.join('.') });
@@ -74,7 +77,10 @@ export function parseMap(source) {
       seenIds.set(id, npath.join('.') || '(top)');
 
       let type = raw.type;
-      if (typeof type !== 'string' || !NODE_TYPES.includes(type)) {
+      if (type == null) {
+        err(npath, `Node "${id}" is missing its "type:" — one of: ${NODE_TYPES.join(', ')}.`);
+        type = 'process';
+      } else if (typeof type !== 'string' || !NODE_TYPES.includes(type)) {
         const hint = TYPE_HINTS[String(type).toLowerCase()];
         err([...npath, 'type'], `Node "${id}" has type "${type}" — must be one of: ${NODE_TYPES.join(', ')}.` + (hint ? ` (did you mean "${hint}"?)` : ''));
         type = 'process';
