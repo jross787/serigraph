@@ -32,9 +32,9 @@ test('generator is deterministic and self-validating', () => {
 });
 
 test('standalone export inlines everything and rewrites module specifiers', async () => {
-  const source = readFileSync(path.join(ROOT, 'maps/lending.yaml'), 'utf8');
-  const html = await buildExport(ROOT, 'lending', source);
-  assert.match(html, /<title>Meridian Funding — Operations Map — Opsmap<\/title>/);
+  const source = readFileSync(path.join(ROOT, 'maps/insurance.yaml'), 'utf8');
+  const html = await buildExport(ROOT, 'insurance', source);
+  assert.match(html, /<title>Summit Insurance — Agency Operations — Opsmap<\/title>/);
   assert.ok(html.includes('window.OPSMAP_STANDALONE'), 'embeds map payload');
   assert.ok(html.includes('type="importmap"'), 'has import map');
   assert.ok(!html.includes('src="/app/'), 'no external app references left');

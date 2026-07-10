@@ -204,7 +204,7 @@ async function boot() {
 
   const route = ctrl.readHash();
   let mapId = route.mapId && state.maps.some((m) => m.id === route.mapId) ? route.mapId : null;
-  if (!mapId) mapId = state.maps.some((m) => m.id === 'lending') ? 'lending' : state.maps[0]?.id;
+  if (!mapId) mapId = state.maps.some((m) => m.id === 'insurance') ? 'insurance' : state.maps[0]?.id;
 
   if (mapId) {
     try {

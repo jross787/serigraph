@@ -10,7 +10,7 @@
 npm start
 ```
 
-That's it. No `npm install`, no build step, no cloud — the only requirement is [Node.js](https://nodejs.org) 18+ (the two libraries Opsmap uses are vendored into the repo). Your browser opens on the seeded example: **Meridian Funding**, a lending company mapped 4 levels deep, from email lead intake through underwriting to servicing.
+That's it. No `npm install`, no build step, no cloud — the only requirement is [Node.js](https://nodejs.org) 18+ (the two libraries Opsmap uses are vendored into the repo). Your browser opens on the seeded example: **Summit Insurance**, an independent agency mapped from new prospect through bind, billing, claims, and renewal.
 
 > Port busy or don't want a browser popping open? `PORT=5000 npm start`, or `node server/main.js --no-open`.
 
