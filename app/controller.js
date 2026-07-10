@@ -1,6 +1,5 @@
 // Orchestrates everything: loading maps, the edit→serialize→save pipeline,
 // navigation (scopes, selection, deep links, history), and remote changes.
-import * as YAML from '../vendor/yaml.js';
 import { parseMap, ancestryOf } from '../shared/model.js';
 import { state, bus } from './state.js';
 import { invalidateLayouts } from './layout.js';

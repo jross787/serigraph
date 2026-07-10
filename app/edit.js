@@ -101,6 +101,19 @@ export function updateNode(nodeId, fields) {
     if (links.length) doc.setIn([...p, 'links'], doc.createNode(links.map((l) => ({ label: l.label?.trim() || l.url, url: l.url }))));
     else if (doc.getIn([...p, 'links'], true)) doc.deleteIn([...p, 'links']);
   }
+  tidyKeyOrder(doc, p);
+}
+
+// keep files predictable: links before children on every node we touch
+function tidyKeyOrder(doc, nodePath) {
+  const map = doc.getIn(nodePath, true);
+  if (!isMap(map)) return;
+  const idx = (key) => map.items.findIndex((pair) => pair.key?.value === key);
+  const li = idx('links'), ci = idx('children');
+  if (li !== -1 && ci !== -1 && li > ci) {
+    const [linksPair] = map.items.splice(li, 1);
+    map.items.splice(idx('children'), 0, linksPair);
+  }
 }
 
 export function deleteNode(nodeId) {

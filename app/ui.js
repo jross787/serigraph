@@ -234,6 +234,11 @@ export function hideDetail() {
   if (panel) panel.hidden = true;
 }
 
+// only allow link protocols that can't execute script
+function safeUrl(url) {
+  return /^(https?:|mailto:)/i.test(String(url).trim()) ? String(url).trim() : null;
+}
+
 function linkifiedDesc(text) {
   const div = h('div', { class: 'desc' });
   const parts = String(text).split(/(https?:\/\/[^\s)>\]]+)/g);
@@ -276,9 +281,12 @@ function renderDetail() {
     body.append(h('div', { class: 'panel-section' },
       h('h3', {}, 'Links'),
       node.links.length
-        ? node.links.map((l) => h('a', { class: 'link-row', href: l.url, target: '_blank', rel: 'noopener' },
-            typeIcon('artifact', 13),
-            h('span', {}, l.label, h('span', { class: 'url' }, l.url))))
+        ? node.links.map((l) => {
+            const href = safeUrl(l.url);
+            return h(href ? 'a' : 'div', { class: 'link-row', ...(href ? { href, target: '_blank', rel: 'noopener noreferrer' } : {}) },
+              typeIcon('artifact', 13),
+              h('span', {}, l.label, h('span', { class: 'url' }, l.url)));
+          })
         : h('div', { class: 'no-links' }, ro ? 'No links.' : 'No links yet — SOPs, repos, dashboards…')));
 
     if (node.children) {
@@ -558,7 +566,8 @@ export function initUI() {
     if (state.selectedId) showDetail(state.selectedId);
     else if (state.selectedEdge == null) hideDetail();
     const mm = document.getElementById('minimap');
-    if (mm) mm.hidden = !state.model;
+    const curScope = state.model ? (state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children) : null;
+    if (mm) mm.hidden = !curScope || curScope.nodes.length === 0;
   });
   bus.on('selection-changed', () => {
     if (state.selectedId) showDetail(state.selectedId);
