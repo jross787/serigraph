@@ -4,7 +4,10 @@
 // nature — the flag IS the comment.
 import { isMap, isSeq } from '../vendor/yaml.js';
 
-export const FLAG_RE = /(inferred|assumption|low[\s-]?confidence|uncertain)[:\s—–-]*(.*)/i;
+// anchored to the start of the comment: "# inferred: x" is a flag,
+// "# see the assumptions doc" is just a comment and must never be
+// collected as provenance or deleted by "Mark confirmed"
+export const FLAG_RE = /^\s*(inferred|assumption|low[\s-]?confidence|uncertain)\b[:\s—–-]*(.*)/i;
 
 function noteOf(yamlNode) {
   if (!yamlNode || typeof yamlNode !== 'object') return null;

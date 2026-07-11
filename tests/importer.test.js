@@ -153,6 +153,30 @@ test('fixture transcripts are realistic sizes for the pipeline', async () => {
   }
 });
 
+test('flag comments must START the comment: passing mentions are never flags', async () => {
+  const { parseMap } = await import('../shared/model.js');
+  const { collectProvenance, FLAG_RE } = await import('../shared/provenance.js');
+  const src = `name: F
+nodes:
+  - id: a  # see the assumptions doc for rates
+    type: process
+    label: A
+  - id: b  # uncertainty is high here per Karen
+    type: process
+    label: B
+  - id: c  # inferred: implied by the schedule
+    type: process
+    label: C
+`;
+  const { doc, errors } = parseMap(src);
+  assert.deepEqual(errors, []);
+  const prov = collectProvenance(doc);
+  assert.deepEqual([...prov.nodes.keys()], ['c'], 'only the real flag is collected');
+  assert.equal(prov.nodes.get('c'), 'implied by the schedule');
+  assert.ok(!FLAG_RE.test(' see the assumptions doc'), 'mid-comment mention is not a flag');
+  assert.ok(FLAG_RE.test(' Assumption: rate carried over'), 'leading keyword still matches');
+});
+
 test('confirming a flag strips only that comment; file stays valid', async () => {
   const { parseMap } = await import('../shared/model.js');
   const { collectProvenance } = await import('../shared/provenance.js');

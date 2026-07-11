@@ -131,6 +131,8 @@ When a map is derived from a transcript (the ✨ Import flow) — or written by 
 
 The app surfaces these in the import review step, and because comments round-trip through every edit, the flag stays with the file until a human removes it (confirming the fact). Use `# inferred:` or `# assumption:`; keep the note short.
 
+The flag keyword must **start** the comment (`# inferred: …`, `# uncertain: …`). A comment that merely mentions one of the words mid-sentence (`# see the assumptions doc`) is an ordinary comment: it is never collected as provenance and never touched by "Mark confirmed".
+
 One formatting note: comment *text* always survives visual edits, but the whitespace before `#` is normalized to a single space the first time a file is edited in the app (imported maps are saved pre-normalized, so their diffs stay clean from the first edit).
 
 ## A complete minimal file
