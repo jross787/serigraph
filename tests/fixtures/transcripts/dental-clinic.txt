@@ -1,0 +1,75 @@
+Joe: Hey Karen, thanks for hopping on. How's the morning going over there?
+
+Karen: Oh, you know. It's July, everybody wants their kids in before school starts, so the phones have been ridiculous. But good, good. How about you?
+
+Joe: Can't complain. Weather's finally decent here. So — I know you've only got like forty-five minutes, so I'll just dive in. I'm trying to map out how a new patient moves through Brightside, start to finish. Can you walk me through what happens when somebody contacts you for the first time?
+
+Karen: Sure. So it starts one of two ways, either they call us or they fill out the little form on the website. The web form is honestly maybe a third of them now? Marisol checks those first thing every morning and calls them back, usually same day.
+
+Joe: Okay, and when she gets them on the phone —
+
+Karen: She gets their basics. Name, birthdate, insurance info, what's bothering them. That last one matters more than people think, because that's where we decide, is this a toothache-swollen-face situation or is this "I haven't been to a dentist in four years and I feel guilty about it."
+
+Joe: The triage question.
+
+Karen: Right. If it's an emergency — pain, swelling, broken tooth — we get them in that day or next morning. We kind of, um, we keep the 11:40 before lunch loose for exactly that reason. Don't tell the doctors I said that, they think the schedule just magically works out.
+
+Joe: Ha, your secret's safe. And if it's routine?
+
+Karen: Routine new patients book a comprehensive exam, that's a longer slot, ninety minutes usually, because it's x-rays plus the exam plus usually a cleaning if their gums allow it. Those book out — I want to say two, two and a half weeks right now? Summer's bad.
+
+Joe: Got it. And between booking and the visit, what has to happen?
+
+Karen: Insurance verification, that's the big one. Marisol runs the verifications every morning for anyone coming in the next... I think she works two days out? We use Availity for most of the payers, that's the clearinghouse, and whatever she gets back she keys into Dentrix so the front desk can see the breakdown — deductible, what percent they cover on major work, frequency limits, all that.
+
+Joe: Dentrix is your practice management system?
+
+Karen: Yes, we've been on it forever. Which, ugh, don't get me started —
+
+Joe: No, go ahead, get started.
+
+Karen: It's fine, honestly, Dentrix itself is fine. It's the reminder add-on people I'm mad at. We use — I won't even say the name — a texting vendor that plugs into Dentrix and sends the appointment reminders, and they raised our monthly rate like forty percent in January with basically no notice, and when I called to complain the guy tried to upsell me on their "AI phone concierge." I said sir, I have Marisol, she is faster than your robot. Anyway. Sorry. What were you asking?
+
+Joe: No, that's useful too. The reminder flow — what actually goes out?
+
+Karen: Text at... I believe it's three days before, and again the morning of. If they don't confirm the three-day one, it flags in Dentrix and somebody calls them. Oh, and new patients also get a link to do their paperwork online ahead of time — health history, consent forms. Maybe half actually do it. The rest fill out the clipboard in the lobby like it's 1995.
+
+Joe: Okay. So they show up. What does the visit look like — who does what?
+
+Karen: For a new comprehensive, the hygienist takes them back first. She does the x-rays, perio charting — measuring the gums — and the cleaning, if it's a straightforward one. The doctors do the actual exam and diagnosis, they're the only ones who can diagnose, obviously. And on the regular recall visits, the six-month cleanings, that's all hygiene — although one of the doctors will kind of drift through toward the end of those and take a peek and say hi. Patients love that part, honestly.
+
+Joe: And if the doctor finds stuff — a crown, fillings, whatever?
+
+Karen: Then it becomes a treatment plan. The doctor enters the recommended procedures into Dentrix, and then up front we print — well, we can email it too — the plan with the procedure codes and the estimate, based on that insurance breakdown Marisol pulled. We go through it with the patient, here's what insurance should pay, here's your estimated portion, and they sign it. That signature matters. We learned that the hard way with a patient who swore up and down nobody told her a crown was eight hundred out of pocket. She had signed the thing! But now we always, always get the signature before we book the treatment.
+
+Joe: And then treatment gets scheduled as a separate appointment?
+
+Karen: Usually, yeah. Unless it's small and we can just do it same-day, if a chair's open and the doctor's willing.
+
+Joe: Okay, let's go to the money side. Claim goes out after the procedure — walk me through that.
+
+Karen: So after the visit, the clinical notes get finished — actually no, wait, first the doctor has to sign off on the chart notes, that same day supposedly, and then Dana batches the claims and sends them out through the clearinghouse. She usually does that Tuesdays and Fridays, I think? It's not every day, I know that much. Attachments too — x-rays, perio charts — some payers want those attached or they'll just sit on the claim forever.
+
+Joe: And when a claim gets denied?
+
+Karen: Ugh. So the denial comes back with a reason code, and honestly half the time it's something dumb — missing tooth clause, or they wanted a narrative, or the subscriber ID was off by one digit. Dana figures out what they actually want, fixes it or writes the narrative, and resubmits. If it's a legit clinical denial she'll pull the doctor in to write the justification. That whole loop can take, I don't know, thirty to forty-five days? Sometimes it goes around twice. And if the claim finally really dies, the balance goes to the patient and that's its own fun phone call.
+
+Joe: Who makes that call?
+
+Karen: Depends who's feeling brave that day. Usually Dana sends a statement first and only calls if it ages past sixty days.
+
+Joe: Makes sense. Anything else in the flow I'm missing? Recall?
+
+Karen: Recall, yes — when they check out, we pre-book the next cleaning, six months out, right there at the desk. If they won't book, they go on a recall list and get texts when they're due. Oh, and completely unrelated, but it ate my entire spring — we gutted operatory four in April. New chair, new cabinets, the compressor line had to be rerouted, and the contractor disappeared for three weeks in the middle of it. Three weeks! We were juggling three doctors across five chairs instead of six. That's finally done as of, like, two weeks ago, thank god.
+
+Joe: Congrats on surviving it. Okay — last thing, the emergency path. After Marisol triages someone as urgent and they come in same-day, is that a different visit type?
+
+Karen: Yeah, it's a limited exam — problem-focused. One x-ray of the tooth in question, the doctor diagnoses, and usually we handle the immediate thing, get them out of pain, and then anything bigger becomes a treatment plan just like the normal path. So the two paths kind of merge back together after that first visit, if that makes sense.
+
+Joe: It does. That merging-back detail is exactly what I needed. Karen, this was great — I'll write it all up and send you the map to sanity-check.
+
+Karen: Perfect. Flag anything I hand-waved, because I definitely hand-waved.
+
+Joe: Will do. Go rescue your phones.
+
+Karen: Bye, Joe.

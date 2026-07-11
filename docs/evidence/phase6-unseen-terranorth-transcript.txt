@@ -1,0 +1,82 @@
+Discovery call — TerraNorth Grounds
+Joe (consultant) with Bill (operations manager)
+
+Joe: Bill, thanks for making time. How's the morning been?
+
+Bill: Oh, you know. Sprinkler head blew on a commercial account at six a.m., so I've already had my cardio for the day. You want coffee? Deb just made a pot.
+
+Joe: I'm good, thanks. So like I said on the phone, I'm just trying to map out how work actually flows through TerraNorth, start to finish. Nothing fancy — walk me through it like I'm new here.
+
+Bill: Sure, sure. Where do you want to start?
+
+Joe: When a new customer shows up. How do they find you?
+
+Bill: Mostly phone and email. The office line rings to Deb up front, and there's the info@ address she keeps an eye on. Referrals, property managers, the odd person who saw one of our trucks at a stoplight. Whatever comes in, Deb puts it into Jobber as a request — name, property address, what they're asking about. That's rule one around here: if it isn't in Jobber, it didn't happen.
+
+Joe: Everything goes in? Even the tire-kickers?
+
+Bill: Everything. We learned that one the hard way. Few years back we lost a whole plaza — decent money — because the note was on a sticky that went through the wash in my jacket. So now, Jobber first, opinions later.
+
+Joe: Okay. Then what — someone calls them back?
+
+Bill: Deb or I call back, usually same day, and if it's a real prospect I set up a site visit. Commercial grounds, you can't quote off Google Maps. Well, you can, but you'll get burned. Slopes, bed footage, irrigation, where the snow's going to have to get pushed come winter. So I get out there, walk the property, take measurements and pictures, and punch it all into Jobber on my phone.
+
+Joe: You do the site visits yourself?
+
+Bill: Yeah, I drive out. Which — speaking of driving — did I tell you about the truck? We ordered a new F-550 back in, what, November? Dealer says eight weeks. Eight weeks comes and goes, and it's "the frame's sitting in Kentucky." Then some module's on back order. Then they finally build it and it's the wrong color, which I could not have cared less about, but Marty did. Fourteen months, Joe. Fourteen. It shows up in March and the first week out, one of my guys backs it into a dumpster.
+
+Joe: That's painful. But the truck saga didn't really change how the work flows, right?
+
+Bill: No, no. Same jobs, older truck. Just a saga. I bring it up because it still stings.
+
+Joe: Noted. So after the walk-through, you build the estimate?
+
+Bill: Right. I put the quote together in Jobber, usually that night or the next morning, and it goes out to the customer by email through the system. If it's a bigger one — anything over ten grand a season, roughly — Marty wants eyes on it before it goes out. He's the owner. Under that, I just send it.
+
+Joe: And then the customer says yes or no.
+
+Bill: If they accept, it converts to a job in Jobber and gets slotted into the schedule. If they decline, or more often just go quiet, Deb sends a follow-up email a couple weeks later — something polite, "pricing's good for sixty days, keep us in mind." You'd be surprised how many circle back when the cheap guy they picked stops showing up in August.
+
+Joe: Do you track how many come back?
+
+Bill: Not really tracked, no. Anecdotally? Enough to keep doing it.
+
+Joe: Fair enough. Let's talk scheduling. You've got, what, three crews?
+
+Bill: Three in the summer, plus me floating. Sunday nights I sit down and build the week. Each crew gets a route sheet — stops in order, gate codes, what's due at each property, any notes like "don't blow clippings toward the patio, the guy will call." Deb prints them Monday morning and the crew leads grab them off the corkboard with their truck keys. Coffee stains and all. If something changes mid-day — rain, a breakdown, a client meltdown — I call the lead's cell and he scribbles it on the sheet.
+
+Joe: And a stop gets checked off where?
+
+Bill: Lead marks the sheet as they go, and when the sheets come back in, Deb closes the visits out in Jobber. She reconciles it against what was planned.
+
+Joe: Got it. Now — snow. When does that flip happen?
+
+Bill: That's the big one. Right around Columbus Day, Marty and I sit down with the whole client list and go account by account: are we offering this one a snow contract or not? Depends where it sits — a property off by itself kills the plow route — and, frankly, whether they paid us on time all summer. The ones we want, we send a snow agreement: seasonal flat rate or per-push, their choice, though we steer the small lots toward per-push. The ones we don't offer, or who don't sign, go dormant until spring cleanups. Once the signed contracts are back, the summer routes get torn up and rebuilt as plow routes, and we're basically a different company for four months.
+
+Joe: Different how?
+
+Bill: Two a.m. phone calls instead of seven a.m. Everything's reactive — you're staring at radar instead of a calendar. But the paperwork's the same idea: route sheet, do the work, close it out in Jobber.
+
+Joe: Okay. Invoicing — walk me through the money side.
+
+Bill: QuickBooks. End of the week, Deb pulls up what got completed in Jobber, and she puts the invoices into QuickBooks and sends them out from there. Monthly maintenance accounts bill on the first. Terms are net thirty.
+
+Joe: And when people don't pay?
+
+Bill: Which people — the ones breathing? At thirty days, QuickBooks fires the reminder automatically. Forty-five, Deb calls. Sixty, I call, and I'm friendly, but I'm me. Past that, service goes on hold, and more importantly, no snow offer in October. That threat clears more invoices than any collection agency would.
+
+Joe: I believe it.
+
+Bill: You know who never pays late? Geese. There's an office park on Route 9 — we don't even service it — but the geese there have declared war on the property next door, which we do service, and my guy Danny spent forty minutes one Tuesday getting chased around a retention pond. I told him, that's not in the contract, that's between you and the goose. He wants hazard pay. For a bird. Anyway — where were we. Money.
+
+Joe: Money, yes. One more thing — when you were slammed this spring, did anything back up?
+
+Bill: The site visits, mostly. April, I was at my niece's wedding in Buffalo for four days, came back to eleven walk-throughs waiting on me. Prospects don't love sitting a week and a half for a number, I'll tell you that.
+
+Joe: That's really useful, Bill. I think I've got the skeleton. I'll sketch this up as a map and come back, and you can tell me where I got it wrong.
+
+Bill: Oh, I will. And Deb will too — she's the one who actually knows how this place runs.
+
+Joe: Noted. Thanks, Bill.
+
+Bill: Anytime. Take a muffin on your way out, Deb made them.

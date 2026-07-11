@@ -140,9 +140,93 @@ export function clearNodePosition(nodeId) {
   if (doc.getIn([...p, 'position'], true)) doc.deleteIn([...p, 'position']);
 }
 
-// keep files predictable: id, type, label, description, links, position,
-// children — unknown keys keep their relative order at the end
-const KEY_ORDER = ['id', 'type', 'label', 'description', 'links', 'position', 'children'];
+// Cost inputs (human-vs-agent economics, FORMAT.md). `fields` carries any of
+// { runs, minutes, rate, perRun, setup }; a number sets, null clears, absent
+// keys keep their current value. Clearing everything removes the block.
+export function setNodeCost(nodeId, fields) {
+  const doc = state.doc;
+  const p = findNodePath(doc, nodeId);
+  if (!p) throw new Error(`node "${nodeId}" not found in file`);
+  const cur = state.model?.byId.get(nodeId)?.cost ?? {};
+  const val = (v, name) => {
+    if (v == null) return null;
+    const n = typeof v === 'number' ? v : Number(String(v).trim());
+    if (!Number.isFinite(n) || n < 0) throw new Error(`${name} must be a number ≥ 0`);
+    return Math.round(n * 10000) / 10000;
+  };
+  const merged = {
+    runs: fields.runs === undefined ? cur.runs ?? null : val(fields.runs, 'Runs per month'),
+    minutes: fields.minutes === undefined ? cur.minutes ?? null : val(fields.minutes, 'Human minutes per run'),
+    rate: fields.rate === undefined ? cur.rate ?? null : val(fields.rate, 'Hourly rate'),
+    perRun: fields.perRun === undefined ? cur.perRun ?? null : val(fields.perRun, 'Agent cost per run'),
+    setup: fields.setup === undefined ? cur.setup ?? null : val(fields.setup, 'Agent setup cost'),
+  };
+
+  const obj = {};
+  if (merged.runs != null) obj.runs = merged.runs;
+  const human = {};
+  if (merged.minutes != null) human.minutes = merged.minutes;
+  if (merged.rate != null) human.rate = merged.rate;
+  if (Object.keys(human).length) obj.human = human;
+  const agentM = {};
+  if (merged.perRun != null) agentM.perRun = merged.perRun;
+  if (merged.setup != null) agentM.setup = merged.setup;
+  if (Object.keys(agentM).length) obj.agent = agentM;
+
+  if (!Object.keys(obj).length) {
+    if (doc.getIn([...p, 'cost'], true)) doc.deleteIn([...p, 'cost']);
+    return;
+  }
+  const created = doc.createNode(obj);
+  for (const pair of created.items) {
+    const k = typeof pair.key === 'string' ? pair.key : pair.key?.value;
+    if ((k === 'human' || k === 'agent') && isMap(pair.value)) pair.value.flow = true;
+  }
+  doc.setIn([...p, 'cost'], created);
+  tidyKeyOrder(doc, p);
+}
+
+// Map-level cost defaults: costModel: { currency: USD, defaultRate: 65 }
+export function setMapCostModel({ currency, defaultRate } = {}) {
+  const doc = state.doc;
+  const obj = {};
+  if (currency != null && String(currency).trim()) {
+    const c = String(currency).trim().toUpperCase();
+    if (!/^[A-Z]{3}$/.test(c)) throw new Error('Currency must be a 3-letter code like USD');
+    obj.currency = c;
+  }
+  if (defaultRate != null && String(defaultRate).trim?.() !== '') {
+    const n = typeof defaultRate === 'number' ? defaultRate : Number(String(defaultRate).trim());
+    if (!Number.isFinite(n) || n < 0) throw new Error('Default rate must be a number ≥ 0');
+    obj.defaultRate = Math.round(n * 100) / 100;
+  }
+  if (!Object.keys(obj).length) {
+    if (doc.getIn(['costModel'], true)) doc.deleteIn(['costModel']);
+    return;
+  }
+  doc.setIn(['costModel'], doc.createNode(obj, { flow: true }));
+  tidyTopOrder(doc);
+}
+
+// keep the top level predictable: name, description, costModel, nodes, edges
+const TOP_ORDER = ['name', 'description', 'costModel', 'nodes', 'edges'];
+function tidyTopOrder(doc) {
+  const map = doc.contents;
+  if (!isMap(map)) return;
+  const rank = (pair) => {
+    const key = typeof pair.key === 'string' ? pair.key : pair.key?.value;
+    const i = TOP_ORDER.indexOf(key);
+    return i === -1 ? TOP_ORDER.length : i;
+  };
+  map.items = map.items
+    .map((pair, i) => [pair, i])
+    .sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1])
+    .map(([pair]) => pair);
+}
+
+// keep files predictable: id, type, label, description, links, cost,
+// position, children — unknown keys keep their relative order at the end
+const KEY_ORDER = ['id', 'type', 'label', 'description', 'links', 'cost', 'position', 'children'];
 function tidyKeyOrder(doc, nodePath) {
   const map = doc.getIn(nodePath, true);
   if (!isMap(map)) return;

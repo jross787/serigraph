@@ -1,0 +1,129 @@
+name: Returns Department
+description: E-commerce returns — receiving, inspection, refund-vs-restock, customer comms.
+costModel: { currency: USD, defaultRate: 45 }
+nodes:
+  - id: returns-portal
+    type: system
+    label: Returns Portal
+    description: |
+      Self-service web portal where the customer starts a return,
+      picks a reason code, and prints a prepaid label.
+    position: { x: 0, y: -300 }
+  - id: rma
+    type: artifact
+    label: RMA Authorization
+    description: The return-merchandise authorization record; carries order id, reason code, and label tracking number.
+  - id: receiving-clerk
+    type: role
+    label: Receiving Clerk  # inferred: someone scans inbound packages daily but the title is never stated
+    description: Warehouse staffer who scans inbound return packages against open RMAs.
+  - id: receiving
+    type: process
+    label: Receive Package
+    description: |
+      Inbound return parcel is scanned, matched to its RMA, and moved
+      to the inspection queue. Mismatches go to a manual hold shelf.
+    cost:
+      runs: 480
+      human: { minutes: 6, rate: 32 }
+      agent: { perRun: 0.20 }
+  - id: inspection
+    type: process
+    label: Inspect Item
+    description: |
+      Item is unboxed, condition-graded (new / open-box / damaged),
+      photographed, and the grade is written back to the RMA.
+    cost:
+      runs: 480
+      human: { minutes: 15 }
+      agent: { perRun: 0.90, setup: 6000 }
+  - id: inspection-report
+    type: artifact
+    label: Inspection Report
+    description: Photos plus condition grade attached to the RMA; the input to the refund-vs-restock call.
+  - id: refund-or-restock
+    type: decision
+    label: Refund or Restock?
+    description: Grade "new" or "open-box" goes back to stock; anything damaged or non-resalable is refunded and scrapped. Repeat-returner patterns escalate to fraud review.
+  - id: issue-refund
+    type: process
+    label: Issue Refund
+    description: Refund is keyed against the original payment method; partial refunds for open-box wear follow the published deduction table.
+    cost:
+      runs: 300
+      human: { minutes: 4, rate: 38 }
+      agent: { perRun: 0.15, setup: 1200 }
+  - id: restock
+    type: process
+    label: Restock Item
+    description: Item is re-bagged, re-labeled, and put away; inventory count is corrected in the ERP.
+  - id: fraud-review
+    type: process
+    label: Fraud Review
+    description: |
+      Escalation path for suspected returns abuse (serial returners,
+      empty-box claims). Built and staffed, but no case has triggered
+      it yet this quarter.
+    cost:
+      runs: 0
+      human: { minutes: 25, rate: 55 }
+      agent: { perRun: 1.10 }
+  - id: customer-notification
+    type: process
+    label: Notify Customer
+    description: Templated email at each terminal state — refund issued, restock complete, or fraud decision. Agent per-run cost not yet measured.
+    cost:
+      runs: 300
+      human: { minutes: 8, rate: 30 }
+      agent: { setup: 900 }
+  - id: cs-team
+    type: role
+    label: Customer Service Team
+    description: Owns all outbound customer messaging and handles replies to return notifications.
+  - id: erp
+    type: system
+    label: Inventory ERP
+    description: System of record for stock counts; restocked items are corrected here.
+edges:
+  - from: returns-portal
+    to: rma
+    label: issues
+  - from: rma
+    to: receiving
+    label: authorizes
+  - from: receiving-clerk
+    to: receiving
+    label: staffs
+  - from: receiving
+    to: inspection
+    label: logged package
+  - from: inspection
+    to: inspection-report
+    label: produces
+  - from: inspection
+    to: refund-or-restock
+    label: condition graded
+  - from: refund-or-restock
+    to: issue-refund
+    label: refund
+  - from: refund-or-restock
+    to: restock
+    label: restock
+  - from: refund-or-restock
+    to: fraud-review
+    label: suspected abuse
+  - from: issue-refund
+    to: customer-notification
+    label: refund confirmation
+  - from: restock
+    to: erp
+    label: corrects inventory in
+  - from: restock
+    to: customer-notification
+    label: return-complete notice
+  - from: fraud-review
+    to: customer-notification
+    label: decision letter
+  - from: cs-team
+    to: customer-notification
+    label: sends

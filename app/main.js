@@ -239,6 +239,8 @@ function wireToolbar() {
   on('btn-search', ui.openSearch);
   on('btn-templates', () => ui.toggleTemplates());
   on('btn-add-node', () => ui.addNodeDialog(state.scopeId));
+  on('btn-economics', () => ui.toggleEconomics());
+  on('btn-import', () => ui.importDialog());
   on('btn-present', togglePresent);
   on('btn-theme', toggleTheme);
   on('btn-help', ui.helpDialog);

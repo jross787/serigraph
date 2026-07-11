@@ -78,6 +78,61 @@ The rules:
 - **Remove the field to un-pin** — the node returns to automatic layout. (In the app: drag a node to pin it; click its pin badge, or "Release to auto-layout" in the detail panel, to remove it.)
 - Write it exactly as a map of two numbers — `position: { x: 340, y: 120 }`. Anything else (a list, a string, a missing coordinate) is a validation error.
 
+## The cost model (optional) — human vs. agent economics
+
+Any node can carry cost inputs; the app computes and rolls up everything else live. All fields are optional — a map without them renders exactly as before, and **a missing number is UNKNOWN (shown as "—"), never treated as zero**.
+
+```yaml
+costModel: { currency: USD, defaultRate: 65 }   # optional, top level, one line
+nodes:
+  - id: verify-insurance
+    type: process
+    label: Verify insurance
+    cost:
+      runs: 320                        # executions per MONTH
+      human: { minutes: 12, rate: 58 } # person-minutes per run · loaded $/hour
+      agent: { perRun: 0.35, setup: 1800 } # $ per agent run · one-time build cost
+```
+
+Field reference (all numbers must be ≥ 0; negatives and non-numbers are validation errors):
+
+| field | meaning |
+|---|---|
+| `costModel.currency` | 3-letter code (`USD`, `EUR`, …) used for display. Default `USD`. |
+| `costModel.defaultRate` | loaded $/hour used when a node's `cost` omits `human.rate`. |
+| `cost.runs` | how many times this step executes **per month**. `0` is valid (a step that never runs). |
+| `cost.human.minutes` | person-minutes one run takes today. |
+| `cost.human.rate` | loaded $/hour of whoever does it (falls back to `defaultRate`). |
+| `cost.agent.perRun` | what one automated/agent run costs, in currency (inference + tooling). |
+| `cost.agent.setup` | one-time cost to build the automation. Optional; treated as 0 for a costed node. |
+
+The formulas (computed by the app — never write computed values into the file):
+
+```
+human cost/run   = minutes ÷ 60 × rate
+agent cost/run   = perRun
+monthly human    = human cost/run × runs        monthly agent = perRun × runs
+monthly savings  = monthly human − monthly agent
+payback          = Σ setup ÷ Σ monthly savings   ("immediate" when no setup; "never" when savings ≤ 0)
+first-year ROI   = (12 × Σ monthly savings − Σ setup) ÷ Σ setup   (undefined when setup is 0)
+```
+
+A node enters the roll-up **only when both sides are computable**: `runs` + `human.minutes` + a rate (own or default) + `agent.perRun`. Partially-specified nodes are listed as *incomplete* and excluded **entirely — their `setup` too** — so total savings always equals total human minus total agent over the same nodes, and Σ setup ranges over the same fully-costed nodes (a complete `runs: 0` node's setup does count). If a node omits `human.rate` and the map has no `defaultRate`, the rate is unknown and the node is incomplete. Payback precisely: "immediate" when Σ setup is 0; "never" when savings ≤ 0 and there is setup to recover; otherwise Σ setup ÷ Σ monthly savings. Displays round for readability; the underlying math is exact.
+
+The coverage indicator ("N of M steps costed") counts `process` nodes **at every depth** as M, and fully-costed process nodes as N; costed nodes of other types still join the totals. Cost applies per node at any depth; give containers their own `cost` only if their children carry none (both would double-count the same work).
+
+## Provenance comments (`# inferred:`)
+
+When a map is derived from a transcript (the ✨ Import flow) — or written by any careful author — elements that are *implied but never stated outright* carry an inline YAML comment on their `id:` (or an edge's `from:`) line:
+
+```yaml
+  - id: insurance-coordinator  # inferred: handles verifications daily but title never stated
+```
+
+The app surfaces these in the import review step, and because comments round-trip through every edit, the flag stays with the file until a human removes it (confirming the fact). Use `# inferred:` or `# assumption:`; keep the note short.
+
+One formatting note: comment *text* always survives visual edits, but the whitespace before `#` is normalized to a single space the first time a file is edited in the app (imported maps are saved pre-normalized, so their diffs stay clean from the first edit).
+
 ## A complete minimal file
 
 ```yaml
@@ -120,3 +175,4 @@ edges:
 4. Rich maps mix types: processes for flow, plus the roles who do them, systems they use, and artifacts they produce — connected with labeled edges.
 5. Put real substance in `description` — that text is what makes the map useful.
 6. Omit `position` unless a node genuinely needs a fixed spot; when used, it's exactly `position: { x: <number>, y: <number> }` (the node's center; y grows downward).
+7. Cost fields are optional and additive: numbers ≥ 0 only; leave a value out rather than guessing (unknowns show as "—" and stay out of totals — they never become 0).

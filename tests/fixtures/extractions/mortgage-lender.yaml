@@ -1,0 +1,246 @@
+name: Cascade — Purchase Loan Pipeline
+description: How a plain-vanilla purchase loan moves through Cascade, lead to wire — about twenty-eight to thirty days application to funding right now.
+nodes:
+  - id: lead-intake
+    type: process
+    label: Lead intake
+    description: Most leads come in through the website; phone leads have to be keyed in manually.
+    children:
+      nodes:
+        - id: web-leads
+          type: process
+          label: Website form
+          description: Short form — name, phone, rough purchase price — drops straight into Encompass.
+        - id: phone-leads
+          type: process
+          label: Phone leads keyed in
+          description: Someone keys phone leads in manually, which works about ninety percent of the time.
+  - id: pre-qual
+    type: process
+    label: Pre-qual
+    description: The assigned LO does a pre-qual call, usually within a day, sometimes same day for a hot lead.
+    children:
+      nodes:
+        - id: pre-qual-call
+          type: process
+          label: Pre-qual call
+          description: Income, employment, what they're looking to buy, and whether they have a down payment.
+        - id: credit-pull
+          type: process
+          label: Credit pull and numbers
+          description: If it sounds workable the LO pulls credit and runs the numbers; DTI is the big one.
+        - id: corelogic
+          type: system
+          label: CoreLogic
+          description: The tri-merge credit pull goes through CoreLogic.
+      edges:
+        - from: pre-qual-call
+          to: credit-pull
+          label: sounds workable
+        - from: credit-pull
+          to: corelogic
+          label: tri-merge pull
+  - id: dti-decision
+    type: decision
+    label: DTI over threshold?
+    description: Threshold is about forty-five percent for most products, possibly forty-three on some — the speaker was unsure of the exact number.
+  - id: nurture-track
+    type: process
+    label: Nurture email track
+    description: Canned drip sequence with credit-improvement tips that fires automatically once the LO marks them declined; converts better than you'd think.
+  - id: doc-collection
+    type: process
+    label: Document collection
+    description: The borrower gets a link to the portal and uploads everything; borrowers mostly use the portal now.
+    children:
+      nodes:
+        - id: income-docs
+          type: artifact
+          label: Income and asset docs
+          description: Paystubs, W2s, and bank statements — two years of W2s if salaried, more if self-employed.
+        - id: borrower-portal
+          type: system
+          label: Borrower portal
+          description: Upload portal that pushes the docs into the loan file in Encompass.
+      edges:
+        - from: income-docs
+          to: borrower-portal
+          label: uploaded by the borrower
+  - id: file-scrub
+    type: process
+    label: File scrub and setup
+    description: Between the LO and underwriting the file is checked for legible docs and correct dates, stacked in the right order, and flagged if anything is off — saves the underwriters a ton of back-and-forth.
+  - id: underwriting
+    type: process
+    label: Underwriting
+    description: The underwriter reviews the full file against guidelines; almost nobody sails through clean.
+    children:
+      nodes:
+        - id: full-file-review
+          type: process
+          label: Full file review
+          description: Review of the complete file against guidelines.
+        - id: conditions
+          type: artifact
+          label: Conditions
+          description: Items like a letter of explanation for a deposit or an updated paystub because the old one aged out.
+        - id: conditions-loop
+          type: process
+          label: Conditions loop
+          description: Borrower sends items in through the LO and the underwriter re-reviews; a round takes a day for fast borrowers, weeks for slow ones. Where deals go to die if nobody's chasing it.
+      edges:
+        - from: full-file-review
+          to: conditions
+          label: comes back with conditions
+        - from: conditions
+          to: conditions-loop
+          label: sent to borrower through the LO
+        - from: conditions-loop
+          to: full-file-review
+          label: re-review, two to three rounds
+  - id: appraisal
+    type: process
+    label: Appraisal
+    description: Ordered pretty much as soon as the file is in underwriting — it doesn't wait for conditions.
+    children:
+      nodes:
+        - id: order-appraisal
+          type: process
+          label: Order appraisal
+          description: Ordered through a third-party AMC, sometimes right after intent to proceed.
+        - id: amc
+          type: system
+          label: Appraisal management company (AMC)
+          description: Third party that assigns the appraiser; Cascade can't pick the appraiser directly — a compliance thing.
+        - id: appraisal-report
+          type: artifact
+          label: Appraisal report
+          description: Comes back in maybe seven to ten days.
+      edges:
+        - from: order-appraisal
+          to: amc
+          label: order placed
+        - from: amc
+          to: appraisal-report
+          label: appraiser assigned, report returned
+  - id: clear-to-close
+    type: process
+    label: Clear to close (CTC)
+    description: The big milestone — issued by the underwriter once conditions are cleared and the appraisal is in and acceptable.
+  - id: closing-prep
+    type: process
+    label: Closing doc prep
+    description: The docs get drawn after CTC — underwriting has already moved on to the next file by then.
+    children:
+      nodes:
+        - id: balance-fees
+          type: process
+          label: Balance fees
+          description: Fees get balanced against the title company's numbers in a back-and-forth on the closing disclosure.
+        - id: closing-disclosure
+          type: artifact
+          label: Closing disclosure (CD)
+          description: Subject to a regulated three-day rule under TRID — you can't just wing the timing.
+        - id: docusign
+          type: system
+          label: DocuSign
+          description: The closing package goes out through DocuSign; the borrower signs most of it electronically ahead of time.
+      edges:
+        - from: balance-fees
+          to: closing-disclosure
+          label: CD finalized
+        - from: closing-disclosure
+          to: docusign
+          label: package released to e-sign
+  - id: closing
+    type: process
+    label: Closing
+    description: Usually happens at the title company; the bulk is pre-signed via DocuSign, with a wet-sign piece for the note and deed with the notary at the closing table.
+  - id: funding
+    type: process
+    label: Funding
+    description: Signed package comes back and gets reviewed, the money is wired, and once the wire confirms and it records the loan is funded; it usually gets sold off to a servicer within a month or two after.
+    children:
+      nodes:
+        - id: package-review
+          type: process
+          label: Review signed package
+          description: The returned signed package gets reviewed before funds move.
+        - id: wire-funds
+          type: process
+          label: Wire and record
+          description: The money is wired; once the wire confirms and it records, the loan is funded.
+      edges:
+        - from: package-review
+          to: wire-funds
+          label: reviewed, then wired
+  - id: loan-officer
+    type: role
+    label: Loan officer (LO)
+    description: Runs the pre-qual call, pulls credit, relays underwriting conditions to the borrower, and owns headaches like low appraisals.
+  - id: underwriter
+    type: role
+    label: Underwriter
+    description: Reviews the full file against guidelines, comes back with conditions, and issues the clear to close.
+  - id: encompass
+    type: system
+    label: Encompass
+    description: The LOS and system of record for the loan file — everything lives there from lead to funding.
+edges:
+  - from: lead-intake
+    to: encompass
+    label: web and phone leads land in the LOS
+  - from: encompass
+    to: pre-qual
+    label: lead assigned out to a loan officer
+  - from: pre-qual
+    to: dti-decision
+    label: numbers run, DTI checked
+  - from: dti-decision
+    to: doc-collection
+    label: pre-approved
+  - from: dti-decision
+    to: nurture-track
+    label: over DTI threshold — declined
+  - from: nurture-track  # inferred: re-entry point implied by "come back and qualify"
+    to: pre-qual
+    label: some come back months later and qualify
+  - from: doc-collection
+    to: encompass
+    label: portal pushes docs into the loan file
+  - from: doc-collection
+    to: file-scrub
+    label: file complete
+  - from: file-scrub
+    to: underwriting
+    label: stacked file lands in the underwriting queue
+  - from: underwriting
+    to: appraisal
+    label: order triggered on entering underwriting
+  - from: underwriting
+    to: loan-officer
+    label: conditions go back to the borrower through the LO
+  - from: loan-officer
+    to: underwriting
+    label: borrower items returned for re-review
+  - from: appraisal
+    to: loan-officer
+    label: low appraisal — renegotiate or bring more cash
+  - from: underwriting
+    to: clear-to-close
+    label: conditions cleared
+  - from: appraisal
+    to: clear-to-close
+    label: appraisal in and acceptable
+  - from: underwriter
+    to: clear-to-close
+    label: issues the CTC
+  - from: clear-to-close
+    to: closing-prep
+    label: docs drawn after CTC
+  - from: closing-prep
+    to: closing
+    label: package out through DocuSign
+  - from: closing
+    to: funding
+    label: signed package comes back

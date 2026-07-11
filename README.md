@@ -27,6 +27,8 @@ That's it. No `npm install`, no build step, no cloud — the only requirement is
 | **⌘K** | Search every node at every level, jump straight to it |
 | **Click** a node | Details: what happens here, outbound links (SOPs, repos, dashboards), sub-map |
 | **`#id ⧉`** in the panel | Copy a deep link — paste it in a fresh tab, land zoomed on that node |
+| **✨ Import** | Paste a meeting/discovery transcript → get a reviewable map: steps, decisions, roles, systems, artifacts — with inferred items flagged before anything is saved. Needs a model: `ANTHROPIC_API_KEY`, a logged-in `claude` CLI, or `OPSMAP_LLM_CMD` pointing at any local model |
+| **$ Economics** | Give steps a monthly volume, human minutes × rate, and an agent cost/run — the map rolls up human vs. agent cost, savings, payback, and ROI live. Unknowns show "—" and never sneak into totals |
 | **+ Node**, **Edit**, **→ Connect** | Build the map visually; every change is written back to the YAML |
 | **Drag from the palette** (or double-click empty canvas) | Drop a new typed node exactly where you release — onto a container to nest it inside |
 | **Drag a node** | Pin it exactly there — one `position: { x, y }` line in the YAML; click its pin badge to release back to auto-layout. Drag the background to pan |

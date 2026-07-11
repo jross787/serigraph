@@ -1,0 +1,87 @@
+Joe: Hey Dana, thanks for hopping on. How's the week treating you?
+
+Dana: Oh, you know. It's July, rates dipped a quarter point last week, so the phones haven't stopped. Good problem to have, I guess.
+
+Joe: Ha, better than the alternative. Hey, before I forget — did you guys ever finish that office buildout? Last time we talked you were all crammed into the second floor.
+
+Dana: Ugh, don't get me started. The contractor pushed us again, so half the loan officers are still sharing desks and the new conference room is basically drywall dust. Supposedly done by Labor Day. I'll believe it when I see it.
+
+Joe: Classic. Okay, so — the reason for the call. I want to walk through how a loan actually moves through Cascade, start to finish. Just talk me through it like I'm new here.
+
+Dana: Sure. So it starts with a lead. Most come in through the website — there's a short form, name, phone, rough purchase price — and those drop straight into Encompass. That's our LOS. The phone leads, someone has to key those in manually, which, um, works most of the time. Let's say ninety percent of the time.
+
+Joe: Encompass is the system of record for everything?
+
+Dana: For the loan file, yeah. Everything lives there from lead to funding. So once a lead is in, it gets assigned out to a loan officer, and the LO does a pre-qual call. Usually within a day, sometimes same day if it's a hot lead.
+
+Joe: And what happens on that call?
+
+Dana: Income, employment, what they're looking to buy, do they have a down payment, that kind of thing. If it sounds workable, the LO pulls credit — we go through CoreLogic for the tri-merge — and runs the numbers. The big one is DTI. If they're over our threshold, which is, I think forty-five percent for most products? Might be forty-three on some. Anyway, if they're over, we decline the pre-approval, but they don't just vanish — they go onto a nurture email track. Little drip campaign, "here's how to improve your credit," that stuff. Some of them come back six months later and qualify.
+
+Joe: Who builds those emails? Marketing?
+
+Dana: Yeah, it's a canned sequence, it just fires automatically once the LO marks them declined. Honestly it converts better than you'd think.
+
+Joe: Okay, so pre-approved borrowers. What next?
+
+Dana: Docs. The borrower gets a link to our portal and uploads everything — paystubs, W2s, bank statements. Two years of W2s if they're salaried, more if they're self-employed, which is its own circus. The portal pushes the docs into the loan file in Encompass.
+
+Joe: Do borrowers actually use the portal or do they email you PDFs?
+
+Dana: Mostly the portal now. We had to train them out of texting photos of paystubs to their LO. Photos of paystubs, Joe. Sideways. Anyway. Once the file's complete — actually no, wait, back up. Before the file even gets to underwriting, someone scrubs it. Checks the docs are legible, dates are right, nothing missing. Saves the underwriters a ton of back-and-forth.
+
+Joe: Who does that scrub? Is that the LO?
+
+Dana: No, no, the LOs would never. It happens between the LO and underwriting — the file gets set up, stacked in the right order, flagged if anything's off. Then it lands in the underwriting queue.
+
+Joe: Got it. And underwriting itself?
+
+Dana: Underwriter reviews the full file against guidelines. Almost nobody sails through clean. They come back with conditions — like, we need a letter of explanation for this deposit, or an updated paystub because the old one aged out. Those go back to the borrower through the LO, borrower sends stuff in, underwriter re-reviews. That loop can go two, three rounds. Honestly the conditions loop is where deals go to die if nobody's chasing it.
+
+Joe: How long does one round of that take?
+
+Dana: Depends on the borrower. Fast ones, a day. Slow ones... I had one take three weeks because the guy was on a fishing boat in Alaska. True story.
+
+Joe: Ha. What about the appraisal? Where does that fit?
+
+Dana: That gets ordered pretty much as soon as we're in underwriting — sometimes right after intent to proceed, doesn't wait for conditions. We order through a third-party AMC, we can't pick the appraiser directly, compliance thing. The AMC assigns someone, appraisal comes back in, I think that takes maybe seven to ten days? Used to be worse. During the refi boom it was three weeks and everyone was screaming.
+
+Joe: Do appraisals ever blow up a deal?
+
+Dana: Low appraisals, sure. Then it's renegotiate or bring more cash. That's the LO's headache. Oh — and speaking of headaches, our AMC's portal went down twice last month. Twice! Their support line is a black hole. We've started, uh, we've been shopping around, honestly, but switching AMCs mid-year is its own nightmare so we're stuck for now.
+
+Joe: Noted, one vendor complaint on the record.
+
+Dana: One of many. Anyway. Conditions cleared, appraisal in and acceptable, the underwriter issues the clear to close. CTC. That's the big milestone — sales floor rings a bell, the whole thing.
+
+Joe: Literally a bell?
+
+Dana: Literally a bell. It's very Pavlovian. Speaking of the sales floor, we just hired two new LOs from a big retail shop, and the older one, day two, asks where the fax machine is. For sending files. A fax machine, Joe. I nearly —
+
+Joe: [laughs] Okay, okay. After clear to close, what actually happens?
+
+Dana: The closing doc package gets prepped and it goes out through DocuSign. Borrower signs electronically for most of it — there's still a wet-sign piece with the notary at the actual closing table for the note and deed, but the bulk is DocuSign ahead of time. Then closing happens, usually at the title company.
+
+Joe: And who preps that package? Underwriting?
+
+Dana: No, underwriting's done at that point, they've moved on to the next file. The docs get drawn after CTC — fees get balanced against the title company's numbers, that back-and-forth on the closing disclosure — and then it releases to DocuSign. There's a three-day rule on the CD, so the timing there is, um, it's regulated, you can't just wing it.
+
+Joe: Right, TRID.
+
+Dana: Right. Then funding. Signed package comes back, gets reviewed, we wire the money, and once the wire confirms and it records, the loan is funded. Done. Well — done for us. Then it usually gets sold off to a servicer within a month or two, but that's a whole other conversation.
+
+Joe: That's the pipeline, though? Lead to wire?
+
+Dana: Lead to wire, that's it. I mean, there are branches — refis skip some of the purchase stuff, government loans have extra steps — but for a plain vanilla purchase, that's the machine.
+
+Joe: Perfect. What's average, end to end?
+
+Dana: Application to funding, we're at about twenty-eight days right now? Maybe thirty. We were at twenty-one in the spring but volume caught up with us.
+
+Joe: Great, this is exactly what I needed. I'll write it up and send you the map to sanity-check.
+
+Dana: Sounds good. And hey, if the map has a little icon of our AMC on fire, I won't object.
+
+Joe: I'll see what I can do. Thanks, Dana.
+
+Dana: Anytime. Talk soon.

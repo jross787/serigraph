@@ -8,6 +8,7 @@ import { parseMap } from '../shared/model.js';
 const MODULE_FILES = [
   'vendor/yaml.js',
   'shared/model.js',
+  'shared/cost.js',
   'app/state.js',
   'app/api.js',
   'app/layout.js',

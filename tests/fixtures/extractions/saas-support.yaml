@@ -1,0 +1,287 @@
+name: Ledgerly Support Desk
+description: How the support desk works day to day, mapped from a discovery call with Priya.
+nodes:
+  - id: intake
+    type: process
+    label: Ticket intake
+    description: "Two ways in: email to support@ledgerly.com and the chat widget inside the app, both landing in Zendesk. Phone support was killed about two years ago."
+    children:
+      nodes:
+        - id: email-channel
+          type: process
+          label: Email support
+          description: Customer emails support@ledgerly.com.
+        - id: chat-widget
+          type: system
+          label: In-app chat widget
+          description: Chat widget inside the app, now Zendesk-native messaging.
+        - id: account-manager
+          type: role
+          label: Account manager
+          description: Big customers occasionally email their account manager directly instead of the queue.
+        - id: am-forward
+          type: process
+          label: AM forwards ticket
+          description: The account manager forwards the email into Zendesk, which skips the queue.
+      edges:
+        - from: account-manager
+          to: am-forward
+          label: forwards customer email
+  - id: zendesk
+    type: system
+    label: Zendesk
+    description: Single ticketing hub — one way or another every ticket ends up here. Tracks the SLA clocks and fires the CSAT survey on solve.
+  - id: triage-bot
+    type: system
+    label: Triage bot
+    description: Engineering-built bot that reads each new ticket and tags severity sev 1–4, roughly ninety percent right; agents can re-tag. It also takes a first swing at category, but only the severity tag is trusted.
+  - id: tier-one
+    type: role
+    label: Tier one
+    description: Most of the team. Works the queue oldest-first within severity; first response is almost always off one of sixty-something Zendesk macros, with targets of thirty minutes on chat tickets and four hours on email.
+  - id: ticket-triage
+    type: decision
+    label: What kind of ticket?
+    description: The real, human triage — the agent sorts each ticket into three rough buckets.
+  - id: howto-resolution
+    type: process
+    label: How-to resolution
+    description: Agent answers the question out of the knowledge base and that is the end of it. Repeat how-tos get written up as proper articles so they stop coming in.
+    children:
+      nodes:
+        - id: knowledge-base
+          type: artifact
+          label: Knowledge base
+          description: Help articles that agents answer how-tos from.
+        - id: answer-from-kb
+          type: process
+          label: Answer from KB
+          description: Agent answers the how-to out of the knowledge base and the ticket ends there.
+        - id: write-article
+          type: process
+          label: Write KB article
+          description: How-tos that keep coming in over and over get written up as a proper article.
+        - id: marcus  # inferred: role never stated — "he sits with us"
+          type: role
+          label: Marcus
+          description: Sits with the support team; usually the one nagging people to get repeat how-tos written up.
+      edges:
+        - from: knowledge-base
+          to: answer-from-kb
+          label: article content
+        - from: write-article
+          to: knowledge-base
+          label: new article
+        - from: marcus
+          to: write-article
+          label: nags agents to write
+  - id: billing-handoff
+    type: process
+    label: Billing handoff
+    description: "Wrong plan, double charges, subscription increases. Priya's biggest gripe: tickets go quiet in here and the customer feels it."
+    children:
+      nodes:
+        - id: billing-team
+          type: role
+          label: Billing team
+          description: Has its own view in Zendesk; most issues they can just fix on the spot.
+        - id: billing-fix
+          type: process
+          label: Fix on the spot
+          description: Wrong plans, double charges and most refunds handled directly by the billing team.
+        - id: refund-size
+          type: decision
+          label: Refund size?
+          description: Billing can do refunds themselves unless the amount is chunky.
+        - id: elena-approval  # uncertain: "maybe two days — don't quote me"
+          type: process
+          label: Elena's sign-off
+          description: Chunky refunds have to go past Elena first, adding maybe two days.
+      edges:
+        - from: refund-size
+          to: billing-fix
+          label: small — billing refunds it themselves
+        - from: refund-size
+          to: elena-approval
+          label: chunky
+        - from: elena-approval  # inferred: approved refunds flow back to billing
+          to: billing-fix
+          label: approved
+  - id: bug-handling
+    type: process
+    label: Bug handling
+    description: Tier one confirms it is actually broken — reproduced, with screenshots, and not just the customer's bank feed being weird — before anything gets filed.
+    children:
+      nodes:
+        - id: confirm-bug
+          type: process
+          label: Confirm the bug
+          description: Reproduce it, get screenshots, check it is not just the customer's bank feed being weird.
+        - id: bug-complexity
+          type: decision
+          label: Straightforward or gnarly?
+          description: Straightforward bugs are filed directly by tier one; the gnarly ones get bumped to Dev first.
+        - id: dev  # inferred: title never stated
+          type: role
+          label: Dev
+          description: Pokes at the gnarly ones; half the time it turns out not to be a bug, so he catches a ton before engineering ever sees it.
+        - id: dev-review
+          type: process
+          label: Dev investigation
+          description: Data weirdness and anything touching the actual ledger math gets bumped to Dev before filing.
+        - id: file-jira
+          type: process
+          label: File in Jira
+          description: Confirmed bug filed into Jira; the Zendesk–Jira link keeps the two tickets married.
+        - id: pending-engineering
+          type: process
+          label: Pending engineering
+          description: The customer-facing ticket sits in pending-engineering; the agent is supposed to update the customer every few days even when there is nothing new.
+      edges:
+        - from: confirm-bug
+          to: bug-complexity
+          label: confirmed broken
+        - from: bug-complexity
+          to: file-jira
+          label: straightforward
+        - from: bug-complexity
+          to: dev-review
+          label: gnarly — data or ledger math
+        - from: dev
+          to: dev-review
+          label: investigates
+        - from: dev-review  # inferred: confirmed real bugs proceed to Jira
+          to: file-jira
+          label: real bug
+        - from: file-jira
+          to: pending-engineering
+          label: linked ticket waits
+  - id: jira
+    type: system
+    label: Jira
+    description: Engineering's bug tracker; support-filed tickets stay linked to their Zendesk twins.
+  - id: sla-escalation
+    type: process
+    label: SLA escalation
+    description: Zendesk tracks the SLA clocks and escalates as a ticket approaches or blows through its target. Breaches happen way less than they used to.
+    children:
+      nodes:
+        - id: sla-warning
+          type: process
+          label: 80% warning
+          description: At eighty percent of the SLA clock, Zendesk flags the ticket and pings the team Slack channel.
+        - id: slack
+          type: system
+          label: Slack
+          description: Team channel that receives the SLA pings.
+        - id: sla-breach
+          type: process
+          label: Breach
+          description: On an actual breach it pings again, tagging that week's escalation pager holder directly.
+        - id: pager-holder
+          type: role
+          label: Escalation pager holder
+          description: Weekly rotation; has to either grab the ticket themselves or go lean on whoever owns it.
+        - id: priya  # inferred: support lead — title never stated
+          type: role
+          label: Priya
+          description: Gets sev-1 breaches directly, alongside Tom.
+        - id: tom  # inferred: engineering lead — title never stated
+          type: role
+          label: Tom
+          description: On the engineering side; gets sev-1 breaches directly and mostly runs the weekly bug review.
+      edges:
+        - from: sla-warning
+          to: slack
+          label: 80% flag ping
+        - from: sla-warning
+          to: sla-breach
+          label: clock runs out
+        - from: sla-breach  # inferred: sev-1s skip the pager flow
+          to: pager-holder
+          label: sev 2–4 tagged
+        - from: sla-breach
+          to: priya
+          label: sev 1
+        - from: sla-breach
+          to: tom
+          label: sev 1
+  - id: close-out
+    type: process
+    label: Close-out
+    description: Agent marks the ticket solved and Zendesk fires the CSAT survey automatically. Comments come back, but nobody actually mines them for patterns.
+    children:
+      nodes:
+        - id: mark-solved
+          type: process
+          label: Mark solved
+          description: Agent marks the ticket solved in Zendesk.
+        - id: csat-survey
+          type: artifact
+          label: CSAT survey
+          description: Good-slash-bad rating with a comment box, fired at the customer automatically on solve.
+        - id: negative-review
+          type: process
+          label: Negative-comment review
+          description: Anything negative that comes back with a comment gets reviewed; the comments are collected but not mined for patterns.
+        - id: auto-close  # uncertain: "four days I think"
+          type: process
+          label: Auto-close
+          description: Solved tickets auto-close after about four days unless the customer replies and it reopens.
+      edges:
+        - from: mark-solved
+          to: csat-survey
+          label: survey fired automatically
+        - from: csat-survey
+          to: negative-review
+          label: negative with comment
+        - from: mark-solved
+          to: auto-close
+          label: no customer reply
+  - id: weekly-bug-review
+    type: process
+    label: Weekly bug review
+    description: Thursdays at ten, support plus engineering, half an hour — walking the open support-filed Jira tickets, what shipped, what's stuck, what's getting worse. Tom mostly runs it; Priya calls it the glue holding the whole thing together.
+edges:
+  - from: intake
+    to: zendesk
+    label: all tickets land
+  - from: zendesk
+    to: triage-bot
+    label: new ticket
+  - from: triage-bot
+    to: tier-one
+    label: severity-tagged ticket
+  - from: tier-one
+    to: ticket-triage
+    label: after first macro response
+  - from: ticket-triage
+    to: howto-resolution
+    label: how-to
+  - from: ticket-triage
+    to: billing-handoff
+    label: billing
+  - from: ticket-triage
+    to: bug-handling
+    label: bug
+  - from: bug-handling
+    to: jira
+    label: confirmed bug filed
+  - from: jira
+    to: weekly-bug-review
+    label: open support-filed tickets
+  - from: weekly-bug-review
+    to: close-out
+    label: fix shipped — agent circles back
+  - from: howto-resolution
+    to: close-out
+    label: answered
+  - from: billing-handoff
+    to: close-out
+    label: fixed or refunded
+  - from: zendesk
+    to: sla-escalation
+    label: SLA clock at 80% or breach
+  - from: sla-escalation  # inferred: ticket owners are tier-one agents
+    to: tier-one
+    label: grab ticket or lean on owner
