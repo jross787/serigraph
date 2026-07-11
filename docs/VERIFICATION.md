@@ -22,10 +22,47 @@ Every requirement was tested by **fresh-context reviewers** — agents with no m
 
 Round 1 found a **critical** bug invisible to synthetic-event testing: `setPointerCapture` made Chrome retarget clicks to the SVG, killing all real mouse interaction with nodes. It also found Escape double-pressing, a `deleteNode` no-op on list-form children, export corruption via `$&` in map content, and dead multi-tab sync. Round 2 confirmed those fixes and caught three defects *the fixes introduced* (transition wedge, a right-edge double-click dead zone, a drag-state leak). Round 3's interrupt storm caught stale input reaching fading transition layers. Round 4 re-ran the storm — 16/16 rounds plus 9 boundary races consistent, chords and real multi-touch clean, and a line-level review of the final diff (with 300-operation randomized interleavings) confirmed **zero new defects**. Round 4's only findings were two pre-existing minors: selecting an edge right after a node left a stale URL/panel (fixed and re-verified), and two *simultaneous* touches on the canvas resolve to the last one (accepted single-selection behavior).
 
+## Phase 1 — pinned positions (drag to reposition, persisted)
+
+Verified July 2026 with the same method: a fresh-context adversarial reviewer drove the running app through real browser input, and a second cold-context agent authored a pinned map from [FORMAT.md](FORMAT.md) alone. Evidence in [docs/evidence/phase1-*](evidence/).
+
+| Claim | How it was attacked | Evidence |
+|---|---|---|
+| Drag writes exactly one `position: { x, y }` line | Drag → `git diff`: +1 line, all comments/formatting intact, validator PASS; reload → same spot (node transform identical pre/post) | `phase1-insurance-drag.diff`, `phase1-insurance-pinned.png` |
+| No position data ⇒ identical rendering | Old code (worktree at previous HEAD) vs new code, same session: per-element SHA-256 of every node/edge group + camera — identical on insurance, stress-120 root, and a nested scope | `phase1-invariant.md` |
+| Pinned + auto coexist on ≥100 nodes | Seed-7 120-node map with a pinned container, a pinned leaf, and a nested pin: auto nodes flow with zero rect overlaps against pins (programmatic check), long direct edges route to pins | `phase1-stress-root-mixed.png`, `phase1-stress-nested-pin.png`, `phase1-stress-120-pinned.yaml` |
+| Per-scope positions survive dive/rise/reload | Pins in root + nested scopes; Escape out, double-click in, full reload: transforms byte-identical; container miniature keeps all children in-frame | reviewer log |
+| Hand-edit coexistence | With a pin present, an unrelated node+edge added on disk: canvas live-updated, pin unmoved, new node auto-flowed, zero overlaps | reviewer log |
+| Release returns to auto | Pin badge click and panel "Release to auto-layout": position line removed (file byte-identical to HEAD), node visibly returns | reviewer log |
+| Undo/redo | Cmd+Z removes the pin line + node returns; Cmd+Shift+Z re-pins | reviewer log |
+| Cold LLM can author pins from FORMAT.md alone | Agent read only FORMAT.md, wrote a 17-node roastery map with 4 deliberate pins (above-flow card, right-side column, nested below-siblings) — rendered exactly as it stated it intended | `phase1-coldtest-roastery.yaml`, `phase1-coldtest-roastery.png` |
+| Break-it storm | Sub-4px drags stay clicks (no write); Escape cancels a drag; drags during transitions/presentation/connect-mode don't pin; negative coordinates persist and stay in camera fit; two pins on one spot allowed; 120-node drag ≤1.3 ms/move; zero console errors | reviewer log |
+
+What the loop caught (fixed and re-verified): the YAML serializer re-wrapping long untouched lines at 80 columns (now `lineWidth: 0`); per-scope cameras bleeding across maps on hash navigation (now reset per map open — pre-existing, exposed by far-flung pins); `P` not exiting presentation mode (pre-existing); Escape mid-drag inconsistently rising a scope (now cancels the drag).
+
+## Phase 2 — direct-manipulation authoring
+
+Verified July 2026, same method: a fresh-context adversarial reviewer drove all four gestures with real pointer input against the running app, checking the YAML after every action. Full report: [evidence/phase2-review-report.md](evidence/phase2-review-report.md).
+
+| Claim | How it was attacked | Result |
+|---|---|---|
+| Palette drop creates exactly the intended node | Drop on empty canvas → diff is only id/type/label/`position`; comments intact; panel opens in edit mode, label focused (selection 0–12 verified); rename+Save = label-only diff | PASS |
+| Container/leaf/off-canvas drops behave per spec | Onto container n5 → nested child, **no** position, count chip 9→10; onto leaf → toast + byte-identical file; onto toolbar → nothing; chip click → dialog with type preselected | PASS |
+| Double-click empty canvas creates; presentation mode never does | Pinned process node at point, one-undo removal; in present mode dblclick falls back to fit, palette `display:none`, 0/8 ports visible | PASS |
+| Re-nest IN rewrites nesting + re-homes edges | n3→n1: root edge `n6→n3` rewritten **in place** to `n6→n1`; validator PASS; one Cmd+Z → byte-for-byte pristine | PASS |
+| Re-nest OUT via the drop bar | n1-3 out of n1: 3 inner edges re-homed to root with labels/directions kept; two same-endpoint edges with different labels both survived (not "exact duplicates"); one undo → pristine | PASS |
+| Whole-subtree moves stay sound | Container n1 (3 levels) nested into n5 → 4-level map, root edge rewritten, opposite-direction edge kept; validator PASS; one undo → pristine | PASS |
+| Cycles unreachable | A container's descendants render only inside it, where the container itself never renders — no drop target exists; ancestry guard in code as defense in depth | PASS |
+| Connect-by-drag | Port on hover; port→node wrote exactly `from/to`; edge auto-selected with label prompt; label save = separate commit (undo #1 label, undo #2 edge); release on empty/source = no write | PASS |
+| Gestures + hand-edits coexist | Palette create + re-nest + connect in one session, then a hand-added node on disk: live update, auto-flow, full-reload persistence, validator PASS (122 nodes) | PASS |
+| Phase-1 regressions | Pan, pin (one-line diff), badge release, zoom, select, search, presentation walk — zero stray writes, zero console errors | PASS |
+
+Findings: **no defects**; two UX nits (Escape didn't cancel panel edit mode; port-drag cancel was silent vs click-connect's toast) — both fixed and re-verified in-session. The edge re-homing policy exercised here is documented in [FORMAT.md](FORMAT.md).
+
 ## Re-running the checks
 
 ```
-npm test                                  # 26 unit/regression tests
+npm test                                  # 44 unit/regression tests
 npm run validate                          # every map + template
 node tools/generate-map.mjs --nodes 1000 --depth 8 --unicode --seed 9 --out maps/stress.yaml
 ```

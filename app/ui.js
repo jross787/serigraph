@@ -143,11 +143,11 @@ function typeSegment(initial) {
   return seg;
 }
 
-export function addNodeDialog(ownerId) {
+export function addNodeDialog(ownerId, presetType = 'process') {
   if (state.standalone || !state.model) return;
   const ownerLabel = ownerId ? state.model.byId.get(ownerId)?.label : state.model?.name;
   const label = h('input', { class: 'f-input', placeholder: 'e.g. Verify bank statements' });
-  const seg = typeSegment('process');
+  const seg = typeSegment(presetType);
   const desc = h('textarea', { class: 'f-textarea', placeholder: 'What happens here? (optional)' });
   const body = h('div', {},
     h('div', { class: 'f-field' }, h('label', {}, 'Label'), label),
@@ -212,7 +212,12 @@ export function helpDialog() {
     ['P', 'Presentation mode'],
     ['+ / − / 0', 'Zoom in / out / fit'],
     ['⌘Z / ⌘⇧Z', 'Undo / redo'],
-    ['drag', 'Pan the canvas'],
+    ['drag a node', 'Move it — pins its position (click the pin badge to release)'],
+    ['drag a node onto a container', 'Move it into that sub-map (drop bar at top moves it out)'],
+    ['drag from a node\'s ○ port', 'Draw an edge to another node'],
+    ['drag from the palette', 'Drop a new node of that type where you release'],
+    ['double-click empty canvas', 'New node at that spot'],
+    ['drag the background', 'Pan the canvas'],
     ['scroll · pinch', 'Pan · zoom'],
   ];
   const grid = h('div', { class: 'kbd-grid' });
@@ -223,8 +228,8 @@ export function helpDialog() {
 // ── detail panel ─────────────────────────────────────────────────────
 let editMode = false;
 
-export function showDetail(nodeId) {
-  editMode = false;
+export function showDetail(nodeId, { edit = false } = {}) {
+  editMode = edit;
   state.detailNodeId = nodeId;
   renderDetail();
 }
@@ -289,6 +294,18 @@ function renderDetail() {
           })
         : h('div', { class: 'no-links' }, ro ? 'No links.' : 'No links yet — SOPs, repos, dashboards…')));
 
+    if (node.position) {
+      body.append(h('div', { class: 'panel-section' },
+        h('h3', {}, 'Layout'),
+        h('div', { class: 'pin-row' },
+          h('span', { class: 'pin-info' }, `Pinned at ${node.position.x}, ${node.position.y}`),
+          ro ? null : h('button', {
+            class: 'pa-btn', title: 'Remove the pinned position — the node returns to automatic layout',
+            onClick: () => ctrl.commit(() => edit.clearNodePosition(node.id))
+              .then((ok) => ok && toast('Released — back to auto-layout')),
+          }, 'Release to auto-layout'))));
+    }
+
     if (node.children) {
       body.append(h('div', { class: 'panel-section' },
         h('h3', {}, 'Sub-map'),
@@ -314,6 +331,16 @@ function renderDetail() {
     };
     node.links.forEach(addLinkRow);
 
+    // Escape = cancel edit mode (matches Escape-cancels everywhere else);
+    // handled here because the document-level handler ignores typing focus
+    body.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Escape') return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      editMode = false;
+      renderDetail();
+    });
+
     body.append(
       h('div', { class: 'f-field' }, h('label', {}, 'Label'), label),
       h('div', { class: 'f-field' }, h('label', {}, 'Type'), seg),
@@ -337,6 +364,12 @@ function renderDetail() {
   }
 
   panel.replaceChildren(head, body);
+
+  if (editMode) {
+    const first = panel.querySelector('input.f-input');
+    first?.focus();
+    first?.select();
+  }
 
   if (!editMode && !ro) {
     panel.append(h('div', { class: 'panel-actions' },
@@ -395,6 +428,96 @@ function renderEdgeDetail(panel) {
         onClick: () => { panel.hidden = true; ctrl.commit(() => edit.deleteEdge(state.scopeId, sel.index)).then((ok) => { if (ok) { ctrl.selectEdge(null); toast('Edge deleted'); } }); },
       }, '🗑 Delete edge')));
   }
+}
+
+// ── node palette (drag a type onto the canvas) ───────────────────────
+const TYPE_LABELS = { process: 'Process', decision: 'Decision', system: 'System', role: 'Role', artifact: 'Artifact' };
+
+// create a node pinned at a world point in the current scope (palette drop /
+// canvas double-click), then open it for naming
+export function createNodeAt(type, world) {
+  const label = `New ${type}`;
+  const id = edit.uniqueId(state.model, edit.slugify(label));
+  ctrl.commit(
+    () => edit.addNode(state.scopeId, {
+      id, type, label,
+      position: { x: Math.round(world.x), y: Math.round(world.y) },
+    }),
+    { select: id },
+  ).then((ok) => {
+    if (!ok) return;
+    showDetail(id, { edit: true });
+    toast(`Added ${type} — name it in the panel`);
+  });
+}
+
+function createNodeInside(type, containerId) {
+  const label = `New ${type}`;
+  const id = edit.uniqueId(state.model, edit.slugify(label));
+  const contLabel = state.model.byId.get(containerId)?.label ?? containerId;
+  ctrl.commit(() => edit.addNode(containerId, { id, type, label }))
+    .then((ok) => ok && toast(`Added ${type} inside “${contLabel}” — double-click it to open`));
+}
+
+function initPalette() {
+  const pal = document.getElementById('palette');
+  if (!pal || state.standalone) return;
+  pal.hidden = false;
+  pal.setAttribute('aria-label', 'Node palette — drag a type onto the canvas');
+  for (const t of NODE_TYPES) {
+    const chip = h('button', {
+      class: `pal-chip t-${t}`,
+      title: `Drag onto the canvas to add a ${t} (click for the dialog)`,
+    }, typeIcon(t, 15), h('span', { class: 'pal-chip-label' }, TYPE_LABELS[t]));
+    chip.addEventListener('pointerdown', (ev) => startPaletteDrag(ev, t, chip));
+    pal.append(chip);
+  }
+}
+
+function startPaletteDrag(ev, type, chip) {
+  if (ev.button !== 0 || state.presenting || !state.model) return;
+  ev.preventDefault();
+  const pid = ev.pointerId;
+  try { chip.setPointerCapture(pid); } catch { /* stale pointer */ }
+  let ghost = null;
+  let moved = false;
+
+  const onMove = (e) => {
+    if (e.pointerId !== pid) return;
+    if (!moved && Math.hypot(e.clientX - ev.clientX, e.clientY - ev.clientY) <= 4) return;
+    if (!moved) {
+      moved = true;
+      ghost = h('div', { class: 'pal-ghost' }, typeIcon(type, 14), TYPE_LABELS[type]);
+      document.body.append(ghost);
+    }
+    ghost.style.left = `${e.clientX}px`;
+    ghost.style.top = `${e.clientY}px`;
+    const info = canvas.dropInfo(e.clientX, e.clientY);
+    canvas.setDropHighlight(info.kind === 'container' ? info.id : null);
+    ghost.classList.toggle('ok', info.kind === 'canvas' || info.kind === 'container');
+  };
+  const finish = (e, cancelled) => {
+    try { chip.releasePointerCapture(pid); } catch { /* already released */ }
+    chip.removeEventListener('pointermove', onMove);
+    chip.removeEventListener('pointerup', onUp);
+    chip.removeEventListener('pointercancel', onCancel);
+    document.removeEventListener('keydown', onKey, true);
+    ghost?.remove();
+    canvas.setDropHighlight(null);
+    if (cancelled) return;
+    if (!moved) { addNodeDialog(state.scopeId, type); return; } // plain click
+    const info = canvas.dropInfo(e.clientX, e.clientY);
+    if (info.kind === 'canvas') createNodeAt(type, info.world);
+    else if (info.kind === 'container') createNodeInside(type, info.id);
+    else if (info.kind === 'node') toast('Drop on empty canvas — or on a container to nest inside it');
+  };
+  const onUp = (e) => { if (e.pointerId === pid && e.button === 0) finish(e, false); };
+  const onCancel = (e) => { if (e.pointerId === pid) finish(e, true); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(e, true); } };
+  chip.addEventListener('pointermove', onMove);
+  chip.addEventListener('pointerup', onUp);
+  chip.addEventListener('pointercancel', onCancel);
+  document.addEventListener('keydown', onKey, true);
 }
 
 // ── templates panel ──────────────────────────────────────────────────
@@ -559,6 +682,7 @@ function renderCanvasMessage() {
 
 // ── reactive wiring ──────────────────────────────────────────────────
 export function initUI() {
+  initPalette();
   bus.on('view-changed', () => {
     renderBreadcrumbs();
     renderSwitcher();
