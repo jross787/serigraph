@@ -50,6 +50,34 @@ Make the map reflect reality, not just document it. Aligns with the already-scop
 - **Hosted mode on Cloudflare** with login and cloud-saved maps (accounts, sync) — extends the deferred "read-only client shares."
 - **Electron desktop app** — launchable, persistent, runs offline as a native app.
 
+## Phase 6 — AI-native authoring
+
+The map builds itself from how a business is *described*, not just drawn.
+
+- **Transcript → map (discovery import)** — paste or upload a meeting / discovery-call transcript and derive the process (steps, decisions, roles, systems, artifacts, handoffs) into reviewable Opsmap YAML, with low-confidence inferences flagged for the user to confirm. This is the consultant's core workflow, productized.
+- **In-canvas copilot** — "find the bottleneck", "draft the servicing sub-map", "where's the compliance risk".
+- **Agent scaffolding** — from a node's spec, generate the automation/agent stub that runs that step.
+
+## Phase 7 — The economic & operational model
+
+Turn the map from documentation into a decision tool — what a process *costs* and what automating it *saves*.
+
+- **Human-vs-agent economics** — per-node human run cost (time × loaded rate × volume) vs. agent run cost; rolled up across the map into total cost, savings, ROI, and payback. Recalculates live; stored as optional YAML fields.
+- **Simulation** — push volumes through the map to find bottlenecks, capacity limits, cycle time, and cost-per-stage.
+- **Automation coverage / gap analysis** — what's manual vs. automated, where agents already run, and the highest-ROI automation opportunities. (Builds on Phase 3 data-linking for live actuals.)
+
+## Phase 8 — Enterprise platform & the agent substrate
+
+Where the 10X lives: the map as a governed, machine-readable operating model that AI agents run on. **Foundational — gets a plan-first approval before any code.**
+
+- **MCP / agent API over the map** — any LLM or agent can query it, propose diffs, or bind to a node as its job. The map becomes the control plane agents operate through. This is the moat no diffable-text-less competitor can copy.
+- **Multi-user, hosted** — real-time collaboration (presence, comments, @mentions), accounts/workspaces, SSO (SAML/OIDC), SCIM, RBAC with node/subtree-level permissions.
+- **Git-grade governance** — version history, branch/diff, PR-style review and approval of process changes, immutable audit trail — nearly free because the backend is already text.
+- **Security & deployment** — encryption, audit logs, data residency, a self-host / on-prem option, and client-facing read-only portals.
+- **Packaging** — hosted SaaS as the enterprise vehicle; the Electron build as the offline/consultant companion.
+
+*Current build (overnight): the two hero features from Phase 6 (transcript import) and Phase 7 (human-vs-agent economics). Phase 8 is the platform bet and gets its own plan-first prompt.*
+
 ---
 
 ## Deliberately *not* doing
