@@ -242,6 +242,75 @@ button { font-family: inherit; color: inherit; }
 .mini-node.t-artifact { fill: var(--c-artifact); }
 .mini-edge { stroke: var(--edge); stroke-width: 1; fill: none; opacity: .6; }
 
+/* connect port — drag from it to another node to draw an edge */
+.node .port { opacity: 0; transition: opacity .12s; cursor: crosshair; }
+.node:hover .port, .node.selected .port { opacity: 1; }
+.node .port-hit { fill: transparent; }
+.node .port-dot { fill: var(--accent); stroke: var(--surface); stroke-width: 1.6; }
+.node .port:hover .port-dot { r: 5.5; }
+body.presenting .node .port { display: none; }
+#canvas.connect-dragging, #canvas.connect-dragging .node { cursor: crosshair; }
+
+.connect-ghost { pointer-events: none; }
+.connect-ghost .cg-line { stroke: var(--sel); stroke-width: 2; stroke-dasharray: 6 5; fill: none; }
+.connect-ghost .cg-arrow { fill: var(--sel); }
+
+/* drop targeting while dragging a node or a palette chip */
+.node.dragging { pointer-events: none; opacity: .88; }
+.node.drop-target .shape {
+  stroke: var(--sel); stroke-width: 2.6; stroke-dasharray: 7 5;
+}
+.node.drop-target .sel-ring { opacity: .35; stroke: var(--sel); }
+
+#moveout-bar {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  z-index: 12; pointer-events: none;
+  padding: 9px 18px; border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1.6px dashed var(--border-strong);
+  color: var(--muted); font-size: 13px; font-weight: 600;
+  box-shadow: var(--shadow-1); backdrop-filter: blur(5px);
+  max-width: min(70%, 560px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#moveout-bar.hot {
+  border-color: var(--sel); color: var(--sel);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+/* node palette */
+#palette {
+  position: absolute; left: 14px; top: 14px;
+  display: flex; flex-direction: column; gap: 3px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: var(--shadow-1); padding: 7px; z-index: 10;
+}
+#palette[hidden] { display: none; }
+.pal-chip {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  width: 58px; padding: 8px 4px 6px;
+  border: none; border-radius: 9px; background: none;
+  color: var(--muted); font-size: 10px; font-weight: 650; font-family: var(--font);
+  cursor: grab; touch-action: none; user-select: none;
+}
+.pal-chip:hover { background: var(--surface-2); color: var(--ink); }
+.pal-chip.t-process svg { color: var(--c-process); }
+.pal-chip.t-decision svg { color: var(--c-decision); }
+.pal-chip.t-system svg { color: var(--c-system); }
+.pal-chip.t-role svg { color: var(--c-role); }
+.pal-chip.t-artifact svg { color: var(--c-artifact); }
+body.presenting #palette { display: none; }
+
+.pal-ghost {
+  position: fixed; z-index: 1000; pointer-events: none;
+  transform: translate(-50%, -130%);
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 12px; border-radius: 9px;
+  background: var(--surface); border: 1.5px dashed var(--border-strong);
+  color: var(--muted); font-size: 12px; font-weight: 650;
+  box-shadow: var(--shadow-2); opacity: .92;
+}
+.pal-ghost.ok { border-color: var(--sel); color: var(--sel); }
+
 /* pinned-position badge — click releases the node back to auto-layout */
 .node .pin-badge { cursor: pointer; }
 .node .pin-bg { fill: var(--surface); stroke: var(--border-strong); stroke-width: 1; }
@@ -547,6 +616,13 @@ body.presenting #detail, body.presenting #templates-panel { display: none; }
     box-shadow: var(--shadow-2);
   }
   #minimap { display: none; }
+  /* phones: palette becomes a horizontal strip along the bottom, clear of the zoombar */
+  #palette {
+    top: auto; bottom: 14px; left: 56px; right: auto; transform: none;
+    flex-direction: row; gap: 1px; padding: 5px;
+  }
+  .pal-chip { width: 46px; padding: 6px 2px 5px; font-size: 9px; }
+  #moveout-bar { max-width: 88%; }
   #topbar { padding: 0 8px; gap: 6px; }
   .tb-btn { padding: 6px 9px; }
   #present-hud { flex-direction: column; align-items: stretch; }

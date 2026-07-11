@@ -54,6 +54,7 @@ Use these exact lowercase strings. There are no other types.
 - An edge connects two **siblings**: both `from` and `to` must be ids of nodes in the **same** `nodes:` list (top level, or the same node's `children`). To show a handoff between things that live in different branches, draw the edge one level up, between their parents.
 - Edges are directional (from → to). For a `decision` node, put the outcome on each outgoing edge's `label` (e.g. `label: "yes"` / `label: "no"`).
 - Layout is automatic — you never need to write positions. A node can optionally be **pinned** to a fixed spot with a `position` field (see below); everything else keeps flowing automatically around it.
+- **When the app re-nests a node** (dragging it into or out of a container), any edge that would stop connecting siblings is not deleted wholesale and never left invalid — it is **re-homed**: the edge moves to the nearest scope that contains both endpoints, and each endpoint is rewritten to its ancestor-or-self in that scope (so a handoff into a sub-map becomes a handoff to the sub-map's container, keeping its label and direction). An edge that would become a self-loop this way, or an exact duplicate of an edge already there, is removed instead. Edges wholly inside the moved node's own sub-map move with it unchanged.
 
 ## Pinned positions (optional)
 

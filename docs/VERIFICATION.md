@@ -40,10 +40,29 @@ Verified July 2026 with the same method: a fresh-context adversarial reviewer dr
 
 What the loop caught (fixed and re-verified): the YAML serializer re-wrapping long untouched lines at 80 columns (now `lineWidth: 0`); per-scope cameras bleeding across maps on hash navigation (now reset per map open — pre-existing, exposed by far-flung pins); `P` not exiting presentation mode (pre-existing); Escape mid-drag inconsistently rising a scope (now cancels the drag).
 
+## Phase 2 — direct-manipulation authoring
+
+Verified July 2026, same method: a fresh-context adversarial reviewer drove all four gestures with real pointer input against the running app, checking the YAML after every action. Full report: [evidence/phase2-review-report.md](evidence/phase2-review-report.md).
+
+| Claim | How it was attacked | Result |
+|---|---|---|
+| Palette drop creates exactly the intended node | Drop on empty canvas → diff is only id/type/label/`position`; comments intact; panel opens in edit mode, label focused (selection 0–12 verified); rename+Save = label-only diff | PASS |
+| Container/leaf/off-canvas drops behave per spec | Onto container n5 → nested child, **no** position, count chip 9→10; onto leaf → toast + byte-identical file; onto toolbar → nothing; chip click → dialog with type preselected | PASS |
+| Double-click empty canvas creates; presentation mode never does | Pinned process node at point, one-undo removal; in present mode dblclick falls back to fit, palette `display:none`, 0/8 ports visible | PASS |
+| Re-nest IN rewrites nesting + re-homes edges | n3→n1: root edge `n6→n3` rewritten **in place** to `n6→n1`; validator PASS; one Cmd+Z → byte-for-byte pristine | PASS |
+| Re-nest OUT via the drop bar | n1-3 out of n1: 3 inner edges re-homed to root with labels/directions kept; two same-endpoint edges with different labels both survived (not "exact duplicates"); one undo → pristine | PASS |
+| Whole-subtree moves stay sound | Container n1 (3 levels) nested into n5 → 4-level map, root edge rewritten, opposite-direction edge kept; validator PASS; one undo → pristine | PASS |
+| Cycles unreachable | A container's descendants render only inside it, where the container itself never renders — no drop target exists; ancestry guard in code as defense in depth | PASS |
+| Connect-by-drag | Port on hover; port→node wrote exactly `from/to`; edge auto-selected with label prompt; label save = separate commit (undo #1 label, undo #2 edge); release on empty/source = no write | PASS |
+| Gestures + hand-edits coexist | Palette create + re-nest + connect in one session, then a hand-added node on disk: live update, auto-flow, full-reload persistence, validator PASS (122 nodes) | PASS |
+| Phase-1 regressions | Pan, pin (one-line diff), badge release, zoom, select, search, presentation walk — zero stray writes, zero console errors | PASS |
+
+Findings: **no defects**; two UX nits (Escape didn't cancel panel edit mode; port-drag cancel was silent vs click-connect's toast) — both fixed and re-verified in-session. The edge re-homing policy exercised here is documented in [FORMAT.md](FORMAT.md).
+
 ## Re-running the checks
 
 ```
-npm test                                  # 34 unit/regression tests
+npm test                                  # 44 unit/regression tests
 npm run validate                          # every map + template
 node tools/generate-map.mjs --nodes 1000 --depth 8 --unicode --seed 9 --out maps/stress.yaml
 ```

@@ -20,14 +20,16 @@ The most-requested gap: Mermaid-style auto-layout you can't override. Let a user
 
 Shipped as: drag a node to pin it (`position: { x, y }` = the node's center in its scope's plane, one line in the file); background drag still pans; pin badge / detail panel release the override; dagre still lays out the full graph so pinning never reshuffles siblings, auto nodes are pushed clear of pins, and edges touching a moved node route directly. Contract documented in [FORMAT.md](FORMAT.md); verification in [VERIFICATION.md](VERIFICATION.md#phase-1--pinned-positions-drag-to-reposition-persisted).
 
-## Phase 2 — Direct-manipulation authoring
+## Phase 2 — Direct-manipulation authoring  ·  *✅ shipped*
 
 Turn the canvas into a full Lucid-style editor, built on Phase 1's position persistence.
 
-- **Shape / node palette toolbar** — a dockable palette of node types you drag onto the canvas (vs. only the `+ Node` dialog).
+- **Shape / node palette toolbar** — a floating palette of the five node types you drag onto the canvas (vs. only the `+ Node` dialog).
 - **Drag-to-place** new nodes at a dropped location; double-click empty canvas to create.
 - **Drag-to-reparent** — drag a node into a container to move it into that sub-map (rewrites nesting).
 - **Connect-by-drag from node ports** — drag from a node edge to another to draw an edge, with the auto line-routing already in place.
+
+Shipped as: palette drop creates a typed node pinned at the drop point (onto a container = created inside it, auto-laid; plain click = the dialog with that type preselected); double-click empty canvas creates a pinned process node; dragging a node onto a container re-nests it and a top drop bar moves it out one level — edges that would cross scopes are **re-homed** to the nearest scope containing both endpoints (each endpoint rewritten to its ancestor-or-self there; self-loops and exact duplicates removed) so no gesture can write an invalid file, with the policy documented in [FORMAT.md](FORMAT.md); dragging from a node's right-edge port to any sibling draws an edge. Every gesture is one comment-preserving commit = one undo. Verification in [VERIFICATION.md](VERIFICATION.md#phase-2--direct-manipulation-authoring).
 
 ## Phase 3 — The live, data-bound spec
 

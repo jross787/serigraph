@@ -1,6 +1,8 @@
 // The map canvas: SVG rendering, camera (pan/zoom), semantic-zoom dive/rise
-// transitions, selection visuals, connect-mode, and the minimap.
+// transitions, selection visuals, connect-mode, drag gestures (move/pin,
+// re-nest, connect-by-port), and the minimap.
 import { bus, state } from './state.js';
+import { ancestryOf } from '../shared/model.js';
 import { layoutScope, miniTransform, edgePath, routeDirect, invalidateLayouts } from './layout.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -76,8 +78,26 @@ export function initCanvas(svgEl, minimapSvg) {
   new ResizeObserver(measure).observe(svg);
   measure();
 
+  moveOutBar = document.getElementById('moveout-bar');
   wirePointer();
   wireMinimap();
+}
+
+// ── move-out drop bar (shown while dragging a node inside a sub-map) ──
+let moveOutBar = null;
+function showMoveOutBar() {
+  if (!moveOutBar || state.scopeId == null || !state.model) return;
+  const owner = state.model.byId.get(state.scopeId);
+  const parentLabel = owner?.ownerId
+    ? state.model.byId.get(owner.ownerId)?.label ?? owner.ownerId
+    : state.model.name;
+  moveOutBar.textContent = `⤴ Drop here to move out to “${parentLabel}”`;
+  moveOutBar.hidden = false;
+}
+function hideMoveOutBar() {
+  if (!moveOutBar) return;
+  moveOutBar.hidden = true;
+  moveOutBar.classList.remove('hot');
 }
 
 // ── camera ───────────────────────────────────────────────────────────
@@ -105,6 +125,36 @@ export function setCamera(c) {
 }
 
 const screenToWorld = (px, py) => ({ x: (px - camera.x) / camera.k, y: (py - camera.y) / camera.k });
+
+// client (viewport) coordinates → world coordinates of the current scope
+export function worldAt(clientX, clientY) {
+  const r = svg.getBoundingClientRect();
+  return screenToWorld(clientX - r.left, clientY - r.top);
+}
+
+// What sits under a client point — used by palette drops. The caller's ghost
+// must be pointer-events:none for elementFromPoint to see through it.
+export function dropInfo(clientX, clientY) {
+  const r = svg.getBoundingClientRect();
+  if (clientX < r.left || clientY < r.top || clientX > r.right || clientY > r.bottom) return { kind: 'outside' };
+  const under = document.elementFromPoint(clientX, clientY);
+  if (!under || (under !== svg && !svg.contains(under))) return { kind: 'outside' };
+  const nodeEl = under.closest?.('.node');
+  if (nodeEl && currentLayer?.contains(nodeEl)) {
+    const n = state.model?.byId.get(nodeEl.dataset.id);
+    return { kind: n?.children ? 'container' : 'node', id: nodeEl.dataset.id };
+  }
+  return { kind: 'canvas', world: worldAt(clientX, clientY) };
+}
+
+// highlight a node as the current drop target (or clear with null)
+export function setDropHighlight(id) {
+  if (!currentLayer) return;
+  for (const g of currentLayer.querySelectorAll('.node.drop-target')) {
+    if (g.dataset.id !== id) g.classList.remove('drop-target');
+  }
+  if (id) currentLayer.querySelector(`.node[data-id="${CSS.escape(id)}"]`)?.classList.add('drop-target');
+}
 
 function fitCamera(bounds, pad = null, maxK = 1.15) {
   const W = vw || window.innerWidth || 1200;
@@ -298,6 +348,18 @@ function buildNode(n) {
     lg.setAttribute('stroke', 'currentColor');
     lg.style.color = 'var(--faint)';
     g.appendChild(lg);
+  }
+
+  // connect port: drag from here to another node to draw an edge
+  if (!state.standalone) {
+    const port = el('g', { transform: `translate(${n.w},${n.h / 2})` }, 'port');
+    port.dataset.port = node.id;
+    port.appendChild(el('circle', { r: 9 }, 'port-hit'));
+    port.appendChild(el('circle', { r: 4.5 }, 'port-dot'));
+    const pt = el('title');
+    pt.textContent = 'Drag to another node to connect';
+    port.appendChild(pt);
+    g.appendChild(port);
   }
   return g;
 }
@@ -563,11 +625,13 @@ function updateEdgesFor(ln) {
 function wirePointer() {
   let down = null;
   let moved = false;
-  let nodeDrag = null; // { ln, el, ox, oy, active } while a node is grabbed
+  let nodeDrag = null; // { ln, el, ox, oy, active, dropInto, moveOut } while a node is grabbed
+  let connectDrag = null; // { fromId, fromLn, ghost, targetId, active } while dragging from a port
 
   // an interrupted drag mutated the cached layout — rebuild it from the model
   const revertNodeDrag = () => {
     const wasActive = nodeDrag?.active;
+    nodeDrag?.el?.classList.remove('dragging');
     nodeDrag = null;
     if (wasActive && state.model) {
       invalidateLayouts();
@@ -582,19 +646,34 @@ function wirePointer() {
     // use this, never ev.target of the up event.
     down = { px: ev.clientX, py: ev.clientY, cam: { ...camera }, target: ev.target, pointerId: ev.pointerId };
     moved = false;
-    // grabbing a node moves the node; grabbing the background pans
+    // grabbing a port draws an edge; grabbing a node moves the node;
+    // grabbing the background pans
     nodeDrag = null;
+    connectDrag = null;
     if (!state.presenting && !state.standalone && !state.connectFrom && !transitioning) {
+      const portEl = ev.target.closest?.('.port');
+      if (portEl && currentLayer?.contains(portEl)) {
+        const fromLn = currentLayout?.nodes.find((x) => x.id === portEl.dataset.port);
+        if (fromLn) {
+          connectDrag = { fromId: fromLn.id, fromLn, ghost: null, targetId: null, active: false };
+          return;
+        }
+      }
       const nodeEl = ev.target.closest?.('.node');
       if (nodeEl && currentLayer?.contains(nodeEl)) {
         const ln = currentLayout?.nodes.find((x) => x.id === nodeEl.dataset.id);
-        if (ln) nodeDrag = { ln, el: nodeEl, ox: ln.x, oy: ln.y, active: false };
+        if (ln) nodeDrag = { ln, el: nodeEl, ox: ln.x, oy: ln.y, active: false, dropInto: null, moveOut: false };
       }
     }
   });
   const clearDrag = () => {
     svg.classList.remove('panning');
     svg.classList.remove('dragging-node');
+    svg.classList.remove('connect-dragging');
+    setDropHighlight(null);
+    hideMoveOutBar();
+    connectDrag?.ghost?.remove();
+    connectDrag = null;
     revertNodeDrag();
     down = null; moved = false;
   };
@@ -611,10 +690,19 @@ function wirePointer() {
     const dx = ev.clientX - down.px, dy = ev.clientY - down.py;
     if (!moved && Math.hypot(dx, dy) > 4) {
       moved = true;
-      if (nodeDrag) {
+      if (connectDrag) {
+        connectDrag.active = true;
+        svg.classList.add('connect-dragging');
+        connectDrag.ghost = el('g', {}, 'connect-ghost');
+        connectDrag.ghost.appendChild(el('path', {}, 'cg-line'));
+        connectDrag.ghost.appendChild(el('polygon', { points: '0,-4 8,0 0,4' }, 'cg-arrow'));
+        currentLayer?.appendChild(connectDrag.ghost);
+      } else if (nodeDrag) {
         nodeDrag.active = true;
         svg.classList.add('dragging-node');
+        nodeDrag.el.classList.add('dragging'); // pointer-events off → hit-test sees beneath
         nodeDrag.el.parentNode?.appendChild(nodeDrag.el); // dragged node on top
+        if (state.scopeId != null) showMoveOutBar();
       } else {
         svg.classList.add('panning');
       }
@@ -623,11 +711,42 @@ function wirePointer() {
       try { svg.setPointerCapture(down.pointerId); } catch { /* stale pointer */ }
     }
     if (moved) {
-      if (nodeDrag?.active) {
+      if (connectDrag?.active) {
+        const w = worldAt(ev.clientX, ev.clientY);
+        const phantom = { x: w.x - 0.5, y: w.y - 0.5, w: 1, h: 1, node: {} };
+        const route = routeDirect(connectDrag.fromLn, phantom);
+        const pts = route.points;
+        connectDrag.ghost.querySelector('.cg-line').setAttribute('d', edgePath(pts));
+        const a = pts[pts.length - 2], b = pts[pts.length - 1];
+        const ang = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+        connectDrag.ghost.querySelector('.cg-arrow').setAttribute('transform', `translate(${b.x},${b.y}) rotate(${ang})`);
+        const under = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('.node');
+        const tid = under && currentLayer?.contains(under) && under.dataset.id !== connectDrag.fromId
+          ? under.dataset.id : null;
+        connectDrag.targetId = tid;
+        setDropHighlight(tid);
+      } else if (nodeDrag?.active) {
         nodeDrag.ln.x = nodeDrag.ox + dx / camera.k;
         nodeDrag.ln.y = nodeDrag.oy + dy / camera.k;
         nodeDrag.el.setAttribute('transform', `translate(${nodeDrag.ln.x},${nodeDrag.ln.y})`);
         updateEdgesFor(nodeDrag.ln);
+        // re-nest targeting: hovering a container (not our own subtree) arms a drop
+        const under = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('.node');
+        let tid = null;
+        if (under && currentLayer?.contains(under) && under !== nodeDrag.el) {
+          const cand = state.model?.byId.get(under.dataset.id);
+          if (cand?.children && !ancestryOf(state.model, cand.id).includes(nodeDrag.ln.id)) tid = cand.id;
+        }
+        nodeDrag.dropInto = tid;
+        nodeDrag.moveOut = false;
+        if (moveOutBar && !moveOutBar.hidden) {
+          const br = moveOutBar.getBoundingClientRect();
+          nodeDrag.moveOut = ev.clientX >= br.left && ev.clientX <= br.right
+            && ev.clientY >= br.top && ev.clientY <= br.bottom;
+          moveOutBar.classList.toggle('hot', nodeDrag.moveOut);
+          if (nodeDrag.moveOut) nodeDrag.dropInto = null;
+        }
+        setDropHighlight(nodeDrag.dropInto);
       } else {
         camera = { ...camera, x: down.cam.x + dx, y: down.cam.y + dy };
         applyCamera();
@@ -638,17 +757,41 @@ function wirePointer() {
     if (ev.button !== 0) return; // a chord's secondary release must not end the press
     svg.classList.remove('panning');
     svg.classList.remove('dragging-node');
+    svg.classList.remove('connect-dragging');
     const wasDrag = moved;
     const target = down?.target;
     const finishedNodeDrag = nodeDrag?.active ? nodeDrag : null;
+    const finishedConnect = connectDrag?.active ? connectDrag : null;
     nodeDrag = null; // consumed — clearDrag/revert must not undo a completed drop
+    connectDrag = null;
     if (down && svg.hasPointerCapture?.(down.pointerId)) {
       try { svg.releasePointerCapture(down.pointerId); } catch { /* already released */ }
     }
     down = null; moved = false;
     if (wasDrag || !target) {
+      if (finishedConnect) {
+        finishedConnect.ghost?.remove();
+        setDropHighlight(null);
+        if (finishedConnect.targetId) {
+          bus.emit('connect-drag', finishedConnect.fromId, finishedConnect.targetId);
+        } else {
+          bus.emit('toast', 'Connect cancelled'); // same feedback as click-connect
+        }
+        return;
+      }
       if (finishedNodeDrag) {
+        finishedNodeDrag.el.classList.remove('dragging');
+        setDropHighlight(null);
+        hideMoveOutBar();
         const ln = finishedNodeDrag.ln;
+        if (finishedNodeDrag.moveOut) {
+          bus.emit('node-move-out', ln.id);
+          return;
+        }
+        if (finishedNodeDrag.dropInto) {
+          bus.emit('node-drop-into', ln.id, finishedNodeDrag.dropInto);
+          return;
+        }
         bus.emit('node-moved', ln.id, {
           x: Math.round(ln.x + ln.w / 2),
           y: Math.round(ln.y + ln.h / 2),
@@ -669,9 +812,9 @@ function wirePointer() {
   });
   svg.addEventListener('pointercancel', clearDrag);
 
-  // Escape during a node drag cancels it (and must not also rise a scope)
+  // Escape during a node/connect drag cancels it (and must not also rise a scope)
   document.addEventListener('keydown', (ev) => {
-    if (ev.key !== 'Escape' || !nodeDrag?.active) return;
+    if (ev.key !== 'Escape' || (!nodeDrag?.active && !connectDrag?.active)) return;
     ev.preventDefault();
     ev.stopPropagation();
     if (down && svg.hasPointerCapture?.(down.pointerId)) {
@@ -684,8 +827,11 @@ function wirePointer() {
     const nodeEl = ev.target.closest?.('.node');
     if (nodeEl) {
       bus.emit('node-dblclick', nodeEl.dataset.id);
-    } else {
+    } else if (state.presenting || state.standalone || state.connectFrom || !state.model) {
       fit();
+    } else {
+      // double-click on empty canvas drops a new node right there
+      bus.emit('bg-dblclick', worldAt(ev.clientX, ev.clientY));
     }
     ev.preventDefault();
   });

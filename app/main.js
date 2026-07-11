@@ -62,6 +62,63 @@ function wireCanvasEvents() {
       .then((ok) => { if (ok) ui.toast('Released — back to auto-layout'); });
   });
 
+  // re-nesting suffix: "· 2 edges re-linked · 1 edge removed"
+  const edgeFate = (res) => {
+    let s = '';
+    if (res?.lifted) s += ` · ${res.lifted} edge${res.lifted === 1 ? '' : 's'} re-linked`;
+    if (res?.dropped) s += ` · ${res.dropped} edge${res.dropped === 1 ? '' : 's'} removed`;
+    return s;
+  };
+
+  // a node dropped onto a container moves into that container's sub-map
+  bus.on('node-drop-into', (id, containerId) => {
+    if (state.presenting || state.standalone) return;
+    const nodeLabel = state.model?.byId.get(id)?.label ?? id;
+    const contLabel = state.model?.byId.get(containerId)?.label ?? containerId;
+    let res;
+    ctrl.commit(() => { res = edit.moveNode(id, containerId); }, { select: null })
+      .then((ok) => {
+        if (!ok) { canvas.refreshScope(state.model); return; }
+        ui.toast(`Moved “${nodeLabel}” into “${contLabel}”${edgeFate(res)}`);
+      });
+  });
+
+  // a node dropped on the move-out bar climbs one level up
+  bus.on('node-move-out', (id) => {
+    if (state.presenting || state.standalone || state.scopeId == null) return;
+    const owner = state.model?.byId.get(state.scopeId);
+    if (!owner) return;
+    const targetOwnerId = owner.ownerId ?? null;
+    const nodeLabel = state.model.byId.get(id)?.label ?? id;
+    const targetLabel = targetOwnerId
+      ? state.model.byId.get(targetOwnerId)?.label ?? targetOwnerId
+      : state.model.name;
+    let res;
+    ctrl.commit(() => { res = edit.moveNode(id, targetOwnerId); }, { select: null })
+      .then((ok) => {
+        if (!ok) { canvas.refreshScope(state.model); return; }
+        ui.toast(`Moved “${nodeLabel}” out to “${targetLabel}”${edgeFate(res)}`);
+      });
+  });
+
+  // drag released over a sibling after starting on a port → new edge
+  bus.on('connect-drag', (from, to) => {
+    if (state.presenting || state.standalone) return;
+    ctrl.commit(() => edit.addEdge(state.scopeId, { from, to }))
+      .then((ok) => {
+        if (!ok) return;
+        const scope = state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children;
+        ctrl.selectEdge(scope.edges.length - 1);
+        ui.toast('Edge added — set its label in the panel');
+      });
+  });
+
+  // double-click on empty canvas → new process node pinned right there
+  bus.on('bg-dblclick', (world) => {
+    if (state.presenting || state.standalone || !state.model) return;
+    ui.createNodeAt('process', world);
+  });
+
   bus.on('edge-click', (index) => {
     if (state.presenting || state.connectFrom) return;
     ctrl.selectEdge(index);
