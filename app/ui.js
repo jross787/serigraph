@@ -279,6 +279,19 @@ function renderDetail() {
   const body = h('div', { class: 'panel-body' });
 
   if (!editMode) {
+    // provenance flag — inferred from a transcript, awaiting human confirmation
+    const flagNote = state.flags?.nodes?.get(node.id);
+    if (flagNote) {
+      body.append(h('div', { class: 'panel-section flag-section' },
+        h('h3', {}, '⚑ Inferred, not stated'),
+        h('div', { class: 'desc' }, flagNote),
+        ro ? null : h('button', {
+          class: 'pa-btn', title: 'Remove the “# inferred:” comment from the file — you have verified this',
+          onClick: () => ctrl.commit(() => edit.confirmNodeFlag(node.id))
+            .then((ok) => ok && toast('Confirmed — flag removed from the file')),
+        }, '✓ Mark confirmed')));
+    }
+
     body.append(h('div', { class: 'panel-section' },
       h('h3', {}, 'What happens here'),
       node.description
@@ -445,9 +458,20 @@ function renderCostSection(node, ro) {
     field(`Agent setup (${cur})`, setup));
 
   const parse = (inp) => (inp.value.trim() === '' ? null : inp.value.trim());
+  const inputs = [runs, minutes, rate, perRun, setup];
   const save = h('button', {
     class: 'pa-btn primary-ish',
     onClick: () => {
+      // mark offending fields inline, not just via toast
+      let bad = false;
+      for (const inp of inputs) {
+        const v = inp.value.trim();
+        const invalid = v !== '' && (!Number.isFinite(Number(v)) || Number(v) < 0);
+        inp.classList.toggle('invalid', invalid);
+        inp.setAttribute('aria-invalid', invalid ? 'true' : 'false');
+        bad = bad || invalid;
+      }
+      if (bad) { toast('Cost inputs must be numbers ≥ 0 — fix the highlighted fields', true); return; }
       ctrl.commit(() => edit.setNodeCost(node.id, {
         runs: parse(runs), minutes: parse(minutes), rate: parse(rate),
         perRun: parse(perRun), setup: parse(setup),
@@ -581,6 +605,20 @@ function renderEdgeDetail(panel) {
     h('button', { class: 'panel-close', onClick: () => { ctrl.selectEdge(null); panel.hidden = true; } }, '✕'));
   const body = h('div', { class: 'panel-body' },
     h('div', { class: 'f-field' }, h('label', {}, 'Label (what flows / the outcome)'), label));
+
+  // provenance flag on this edge (matched by endpoints within this scope)
+  const edgeFlag = state.flags?.edges?.find((f) =>
+    (f.owner ?? null) === (state.scopeId ?? null) && f.from === e.from && f.to === e.to);
+  if (edgeFlag) {
+    body.append(h('div', { class: 'panel-section flag-section' },
+      h('h3', {}, '⚑ Inferred, not stated'),
+      h('div', { class: 'desc' }, edgeFlag.note),
+      state.standalone ? null : h('button', {
+        class: 'pa-btn', title: 'Remove the “# inferred:” comment from the file — you have verified this',
+        onClick: () => ctrl.commit(() => edit.confirmEdgeFlag(state.scopeId, sel.index))
+          .then((ok) => ok && toast('Confirmed — flag removed from the file')),
+      }, '✓ Mark confirmed')));
+  }
   panel.replaceChildren(head, body);
   if (!state.standalone) {
     panel.append(h('div', { class: 'panel-actions' },

@@ -2,7 +2,7 @@
 // callLLM is injected so tests run offline against fixtures; the server
 // injects the real provider chain from server/llm.js.
 import { parseMap } from '../shared/model.js';
-import { isMap, isSeq } from '../vendor/yaml.js';
+import { collectProvenance } from '../shared/provenance.js';
 
 export const MIN_TRANSCRIPT_CHARS = 120;
 export const MAX_TRANSCRIPT_CHARS = 120_000;
@@ -71,73 +71,22 @@ export function stripFences(text) {
   return t;
 }
 
-// Collect provenance flags: inline comments containing "inferred"/"assumption"
-// anywhere on a node's or edge's lines. Walks the comment-preserving document.
+// Flatten provenance into the review-step display list.
 export function collectFlags(doc, model) {
+  const { nodes, edges } = collectProvenance(doc);
   const flags = [];
-  const NOTE_RE = /(inferred|assumption|low[\s-]?confidence|uncertain)[:\s—–-]*(.*)/i;
-  const noteOf = (yamlNode) => {
-    if (!yamlNode || typeof yamlNode !== 'object') return null;
-    for (const c of [yamlNode.comment, yamlNode.commentBefore]) {
-      if (typeof c === 'string') {
-        const m = c.match(NOTE_RE);
-        if (m) return (m[2] || m[1]).trim() || m[1];
-      }
-    }
-    return null;
-  };
-  const anyNote = (mapNode) => {
-    let found = noteOf(mapNode);
-    if (found) return found;
-    for (const pair of mapNode.items ?? []) {
-      found = noteOf(pair.key) ?? noteOf(pair.value);
-      if (found) return found;
-      // one level into flow maps (e.g. position) is enough — ids/labels carry the flags
-    }
-    return null;
-  };
-
-  const walkNodes = (seq) => {
-    if (!isSeq(seq)) return;
-    for (const item of seq.items) {
-      if (!isMap(item)) continue;
-      const id = item.get('id');
-      const note = anyNote(item);
-      if (note && id) {
-        flags.push({ kind: 'node', id, label: model?.byId.get(id)?.label ?? id, note });
-      }
-      const children = item.get('children', true);
-      if (isMap(children)) walkNodes(children.get('nodes', true));
-      else if (isSeq(children)) walkNodes(children);
-    }
-  };
-  const walkEdges = (seq, scopeLabel) => {
-    if (!isSeq(seq)) return;
-    for (const item of seq.items) {
-      if (!isMap(item)) continue;
-      const note = anyNote(item);
-      if (note) {
-        flags.push({ kind: 'edge', id: `${item.get('from')} → ${item.get('to')}`, label: `${item.get('from')} → ${item.get('to')}${scopeLabel ? ` (in ${scopeLabel})` : ''}`, note });
-      }
-    }
-  };
-  const walkScopeEdges = (seq) => {
-    if (!isSeq(seq)) return;
-    for (const item of seq.items) {
-      if (!isMap(item)) continue;
-      const children = item.get('children', true);
-      if (isMap(children)) {
-        walkEdges(children.get('edges', true), item.get('id'));
-        walkScopeEdges(children.get('nodes', true));
-      } else if (isSeq(children)) {
-        walkScopeEdges(children);
-      }
-    }
-  };
-
-  walkNodes(doc.getIn(['nodes'], true));
-  walkEdges(doc.getIn(['edges'], true), null);
-  walkScopeEdges(doc.getIn(['nodes'], true));
+  for (const [id, note] of nodes) {
+    flags.push({ kind: 'node', id, label: model?.byId.get(id)?.label ?? id, note });
+  }
+  for (const e of edges) {
+    const scopeLabel = e.owner ? model?.byId.get(e.owner)?.label ?? e.owner : null;
+    flags.push({
+      kind: 'edge',
+      id: `${e.from} → ${e.to}`,
+      label: `${e.from} → ${e.to}${scopeLabel ? ` (in ${scopeLabel})` : ''}`,
+      note: e.note,
+    });
+  }
   return flags;
 }
 

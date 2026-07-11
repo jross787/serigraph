@@ -385,6 +385,14 @@ body.presenting #economics { display: none; }
 .cost-summary .cost-sub { color: var(--muted); font-size: 12px; }
 .cost-summary.partial { color: var(--muted); font-style: italic; font-size: 12px; }
 
+/* provenance flag badge — inferred-from-transcript, confirm in the panel */
+.node .flag-badge { pointer-events: none; }
+.node .flag-bg { fill: var(--surface); stroke: var(--c-decision); stroke-width: 1.2; }
+.node .flag-glyph { fill: none; stroke: var(--c-decision); stroke-width: 1.6; }
+.flag-section { background: var(--c-decision-bg, #fff7ed); border-radius: 10px; padding: 10px 12px; }
+.flag-section h3 { color: var(--c-decision) !important; }
+.c-num.invalid, .f-input.invalid { border-color: var(--danger); outline: 1px solid var(--danger); }
+
 /* pinned-position badge — click releases the node back to auto-layout */
 .node .pin-badge { cursor: pointer; }
 .node .pin-bg { fill: var(--surface); stroke: var(--border-strong); stroke-width: 1; }
@@ -679,7 +687,7 @@ body.presenting #detail, body.presenting #templates-panel { display: none; }
 
 /* ─── Responsive (≤700px) ──────────────────────────────────────────── */
 @media (max-width: 700px) {
-  .logo-word, #btn-templates, #btn-present, #btn-help { display: none; }
+  .logo-word, #btn-templates, #btn-present, #btn-help, .tb-word { display: none; }
   .map-switcher { max-width: 130px; }
   .crumb { max-width: 96px; }
   /* phones: panels overlay as bottom sheets (canvas too small to dock) */

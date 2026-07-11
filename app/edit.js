@@ -2,6 +2,7 @@
 // mutates state.doc in place; callers serialize with doc.toString().
 import { isMap, isSeq } from '../vendor/yaml.js';
 import { ancestryOf, scopeOf } from '../shared/model.js';
+import { stripFlagComments } from '../shared/provenance.js';
 import { state } from './state.js';
 
 // ── locating things in the YAML document ─────────────────────────────
@@ -206,6 +207,23 @@ export function setMapCostModel({ currency, defaultRate } = {}) {
   }
   doc.setIn(['costModel'], doc.createNode(obj, { flow: true }));
   tidyTopOrder(doc);
+}
+
+// Confirming a provenance flag = removing its "# inferred:" comment. The
+// human has verified the fact; the file stops carrying the doubt.
+export function confirmNodeFlag(nodeId) {
+  const doc = state.doc;
+  const p = findNodePath(doc, nodeId);
+  if (!p) throw new Error(`node "${nodeId}" not found in file`);
+  if (!stripFlagComments(doc.getIn(p, true))) throw new Error('no provenance flag on this node');
+}
+
+export function confirmEdgeFlag(ownerId, index) {
+  const doc = state.doc;
+  const scope = ensureScope(doc, ownerId, { create: false });
+  if (!scope) throw new Error('scope not found');
+  const item = doc.getIn([...scope.edgesPath, index], true);
+  if (!item || !stripFlagComments(item)) throw new Error('no provenance flag on this edge');
 }
 
 // keep the top level predictable: name, description, costModel, nodes, edges

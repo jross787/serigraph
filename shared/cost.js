@@ -152,7 +152,6 @@ export function compactMoney(v, currency = 'USD') {
   const sign = v < 0 ? '-' : ''; // ASCII minus, matching Intl's formatMoney output
   if (abs >= 1e9) return `${sign}${sym}${(abs / 1e9).toFixed(1).replace(/\.0$/, '')}B`;
   if (abs >= 1e6) return `${sign}${sym}${(abs / 1e6).toFixed(1).replace(/\.0$/, '')}M`;
-  if (abs >= 1e4) return `${sign}${sym}${Math.round(abs / 1000)}k`;
   if (abs >= 1e3) return `${sign}${sym}${(abs / 1000).toFixed(1).replace(/\.0$/, '')}k`;
   if (abs >= 100 || Number.isInteger(v)) return `${sign}${sym}${Math.round(abs)}`;
   return `${sign}${sym}${abs.toFixed(2)}`;

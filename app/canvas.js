@@ -320,6 +320,22 @@ function buildNode(n) {
     g.appendChild(textLines(n.lines, 44, (n.h - totalH) / 2 + 13, 'label'));
   }
 
+  // provenance badge — this element was inferred from a transcript, not
+  // stated; the detail panel shows the note and a "Mark confirmed" action
+  const flagNote = state.flags?.nodes?.get(node.id);
+  if (flagNote) {
+    const fb = el('g', { transform: 'translate(6,-2)' }, 'flag-badge');
+    fb.appendChild(el('circle', { r: 9 }, 'flag-bg'));
+    fb.appendChild(el('path', {
+      d: 'M-2.5 4.5 v-9 h5.5 l-1.8 2.2 1.8 2.2 h-4.3',
+      'stroke-linejoin': 'round',
+    }, 'flag-glyph'));
+    const ft = el('title');
+    ft.textContent = `Inferred, not stated: ${flagNote} — open the panel to confirm`;
+    fb.appendChild(ft);
+    g.appendChild(fb);
+  }
+
   // pinned nodes wear a small pin badge; clicking it releases to auto-layout
   if (node.position) {
     const pb = el('g', { transform: `translate(${n.w - 6},${-2})` }, 'pin-badge');

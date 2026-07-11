@@ -1,6 +1,7 @@
 // Orchestrates everything: loading maps, the edit→serialize→save pipeline,
 // navigation (scopes, selection, deep links, history), and remote changes.
 import { parseMap, ancestryOf } from '../shared/model.js';
+import { collectProvenance } from '../shared/provenance.js';
 import { state, bus } from './state.js';
 import { invalidateLayouts } from './layout.js';
 import * as canvas from './canvas.js';
@@ -97,6 +98,12 @@ function adoptSource(source) {
   state.doc = doc;
   state.model = model;
   state.errors = errors;
+  // provenance flags ("# inferred:" comments) — shown as badges + panel rows
+  try {
+    state.flags = doc && model ? collectProvenance(doc) : { nodes: new Map(), edges: [] };
+  } catch {
+    state.flags = { nodes: new Map(), edges: [] };
+  }
   invalidateLayouts();
 }
 
