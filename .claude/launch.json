@@ -6,6 +6,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["server/main.js", "--no-open"],
       "port": 4700
+    },
+    {
+      "name": "opsmap-mock-llm",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "OPSMAP_MOCK_LLM=tests/fixtures/extractions/dental-clinic.yaml node server/main.js --no-open"],
+      "port": 4700
     }
   ]
 }

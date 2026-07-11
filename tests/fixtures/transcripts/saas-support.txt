@@ -1,0 +1,83 @@
+Joe: Hey Priya, can you hear me okay? My headset was doing that crackly thing again this morning.
+
+Priya: Yeah, you're coming through fine. How's it going over there?
+
+Joe: Good, good. Melting a little — supposed to hit thirty-four here today, which is criminal. Anyway, thanks for making the time. Like I said in the email, I'm trying to map out how the support desk actually works day to day. So mostly I'll ask dumb questions and you talk.
+
+Priya: Ha, perfect, dumb questions are my specialty. Where do you want to start?
+
+Joe: Start at the very beginning. A customer has a problem with Ledgerly. What happens?
+
+Priya: So they've got two ways in, basically. Email — support at ledgerly dot com — and the chat widget inside the app. Both of those land in Zendesk. We killed phone support, gosh, maybe two years ago? Best decision we ever made, honestly.
+
+Joe: Everything goes into Zendesk. No exceptions?
+
+Priya: Well — okay, occasionally a big customer emails their account manager directly and the AM forwards it in, which drives me nuts because it skips the queue, but yes, one way or another it all ends up in Zendesk.
+
+Joe: And then someone reads it?
+
+Priya: Not right away, no. The first thing that touches it is the triage bot. Engineering built us this little thing that reads the ticket and slaps a severity tag on it, sev one through sev four. Sev one is like, "payroll run failed and it's payday." Sev four is "can you change the logo on my invoices."
+
+Joe: How good is the bot?
+
+Priya: Honestly? Pretty decent. It gets maybe... I want to say ninety percent right? Agents can re-tag if it's wrong, obviously. It also takes a first swing at categorizing — bug, how-to, billing, that sort of thing — but the severity tag is the part we actually trust.
+
+Joe: Okay. Ticket's tagged. Who picks it up?
+
+Priya: Tier one. That's most of the team. They work the queue oldest-first within severity, and the first response is almost always off a macro — we've got, I don't know, sixty-something macros in Zendesk now? The good agents personalize the top and bottom. The, um, less good ones fire the macro and move on.
+
+Joe: What's your first-response target?
+
+Priya: One hour on chat-origin tickets, four hours on email. I think — actually no, wait, chat is thirty minutes now, we tightened it last quarter. Four hours on email is still right though.
+
+Joe: Got it. Then comes the fork in the road, I assume. How does the agent decide what a ticket actually is?
+
+Priya: Right, this is the real triage, the human one. Three buckets, roughly. If it's a how-to — "how do I reconcile this account," "where's my aging report" — the agent answers it out of the knowledge base and that's the end of it. And if we keep seeing the same how-to over and over, we try to get it written up as a proper article so it stops coming in, you know. Marcus is usually the one nagging people about that.
+
+Joe: Who's Marcus?
+
+Priya: Oh, um — Marcus. He sits with us. Anyway. Second bucket is billing. Wrong plan, double charge, "why did my subscription go up." The agent flips the ticket over to the billing team — they've got their own view in Zendesk. Most of it they can just fix on the spot. Refunds they can do themselves unless it's, um, chunky, in which case it has to go past Elena first, and that adds — I think that takes maybe two days? Don't quote me on two days.
+
+Joe: And bucket three is bugs.
+
+Priya: Bugs. If tier one confirms it's actually broken — they've reproduced it, got screenshots, checked it's not just the customer's bank feed being weird — then it gets filed into Jira. There's a Zendesk-Jira link so the two tickets stay married. The customer-facing ticket sits in pending-engineering and the agent is supposed to update the customer every few days even when there's nothing new. Supposed to.
+
+Joe: Does tier one file the Jira directly, or —
+
+Priya: The straightforward ones, yeah. The gnarly ones — data weirdness, anything touching the actual ledger math — those get bumped to Dev first. He'll poke at it for a bit, and honestly half the time it turns out not to be a bug at all. He catches a ton of stuff before engineering ever sees it.
+
+Joe: Okay, noting Dev. Now — SLAs. What happens when a ticket's about to blow through one?
+
+Priya: So Zendesk tracks the SLA clocks, and at eighty percent it flags the ticket and pings the team Slack channel. If it actually breaches, it pings again, but that time whoever's holding the escalation pager that week gets tagged directly, and they have to either grab the ticket themselves or go lean on whoever owns it. Sev ones that breach skip all that and go straight to me and to Tom on the engineering side. No in-between.
+
+Joe: Does that happen a lot?
+
+Priya: Way less than it used to. Oh — that reminds me, sorry, quick tangent — a big chunk of why it used to happen was our old chat vendor, before we moved the widget onto Zendesk's own messaging. Tickets would just not sync. For like forty minutes at a time. We'd breach SLA on tickets we literally could not see yet. I spent a year of my life on calls with their support and I swear their support was worse than— anyway. Ancient history. We're all Zendesk-native now.
+
+Joe: Ha, okay. So a ticket gets resolved. What does closing it out look like?
+
+Priya: Agent marks it solved, and Zendesk automatically fires the CSAT survey at the customer — the little good-slash-bad rating with a comment box. Anything negative that comes back with a comment, we review. Solved tickets auto-close after, um, four days I think, unless the customer replies and it reopens.
+
+Joe: And the bug loop — how do fixes make it back to you?
+
+Priya: Weekly bug review. Every Thursday, us plus engineering, half an hour. We walk the open Jira tickets that came from support — what shipped, what's stuck, what's getting worse. That meeting is honestly the glue holding the whole thing together. When a fix ships, the linked Zendesk tickets get a note and the agent circles back to the customer.
+
+Joe: Who runs it?
+
+Priya: It alternates, sort of. Tom, mostly. Look, it's Thursdays at ten and whoever has the most pain that week runs it, ha.
+
+Joe: Fair enough. Anything big changing right now that I should know about?
+
+Priya: Process-wise, not really. The big drama this quarter is the office renovation — they're redoing our whole floor, so there's this rigmarole where you book a desk through an app, submit a request for a second monitor, three separate approvals to move a filing cabinet. The team's split across two floors until September. Total chaos, but it's got nothing to do with tickets, thank god.
+
+Joe: Ha, I'll leave that off the map then. Okay, last one. If you could fix one thing in the whole flow, what would it be?
+
+Priya: Hmm. Honestly? The handoff to billing. It works, but tickets go quiet in there and the customer feels it. And the CSAT comments — we collect them, but I don't think anyone actually mines them for patterns. There's gold in there, probably.
+
+Joe: That's really useful. I'll sketch this up and send you a draft map, probably early next week — flag anything I got wrong.
+
+Priya: Will do. And hey, if the map makes billing look slow, I said nothing, ha.
+
+Joe: Your secret's safe. Thanks, Priya.
+
+Priya: No problem. Bye, Joe.

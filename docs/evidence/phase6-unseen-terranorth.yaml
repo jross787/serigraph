@@ -1,0 +1,260 @@
+name: TerraNorth Grounds
+description: "How commercial grounds and snow work flows through TerraNorth, from inbound lead to invoicing and collections."
+nodes:
+  - id: lead-intake
+    type: process
+    label: Lead intake
+    description: "Inbound phone and email requests are captured; whatever comes in, Deb logs it in Jobber as a request. 'If it isn't in Jobber, it didn't happen' — even tire-kickers go in."
+    children:
+      nodes:
+        - id: inbound
+          type: process
+          label: Inbound channels
+          description: "Office line rings to Deb up front, plus the info@ inbox she watches; leads also come from referrals, property managers, and trucks seen at a stoplight."
+        - id: log-request
+          type: process
+          label: Log request in Jobber
+          description: "Deb enters name, property address, and what they're asking about into Jobber as a request."
+        - id: callback
+          type: process
+          label: Call back & qualify
+          description: "Deb or Bill call back, usually same day; a real prospect gets a site visit set up."
+      edges:
+        - from: inbound
+          to: log-request
+        - from: log-request
+          to: callback
+  - id: site-visit
+    type: process
+    label: Site visit
+    description: "Bill drives out, walks the property, takes measurements and pictures, and punches it into Jobber on his phone — commercial grounds can't be quoted off Google Maps. These back up when Bill is unavailable (the spring bottleneck)."
+  - id: estimate
+    type: process
+    label: Build estimate
+    description: "Bill builds the quote in Jobber, usually that night or the next morning, and it goes out to the customer by email through the system."
+    children:
+      nodes:
+        - id: build-quote
+          type: process
+          label: Assemble quote
+          description: "Bill puts the quote together in Jobber the night of or the morning after the walk-through."
+        - id: over-threshold
+          type: decision
+          label: Over ~$10k/season?
+          description: "Anything over roughly ten grand a season needs owner review before it goes out."
+        - id: marty
+          type: role
+          label: Marty (owner)
+          description: "Owner; wants eyes on any quote over about $10k/season before it's sent, and co-decides snow accounts."
+        - id: send-quote
+          type: process
+          label: Send quote
+          description: "Quote is emailed to the customer through Jobber."
+      edges:
+        - from: build-quote
+          to: over-threshold
+        - from: over-threshold
+          to: marty
+          label: "over ~$10k/season"
+        - from: over-threshold
+          to: send-quote
+          label: "under ~$10k"
+        - from: marty
+          to: send-quote
+          label: "reviewed"
+  - id: quote-decision
+    type: decision
+    label: Customer decision
+    description: "Customer accepts, declines, or more often just goes quiet."
+  - id: follow-up
+    type: process
+    label: Follow-up outreach
+    description: "If declined or quiet, Deb sends a polite follow-up a couple weeks later — 'pricing's good for sixty days, keep us in mind.' The return rate isn't tracked."
+  - id: scheduling
+    type: process
+    label: Weekly scheduling
+    description: "Sunday nights Bill builds the week; three crews in summer plus Bill floating, each crew on its own route."
+    children:
+      nodes:
+        - id: build-week
+          type: process
+          label: Build the week
+          description: "Bill builds the week Sunday nights across three summer crews plus himself floating."
+        - id: route-sheet
+          type: artifact
+          label: Route sheet
+          description: "Per-crew sheet: stops in order, gate codes, what's due at each property, and notes like 'don't blow clippings toward the patio.'"
+        - id: print-distribute
+          type: process
+          label: Print & hand out
+          description: "Deb prints the sheets Monday morning; crew leads grab them off the corkboard with their truck keys."
+        - id: adjust-midday
+          type: process
+          label: Mid-day changes
+          description: "If something changes mid-day — rain, a breakdown, a client meltdown — Bill calls the lead's cell and it gets scribbled on the sheet."
+      edges:
+        - from: build-week
+          to: route-sheet
+        - from: route-sheet
+          to: print-distribute
+        - from: print-distribute  # inferred: happens during the day, not a fixed next step
+          to: adjust-midday
+  - id: field-work
+    type: process
+    label: Field work & close-out
+    description: "Crews run the route and each visit gets closed out against what was planned."
+    children:
+      nodes:
+        - id: crew
+          type: role
+          label: Crew (lead + crew)
+          description: "Crew lead and crew work the stops in route order."
+        - id: mark-sheet
+          type: process
+          label: Mark the sheet
+          description: "The lead marks the sheet as they go."
+        - id: close-out
+          type: process
+          label: Close out in Jobber
+          description: "When sheets come back in, Deb closes the visits out in Jobber and reconciles against what was planned."
+      edges:
+        - from: crew
+          to: mark-sheet
+        - from: mark-sheet
+          to: close-out
+  - id: snow-season
+    type: process
+    label: Snow season flip
+    description: "Around Columbus Day the business flips to snow for four months — reactive, radar instead of a calendar — but the paperwork is the same idea: route sheet, do the work, close out in Jobber."
+    children:
+      nodes:
+        - id: account-review
+          type: process
+          label: Account-by-account review
+          description: "Marty and Bill go through the whole client list account by account, deciding who to offer a snow contract based on location (plow route) and whether they paid on time all summer."
+        - id: offer-snow
+          type: decision
+          label: Offer a snow contract?
+          description: "Whether this account is offered a snow agreement this winter."
+        - id: snow-agreement
+          type: artifact
+          label: Snow agreement
+          description: "Seasonal flat rate or per-push, customer's choice, though small lots are steered toward per-push."
+        - id: rebuild-routes
+          type: process
+          label: Rebuild as plow routes
+          description: "Once signed contracts are back, summer routes are torn up and rebuilt as plow routes."
+        - id: go-dormant
+          type: process
+          label: Go dormant
+          description: "Accounts not offered, or who don't sign, go dormant until spring cleanups."
+      edges:
+        - from: account-review
+          to: offer-snow
+        - from: offer-snow
+          to: snow-agreement
+          label: "offered"
+        - from: offer-snow
+          to: go-dormant
+          label: "not offered"
+        - from: snow-agreement
+          to: rebuild-routes
+          label: "signed"
+        - from: snow-agreement
+          to: go-dormant
+          label: "not signed"
+  - id: invoicing
+    type: process
+    label: Invoicing
+    description: "End of week, Deb pulls what got completed in Jobber and invoices from QuickBooks; monthly maintenance accounts bill on the first, terms net thirty."
+    children:
+      nodes:
+        - id: pull-completed
+          type: process
+          label: Pull completed work
+          description: "At week's end Deb pulls up what got completed in Jobber."
+        - id: raise-invoice
+          type: process
+          label: Invoice from QuickBooks
+          description: "Deb enters the invoices in QuickBooks and sends them; monthly maintenance bills on the first, net thirty."
+      edges:
+        - from: pull-completed
+          to: raise-invoice
+  - id: collections
+    type: process
+    label: Collections
+    description: "An escalating ladder chases unpaid invoices, and non-payment costs the account its October snow offer."
+    children:
+      nodes:
+        - id: reminder-30
+          type: process
+          label: 30 days — auto reminder
+          description: "At 30 days QuickBooks fires the reminder automatically."
+        - id: call-45
+          type: process
+          label: 45 days — Deb calls
+          description: "At 45 days Deb calls."
+        - id: call-60
+          type: process
+          label: 60 days — Bill calls
+          description: "At 60 days Bill calls — friendly, but firm."
+        - id: hold-service
+          type: process
+          label: Hold service
+          description: "Past that, service goes on hold and, more importantly, there's no snow offer in October."
+      edges:
+        - from: reminder-30
+          to: call-45
+          label: "still unpaid"
+        - from: call-45
+          to: call-60
+          label: "still unpaid"
+        - from: call-60
+          to: hold-service
+          label: "still unpaid"
+  - id: jobber
+    type: system
+    label: Jobber
+    description: "System of record for requests, quotes, jobs, scheduling, and completion — 'if it isn't in Jobber, it didn't happen.'"
+  - id: quickbooks
+    type: system
+    label: QuickBooks
+    description: "Invoicing and receivables; sends invoices and auto-fires the 30-day payment reminder."
+edges:
+  - from: lead-intake
+    to: site-visit
+    label: "real prospect"
+  - from: site-visit
+    to: estimate
+  - from: estimate
+    to: quote-decision
+  - from: quote-decision
+    to: scheduling
+    label: "accepted"
+  - from: quote-decision
+    to: follow-up
+    label: "declined / goes quiet"
+  - from: follow-up  # inferred: some prospects circle back and convert
+    to: quote-decision
+    label: "some circle back"
+  - from: scheduling
+    to: field-work
+  - from: field-work
+    to: invoicing
+  - from: invoicing
+    to: collections
+  - from: snow-season
+    to: field-work
+    label: "plow routes"
+  - from: collections
+    to: snow-season
+    label: "unpaid → no snow offer"
+  - from: lead-intake
+    to: jobber
+    label: "logged as request"
+  - from: field-work
+    to: jobber
+    label: "visits closed out"
+  - from: invoicing
+    to: quickbooks
+    label: "invoices sent"

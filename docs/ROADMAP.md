@@ -50,7 +50,7 @@ Make the map reflect reality, not just document it. Aligns with the already-scop
 - **Hosted mode on Cloudflare** with login and cloud-saved maps (accounts, sync) — extends the deferred "read-only client shares."
 - **Electron desktop app** — launchable, persistent, runs offline as a native app.
 
-## Phase 6 — AI-native authoring
+## Phase 6 — AI-native authoring  ·  *transcript import ✅ shipped*
 
 The map builds itself from how a business is *described*, not just drawn.
 
@@ -58,13 +58,17 @@ The map builds itself from how a business is *described*, not just drawn.
 - **In-canvas copilot** — "find the bottleneck", "draft the servicing sub-map", "where's the compliance risk".
 - **Agent scaffolding** — from a node's spec, generate the automation/agent stub that runs that step.
 
-## Phase 7 — The economic & operational model
+Shipped as: ✨ Import — paste a transcript, the server derives the map through a provider chain (`ANTHROPIC_API_KEY` → logged-in `claude` CLI → `OPSMAP_LLM_CMD` for any local model; secrets never reach the browser, and the button explains itself when no provider is configured). The extraction emits only what the transcript supports; implied items carry `# inferred:` comments that persist in the YAML, and a review step (counts, type mix, flagged inferences) gates the save. Invalid model output gets one corrective retry against the validator, then a clean error. Copilot and agent scaffolding remain open.
+
+## Phase 7 — The economic & operational model  ·  *economics ✅ shipped*
 
 Turn the map from documentation into a decision tool — what a process *costs* and what automating it *saves*.
 
 - **Human-vs-agent economics** — per-node human run cost (time × loaded rate × volume) vs. agent run cost; rolled up across the map into total cost, savings, ROI, and payback. Recalculates live; stored as optional YAML fields.
 - **Simulation** — push volumes through the map to find bottlenecks, capacity limits, cycle time, and cost-per-stage.
 - **Automation coverage / gap analysis** — what's manual vs. automated, where agents already run, and the highest-ROI automation opportunities. (Builds on Phase 3 data-linking for live actuals.)
+
+Shipped as: optional `cost:` inputs per node (`runs`/month, `human: {minutes, rate}`, `agent: {perRun, setup}`) plus a one-line `costModel:` for currency and a default rate — documented with the formulas in [FORMAT.md](FORMAT.md). Every number is computed live in `shared/cost.js` (app, tests, and standalone exports share it): per-node chips on the canvas, a cost editor in the detail panel, and a map-level economics bar with human vs. agent totals, savings, payback, first-year ROI, and a coverage indicator. Unknowns render as "—" and are excluded from totals — never silently zero. Simulation and gap analysis remain open.
 
 ## Phase 8 — Enterprise platform & the agent substrate
 

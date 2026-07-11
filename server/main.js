@@ -9,6 +9,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseMap } from '../shared/model.js';
 import { buildExport } from './export.js';
+import { callLLM, resolveProvider } from './llm.js';
+import { importTranscript, ImportError } from './importer.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const MAPS_DIR = path.join(ROOT, 'maps');
@@ -185,6 +187,31 @@ async function handleApi(req, res, url) {
       // write and broadcast to OTHER tabs; the writing tab ignores the echo
       // because the fetched source matches what it already has
       return json(res, 200, { ok: true });
+    }
+  }
+
+  // transcript importer — the LLM call happens HERE, server-side; no key or
+  // token is ever sent to (or readable by) the browser
+  if (parts[1] === 'import' && parts[2] === 'status' && req.method === 'GET') {
+    const provider = await resolveProvider();
+    return json(res, 200, provider
+      ? { available: true, provider: provider.kind, model: provider.model }
+      : {
+        available: false,
+        hint: 'Set ANTHROPIC_API_KEY in the server\'s environment, log in the claude CLI (run `claude` once), or point OPSMAP_LLM_CMD at a local model — then restart Opsmap.',
+      });
+  }
+  if (parts[1] === 'import' && parts.length === 2 && req.method === 'POST') {
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON body' }); }
+    if (typeof body?.transcript !== 'string') return json(res, 400, { error: 'body must be { transcript: string }' });
+    try {
+      const result = await importTranscript(body.transcript, { llm: callLLM });
+      return json(res, 200, result);
+    } catch (e) {
+      const status = e instanceof ImportError ? e.status : 502;
+      console.error('[opsmap] import failed:', e.message);
+      return json(res, status, { error: e.message });
     }
   }
 

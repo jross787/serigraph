@@ -59,10 +59,42 @@ Verified July 2026, same method: a fresh-context adversarial reviewer drove all 
 
 Findings: **no defects**; two UX nits (Escape didn't cancel panel edit mode; port-drag cancel was silent vs click-connect's toast) — both fixed and re-verified in-session. The edge re-homing policy exercised here is documented in [FORMAT.md](FORMAT.md).
 
+## Phase 6 — transcript → map (✨ Import)
+
+Verified July 2026 (overnight build). The LLM call sits behind a provider chain (mock file → `OPSMAP_LLM_CMD` → `ANTHROPIC_API_KEY` → `claude` CLI) so the whole pipeline runs offline; extraction quality was measured by giving fresh-context agents ONLY the server's `SYSTEM_PROMPT` plus a transcript — exactly what the live API call sends.
+
+| Claim | How it was attacked | Result |
+|---|---|---|
+| 3 varied fixture transcripts extract with zero hand-edits | Dental clinic / mortgage lender / SaaS support-desk transcripts (900–1,400 words, messy speech, planted implications + red herrings) → extraction → validator, no repairs allowed | 35-, 33-, 40-node maps, all five types, labeled decision branches — **3× PASS untouched** |
+| An unseen transcript gets the same quality with no code change | A transcript the builder never saw (commercial landscaping/snow-removal, written by an independent agent) → same extraction | **37-node, 2-level map, PASS with zero hand-edits** (`phase6-unseen-terranorth*`) |
+| Inferred ≠ heard | Transcripts planted implied-but-unstated facts; the review step must flag them | Flags matched the planted list (e.g. an unnamed insurance-coordinator role, a hedged "two days" estimate); `# inferred:`/`# uncertain:` comments persist in the saved YAML |
+| Review before saving | UI drive: paste → progress → review (counts, type mix, flagged inferences, name) → create | Nothing written to maps/ until "Create map"; Back/Discard leave no trace |
+| Bad inputs never crash | empty / 11-char / 160k-char / wrong-shape body / non-English via curl + UI | Clean 4xx messages each time; non-English transcript flows through; zero console errors |
+| Model failure paths | Unit tests with a fake LLM: fenced output, ERROR: sentinel, invalid YAML → one corrective retry with validator feedback → still-invalid → clean 422 | 7 pipeline tests green |
+| Secrets stay server-side | Browser only ever calls `/api/import`; keys/tokens live in the server process env; the importer button self-disables with a setup hint when no provider is configured | Verified by code path + `/api/import/status` probe |
+
+## Phase 7 — human-vs-agent economics
+
+Verified July 2026 by a fresh-context adversarial reviewer who **recomputed every number by hand from the YAML** before comparing against the UI — per-node chips, panel summaries, and the roll-up bar all matched across 13 checkpoints (initial costing, default-rate fallback, assumption changes, exclusions, zero-runs, negative-savings, giant-setup, live disk edits). Full detail in the reviewer table inside the morning report.
+
+| Claim | How it was attacked | Result |
+|---|---|---|
+| Formulas correct end-to-end | Independent hand computation of per-run, monthly, savings, payback (incl. ceil-to-days display), first-year ROI, coverage counts at every depth | Every value matched |
+| Change one assumption → whole map recalculates | runs 200→100 on one node; all six downstream figures re-derived by hand | Matched live, no reload |
+| Unknowns are excluded, never zero | Removing one required field flipped the node to a dashed "incomplete" chip, out of totals (its setup too), listed + clickable in the panel | No silent zeros anywhere |
+| Inputs persist and survive reload | Panel saves → exact `cost:` block in the file (flow-style one-liners); disk edits appear live; Cmd+Z reverts in one step | PASS |
+| Bad inputs | negative → error toast + no write; `1e3` accepted as 1000; `abc` blocked; runs 0 valid ($0/mo, included); 1e9 runs → no NaN/Infinity | PASS |
+| No-cost maps unchanged | insurance renders with no chips/bar; **byte-identical DOM hash old-code vs new-code** for insurance and the 120-node map (`phase67-invariant`) | PASS |
+| Works in exports | Standalone HTML renders chips + economics read-only | PASS |
+| Cold author from FORMAT.md alone | An agent that read ONLY FORMAT.md wrote a 13-node costed+pinned returns-department map and predicted the totals by hand: human $7,696 / agent $573 / savings $7,123 / setup $7,200 / payback ≈1.01 mo / "4 of 6 steps costed" | **UI matched all six predictions** (`phase7-coldtest-returns.yaml`); the ambiguities it flagged are now clarified in FORMAT.md |
+
+What the loop caught (fixed and re-verified): the first panel save normalized comment-separator whitespace on untouched lines — imported maps are now canonicalized at birth so their diffs stay clean, and the behavior is documented for hand-written files; compact/full currency formatters disagreed on the minus glyph; compact formatting lacked a ≥$1B tier; FORMAT.md now pins down Σ setup's domain, the coverage count, `runs: 0` semantics, missing-defaultRate behavior, and payback edge wording; the export toolbar no longer shows the Import button.
+
 ## Re-running the checks
 
 ```
-npm test                                  # 44 unit/regression tests
+npm test                                  # 65 unit/regression tests
 npm run validate                          # every map + template
 node tools/generate-map.mjs --nodes 1000 --depth 8 --unicode --seed 9 --out maps/stress.yaml
+OPSMAP_MOCK_LLM=tests/fixtures/extractions/dental-clinic.yaml npm start   # importer E2E without a key
 ```

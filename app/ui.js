@@ -1,6 +1,8 @@
 // All chrome around the canvas: detail panel, dialogs, template browser,
 // search palette, breadcrumbs, map switcher, toasts, error/empty states.
 import { parseMap, NODE_TYPES, ancestryOf } from '../shared/model.js';
+import { nodeCost, rollupCost, formatMoney, formatPayback, formatPercent, compactMoney } from '../shared/cost.js';
+import { api } from './api.js';
 import { state, bus } from './state.js';
 import * as ctrl from './controller.js';
 import * as edit from './edit.js';
@@ -294,6 +296,8 @@ function renderDetail() {
           })
         : h('div', { class: 'no-links' }, ro ? 'No links.' : 'No links yet — SOPs, repos, dashboards…')));
 
+    body.append(renderCostSection(node, ro));
+
     if (node.position) {
       body.append(h('div', { class: 'panel-section' },
         h('h3', {}, 'Layout'),
@@ -401,6 +405,166 @@ function renderDetail() {
   }
 }
 
+// ── cost section (detail panel) ──────────────────────────────────────
+// Five inputs → one comment-preserving commit. Empty input = unknown (the
+// field is removed from the file); unknowns show "—" and stay out of totals.
+function renderCostSection(node, ro) {
+  const cm = state.model?.costModel ?? {};
+  const cur = cm.currency ?? 'USD';
+  const rc = nodeCost(node, cm);
+
+  const section = h('div', { class: 'panel-section' }, h('h3', {}, 'Cost — human vs. agent'));
+
+  if (ro) {
+    section.append(rc
+      ? costSummary(rc, cur)
+      : h('div', { class: 'desc placeholder' }, 'No cost data.'));
+    return section;
+  }
+
+  const val = (x) => (x == null ? '' : String(x));
+  const runs = h('input', { class: 'f-input c-num', type: 'number', min: '0', step: 'any', placeholder: 'e.g. 120', value: val(node.cost?.runs) });
+  const minutes = h('input', { class: 'f-input c-num', type: 'number', min: '0', step: 'any', placeholder: 'e.g. 15', value: val(node.cost?.minutes) });
+  const rate = h('input', {
+    class: 'f-input c-num', type: 'number', min: '0', step: 'any',
+    placeholder: cm.defaultRate != null ? `${cm.defaultRate} (map default)` : 'e.g. 65',
+    value: val(node.cost?.rate),
+  });
+  const perRun = h('input', { class: 'f-input c-num', type: 'number', min: '0', step: 'any', placeholder: 'e.g. 0.40', value: val(node.cost?.perRun) });
+  const setup = h('input', { class: 'f-input c-num', type: 'number', min: '0', step: 'any', placeholder: 'one-time, e.g. 1200', value: val(node.cost?.setup) });
+
+  const summaryBox = h('div', {});
+  if (rc) summaryBox.append(costSummary(rc, cur));
+
+  const field = (label, input) => h('label', { class: 'c-field' }, h('span', {}, label), input);
+  const grid = h('div', { class: 'cost-grid' },
+    field('Runs / month', runs),
+    field('Human min / run', minutes),
+    field(`Rate (${cur}/hr)`, rate),
+    field(`Agent ${cur} / run`, perRun),
+    field(`Agent setup (${cur})`, setup));
+
+  const parse = (inp) => (inp.value.trim() === '' ? null : inp.value.trim());
+  const save = h('button', {
+    class: 'pa-btn primary-ish',
+    onClick: () => {
+      ctrl.commit(() => edit.setNodeCost(node.id, {
+        runs: parse(runs), minutes: parse(minutes), rate: parse(rate),
+        perRun: parse(perRun), setup: parse(setup),
+      })).then((ok) => ok && toast('Cost saved'));
+    },
+  }, 'Save cost');
+  const actions = h('div', { class: 'cost-actions' }, save);
+  if (node.cost) {
+    actions.append(h('button', {
+      class: 'pa-btn', title: 'Remove all cost data from this node',
+      onClick: () => ctrl.commit(() => edit.setNodeCost(node.id, { runs: null, minutes: null, rate: null, perRun: null, setup: null }))
+        .then((ok) => ok && toast('Cost data removed')),
+    }, 'Clear'));
+  }
+
+  section.append(summaryBox, grid, actions);
+  return section;
+}
+
+function costSummary(rc, cur) {
+  if (!rc.complete) {
+    return h('div', { class: 'cost-summary partial' },
+      `Incomplete — missing ${rc.missing.join(', ')}. Shown as “—” and excluded from totals.`);
+  }
+  return h('div', { class: 'cost-summary' },
+    h('div', {}, h('b', {}, formatMoney(rc.humanMonthly, cur)), ` human → `, h('b', {}, formatMoney(rc.agentMonthly, cur)), ` agent / month`),
+    h('div', { class: 'cost-sub' },
+      `${formatMoney(rc.humanPerRun, cur)} vs ${formatMoney(rc.agentPerRun, cur)} per run · saves `,
+      h('b', {}, formatMoney(rc.savingsMonthly, cur)), '/mo',
+      rc.setup ? ` · setup ${formatMoney(rc.setup, cur)}` : ''));
+}
+
+// ── economics panel (map roll-up) ────────────────────────────────────
+let econOverride = null; // null = auto (show when the map has cost data)
+let econExpanded = false;
+
+export function toggleEconomics() {
+  const hasData = state.model ? rollupCost(state.model).costedCount + rollupCost(state.model).partialIds.length > 0 : false;
+  const visible = econOverride ?? hasData;
+  econOverride = !visible;
+  if (econOverride) econExpanded = true; // opening by hand → show the details
+  renderEconomics();
+}
+
+export function renderEconomics() {
+  const box = document.getElementById('economics');
+  if (!box) return;
+  if (!state.model || state.presenting) { box.hidden = true; return; }
+  const r = rollupCost(state.model);
+  const hasData = r.costedCount > 0 || r.partialIds.length > 0;
+  const visible = econOverride ?? hasData;
+  if (!visible) { box.hidden = true; return; }
+  box.hidden = false;
+
+  const cur = r.currency;
+  const ro = state.standalone;
+
+  const coverage = h('span', {
+    class: 'ec-coverage',
+    title: 'Steps = process nodes across every level. Only nodes with complete inputs (runs, minutes, rate, agent $/run) enter the totals — unknowns are never counted as zero.',
+  }, `${r.costedProcessCount} of ${r.processCount} steps costed${r.partialIds.length ? ` · ${r.partialIds.length} incomplete` : ''}`);
+
+  const summary = h('div', { class: 'ec-summary', onClick: () => { econExpanded = !econExpanded; renderEconomics(); } },
+    h('span', { class: 'ec-stat' }, 'Human ', h('b', {}, compactMoney(r.humanMonthly, cur)), '/mo'),
+    h('span', { class: 'ec-arrow' }, '→'),
+    h('span', { class: 'ec-stat' }, 'Agent ', h('b', {}, compactMoney(r.agentMonthly, cur)), '/mo'),
+    h('span', { class: `ec-stat ec-savings${(r.savingsMonthly ?? 0) < 0 ? ' neg' : ''}` }, 'Saves ', h('b', {}, compactMoney(r.savingsMonthly, cur)), '/mo'),
+    h('span', { class: 'ec-stat' }, 'Payback ', h('b', {}, formatPayback(r.paybackMonths))),
+    coverage,
+    h('span', { class: 'ec-chevron' }, econExpanded ? '▾' : '▸'));
+
+  const parts = [summary];
+  if (econExpanded) {
+    const rows = [
+      ['Human cost', `${formatMoney(r.humanMonthly, cur)} / month`],
+      ['Agent cost', `${formatMoney(r.agentMonthly, cur)} / month`],
+      ['Savings', `${formatMoney(r.savingsMonthly, cur)} / month`],
+      ['Agent setup (one-time)', formatMoney(r.setupTotal, cur)],
+      ['Payback', formatPayback(r.paybackMonths)],
+      ['First-year ROI', formatPercent(r.roiFirstYear)],
+    ];
+    const grid = h('div', { class: 'ec-grid' });
+    for (const [k, v] of rows) { grid.append(h('span', { class: 'ec-k' }, k)); grid.append(h('span', { class: 'ec-v' }, v)); }
+
+    const detail = h('div', { class: 'ec-detail' }, grid);
+    if (r.partialIds.length) {
+      detail.append(h('div', { class: 'ec-partial' }, 'Incomplete (excluded): ',
+        ...r.partialIds.map((id) => h('button', {
+          class: 'ec-node-link', onClick: () => ctrl.gotoNode(id).then(() => showDetail(id)),
+        }, state.model.byId.get(id)?.label ?? id))));
+    }
+    if (!r.costedCount && !r.partialIds.length) {
+      detail.append(h('p', { class: 'hint' }, 'No cost data yet — select a node and fill in “Cost — human vs. agent” in its panel.'));
+    }
+    if (!ro) {
+      const cm = state.model.costModel ?? {};
+      const curIn = h('input', { class: 'f-input c-num', placeholder: 'USD', value: cm.currency ?? '' });
+      const rateIn = h('input', { class: 'f-input c-num', type: 'number', min: '0', step: 'any', placeholder: 'e.g. 65', value: cm.defaultRate ?? '' });
+      detail.append(h('div', { class: 'ec-settings' },
+        h('label', { class: 'c-field' }, h('span', {}, 'Currency'), curIn),
+        h('label', { class: 'c-field' }, h('span', {}, 'Default rate (/hr)'), rateIn),
+        h('button', {
+          class: 'pa-btn',
+          onClick: () => ctrl.commit(() => edit.setMapCostModel({
+            currency: curIn.value.trim() || null,
+            defaultRate: rateIn.value.trim() === '' ? null : rateIn.value.trim(),
+          })).then((ok) => ok && toast('Cost defaults saved')),
+        }, 'Save defaults')));
+    }
+    detail.append(h('div', { class: 'ec-formula' },
+      'runs/mo × (min ÷ 60 × rate) vs runs/mo × agent $/run · payback = setup ÷ monthly savings'));
+    parts.push(detail);
+  }
+
+  box.replaceChildren(...parts);
+}
+
 function renderEdgeDetail(panel) {
   const sel = state.selectedEdge;
   const scope = state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children;
@@ -428,6 +592,132 @@ function renderEdgeDetail(panel) {
         onClick: () => { panel.hidden = true; ctrl.commit(() => edit.deleteEdge(state.scopeId, sel.index)).then((ok) => { if (ok) { ctrl.selectEdge(null); toast('Edge deleted'); } }); },
       }, '🗑 Delete edge')));
   }
+}
+
+// ── transcript importer (✨ Import) ──────────────────────────────────
+// Paste → derive (server-side LLM) → REVIEW (stats + inferred flags) → save.
+// Nothing touches maps/ until the user approves the review step.
+export async function importDialog() {
+  if (state.standalone || !document.getElementById('dialog-root')) return;
+  const root = document.getElementById('dialog-root');
+  const dialog = h('div', { class: 'dialog import-dialog', role: 'dialog', 'aria-label': 'New map from transcript' });
+  const backdrop = h('div', { class: 'dialog-backdrop', onPointerdown: (ev) => { if (ev.target === backdrop) close(); } }, dialog);
+  let closed = false;
+  const onKey = (ev) => {
+    if (ev.key === 'Escape') { ev.stopPropagation(); close(); }
+  };
+  function close() {
+    if (closed) return;
+    closed = true;
+    document.removeEventListener('keydown', onKey, true);
+    backdrop.remove();
+  }
+  document.addEventListener('keydown', onKey, true);
+  root.append(backdrop);
+
+  const status = await api.importStatus().catch(() => ({ available: false, hint: 'Could not reach the Opsmap server.' }));
+
+  let transcript = '';
+
+  function renderPaste() {
+    const ta = h('textarea', {
+      class: 'f-textarea import-ta',
+      placeholder: 'Paste the meeting / discovery-call transcript here…',
+      ...(status.available ? {} : { disabled: 'disabled' }),
+    });
+    ta.value = transcript;
+    const counter = h('span', { class: 'import-count' }, '');
+    ta.addEventListener('input', () => { counter.textContent = ta.value.trim() ? `${ta.value.trim().length.toLocaleString()} chars` : ''; });
+
+    const providerLine = status.available
+      ? h('p', { class: 'hint' }, `The transcript is sent to your configured model (${status.provider}: ${status.model}) from the local server — steps, decisions, roles, systems, and artifacts come back as a map you review before anything is saved.`)
+      : h('p', { class: 'hint import-unavailable' }, `⚠ Transcript import is disabled — no model is configured. ${status.hint ?? ''}`);
+
+    dialog.replaceChildren(
+      h('h2', {}, '✨ New map from transcript'),
+      providerLine,
+      ta,
+      h('div', { class: 'import-row' }, counter),
+      h('div', { class: 'dialog-actions' },
+        h('button', { class: 'd-btn', onClick: close }, 'Cancel'),
+        h('button', {
+          class: 'd-btn primary',
+          ...(status.available ? {} : { disabled: 'disabled' }),
+          onClick: () => {
+            transcript = ta.value;
+            if (transcript.trim().length < 120) { toast('Paste the full transcript — a few hundred words minimum.', true); return; }
+            renderProgress();
+            api.importTranscript(transcript)
+              .then((result) => { if (!closed) renderReview(result); })
+              .catch((e) => {
+                if (closed) return;
+                renderPaste();
+                toast(e.message, true);
+              });
+          },
+        }, 'Derive the map')));
+    if (status.available) ta.focus();
+  }
+
+  function renderProgress() {
+    dialog.replaceChildren(
+      h('h2', {}, '✨ Deriving the map…'),
+      h('div', { class: 'import-progress' },
+        h('div', { class: 'import-spinner' }),
+        h('p', {}, 'Reading the transcript, extracting steps, decisions, roles, systems, and artifacts.'),
+        h('p', { class: 'hint' }, 'Typically 30–90 seconds. Only what the transcript supports is included; anything inferred gets flagged for your review.')),
+      h('div', { class: 'dialog-actions' },
+        h('button', { class: 'd-btn', onClick: close }, 'Cancel')));
+  }
+
+  function renderReview({ source, review }) {
+    const nameIn = h('input', { class: 'f-input', value: review.name ?? 'Imported map' });
+    const typeChips = Object.entries(review.types).filter(([, n]) => n > 0)
+      .map(([t, n]) => h('span', { class: `type-pill t-${t}` }, `${n} ${t}${n === 1 ? '' : t === 'process' ? 'es' : 's'}`));
+
+    const flags = review.flags ?? [];
+    const flagsBox = flags.length
+      ? h('div', { class: 'import-flags' },
+        h('h3', {}, `⚑ Inferred, not stated — confirm after saving (${flags.length})`),
+        h('ul', {}, flags.map((f) => h('li', {},
+          h('b', {}, f.label), ' — ', f.note,
+          f.kind === 'edge' ? h('span', { class: 'import-flag-kind' }, ' (edge)') : null))),
+        h('p', { class: 'hint' }, 'These carry an “# inferred:” comment in the saved YAML, so the flags stay with the file.'))
+      : h('p', { class: 'hint' }, 'Nothing was inferred — every element is stated in the transcript.');
+
+    dialog.replaceChildren(
+      h('h2', {}, 'Review before saving'),
+      h('div', { class: 'import-stats' },
+        h('span', { class: 'import-stat' }, h('b', {}, String(review.nodeCount)), ' nodes'),
+        h('span', { class: 'import-stat' }, h('b', {}, String(review.edgeCount)), ' edges'),
+        h('span', { class: 'import-stat' }, h('b', {}, String(review.depth)), ` level${review.depth === 1 ? '' : 's'}`),
+        ...typeChips),
+      flagsBox,
+      h('div', { class: 'f-field' }, h('label', {}, 'Map name'), nameIn),
+      h('div', { class: 'dialog-actions' },
+        h('button', { class: 'd-btn', onClick: () => renderPaste() }, '‹ Back'),
+        h('button', { class: 'd-btn', onClick: close }, 'Discard'),
+        h('button', {
+          class: 'd-btn primary',
+          onClick: async () => {
+            const name = nameIn.value.trim() || 'Imported map';
+            try {
+              const { id } = await api.createMap(name);
+              // the generated YAML is the source of truth; keep the user's name
+              const named = source.replace(/^name:.*$/m, `name: ${JSON.stringify(name)}`);
+              await api.saveMap(id, named);
+              close();
+              await ctrl.loadMapList();
+              await ctrl.openMap(id);
+              toast(`Imported “${name}” — review the ⚑ flagged items, then add costs to see the economics`);
+            } catch (e) {
+              toast(e.message, true);
+            }
+          },
+        }, 'Create map')));
+  }
+
+  renderPaste();
 }
 
 // ── node palette (drag a type onto the canvas) ───────────────────────
@@ -683,10 +973,12 @@ function renderCanvasMessage() {
 // ── reactive wiring ──────────────────────────────────────────────────
 export function initUI() {
   initPalette();
+  bus.on('map-opened', () => { econOverride = null; econExpanded = false; });
   bus.on('view-changed', () => {
     renderBreadcrumbs();
     renderSwitcher();
     renderCanvasMessage();
+    renderEconomics();
     if (state.selectedId) showDetail(state.selectedId);
     else if (state.selectedEdge == null) hideDetail();
     const mm = document.getElementById('minimap');
@@ -715,7 +1007,7 @@ export function initUI() {
   document.getElementById('map-switcher').addEventListener('click', (ev) => openMapMenu(ev.currentTarget));
 
   if (state.standalone) {
-    for (const id of ['btn-add-node', 'btn-templates', 'btn-export']) {
+    for (const id of ['btn-add-node', 'btn-templates', 'btn-export', 'btn-import']) {
       document.getElementById(id)?.remove();
     }
   }

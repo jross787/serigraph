@@ -46,6 +46,17 @@ export const api = {
     if (state.standalone) return [];
     return jfetch('/api/templates');
   },
+  async importStatus() {
+    if (state.standalone) return { available: false, hint: 'Imports need the local Opsmap server.' };
+    return jfetch('/api/import/status');
+  },
+  async importTranscript(transcript) {
+    return jfetch('/api/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transcript }),
+    });
+  },
   subscribe(onEvent) {
     if (state.standalone || typeof EventSource === 'undefined') return;
     const es = new EventSource('/api/events');

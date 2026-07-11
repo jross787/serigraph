@@ -311,6 +311,80 @@ body.presenting #palette { display: none; }
 }
 .pal-ghost.ok { border-color: var(--sel); color: var(--sel); }
 
+/* transcript import dialog */
+.import-dialog { width: min(720px, 92vw); }
+.import-ta { min-height: 240px; font-family: var(--mono); font-size: 12px; line-height: 1.5; }
+.import-row { display: flex; justify-content: flex-end; margin-top: 4px; }
+.import-count { color: var(--faint); font-size: 11px; }
+.import-unavailable { color: var(--danger); }
+.import-progress { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 28px 8px; text-align: center; }
+.import-spinner {
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 3px solid var(--border); border-top-color: var(--accent);
+  animation: import-spin 0.9s linear infinite;
+}
+@keyframes import-spin { to { transform: rotate(360deg); } }
+.import-stats { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 6px 0 12px; }
+.import-stat { color: var(--muted); font-size: 13px; }
+.import-stat b { color: var(--ink); font-size: 15px; }
+.import-flags { background: var(--surface-2); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+.import-flags h3 { margin: 0 0 8px; font-size: 12.5px; color: var(--ink); }
+.import-flags ul { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--muted); }
+.import-flags li { margin-bottom: 4px; }
+.import-flags b { color: var(--ink); }
+.import-flag-kind { color: var(--faint); font-size: 11px; }
+
+/* cost chips — monthly human → agent under costed nodes */
+.node .cost-chip { pointer-events: none; }
+.node .cost-chip-bg { fill: var(--surface-2); stroke: var(--border); stroke-width: 1; }
+.node .cost-chip-txt { fill: var(--muted); font-size: 9.5px; font-weight: 650; font-family: var(--mono); }
+.node .cost-chip.partial .cost-chip-bg { stroke-dasharray: 3 2.5; }
+.node .cost-chip.partial .cost-chip-txt { fill: var(--faint); font-style: italic; }
+
+/* economics roll-up panel */
+#economics {
+  position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+  z-index: 11; max-width: min(92%, 860px);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: var(--shadow-2); backdrop-filter: blur(6px);
+  font-size: 12.5px;
+}
+#economics[hidden] { display: none; }
+body.presenting #economics { display: none; }
+.ec-summary {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 9px 16px; cursor: pointer; user-select: none; white-space: nowrap;
+}
+.ec-stat { color: var(--muted); }
+.ec-stat b { color: var(--ink); font-weight: 700; }
+.ec-savings b { color: var(--c-role, #16a34a); }
+.ec-savings.neg b { color: var(--danger); }
+.ec-arrow { color: var(--faint); }
+.ec-coverage { color: var(--faint); font-size: 11.5px; border-left: 1px solid var(--border); padding-left: 12px; }
+.ec-chevron { color: var(--faint); }
+.ec-detail { border-top: 1px solid var(--border); padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+.ec-grid { display: grid; grid-template-columns: max-content 1fr; gap: 4px 18px; }
+.ec-k { color: var(--muted); }
+.ec-v { color: var(--ink); font-weight: 650; }
+.ec-partial { color: var(--muted); font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.ec-node-link {
+  border: none; background: var(--surface-2); color: var(--ink);
+  border-radius: 7px; padding: 2px 8px; font-size: 11.5px; cursor: pointer;
+}
+.ec-node-link:hover { background: var(--accent); color: var(--accent-ink); }
+.ec-settings { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.ec-formula { color: var(--faint); font-size: 10.5px; font-family: var(--mono); }
+
+/* cost inputs (detail panel + economics settings) */
+.cost-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.c-field { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
+.c-field .c-num { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 12.5px; }
+.cost-actions { display: flex; gap: 8px; margin-top: 10px; }
+.cost-summary { margin-top: 6px; font-size: 12.5px; color: var(--ink); line-height: 1.5; }
+.cost-summary .cost-sub { color: var(--muted); font-size: 12px; }
+.cost-summary.partial { color: var(--muted); font-style: italic; font-size: 12px; }
+
 /* pinned-position badge — click releases the node back to auto-layout */
 .node .pin-badge { cursor: pointer; }
 .node .pin-bg { fill: var(--surface); stroke: var(--border-strong); stroke-width: 1; }
@@ -623,6 +697,10 @@ body.presenting #detail, body.presenting #templates-panel { display: none; }
   }
   .pal-chip { width: 46px; padding: 6px 2px 5px; font-size: 9px; }
   #moveout-bar { max-width: 88%; }
+  /* economics sits above the palette strip on phones */
+  #economics { bottom: 72px; left: 8px; right: 8px; transform: none; max-width: none; }
+  .ec-summary { gap: 8px; padding: 8px 12px; white-space: normal; }
+  .ec-coverage { border-left: none; padding-left: 0; width: 100%; }
   #topbar { padding: 0 8px; gap: 6px; }
   .tb-btn { padding: 6px 9px; }
   #present-hud { flex-direction: column; align-items: stretch; }

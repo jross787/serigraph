@@ -3,6 +3,7 @@
 // re-nest, connect-by-port), and the minimap.
 import { bus, state } from './state.js';
 import { ancestryOf } from '../shared/model.js';
+import { nodeCost, compactMoney } from '../shared/cost.js';
 import { layoutScope, miniTransform, edgePath, routeDirect, invalidateLayouts } from './layout.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -348,6 +349,27 @@ function buildNode(n) {
     lg.setAttribute('stroke', 'currentColor');
     lg.style.color = 'var(--faint)';
     g.appendChild(lg);
+  }
+
+  // cost chip — monthly human → agent cost for costed nodes (FORMAT.md)
+  if (node.cost) {
+    const cur = state.model?.costModel?.currency ?? 'USD';
+    const rc = nodeCost(node, state.model?.costModel ?? {});
+    const txt = rc.complete
+      ? `${compactMoney(rc.humanMonthly, cur)} → ${compactMoney(rc.agentMonthly, cur)}/mo`
+      : 'cost: incomplete';
+    const w = txt.length * 5.6 + 16;
+    const chip = el('g', { transform: `translate(2,${n.h + 5})` }, `cost-chip${rc.complete ? '' : ' partial'}`);
+    chip.appendChild(el('rect', { width: w, height: 16, rx: 8 }, 'cost-chip-bg'));
+    const t = el('text', { x: 8, y: 11.5 }, 'cost-chip-txt');
+    t.textContent = txt;
+    chip.appendChild(t);
+    const tip = el('title');
+    tip.textContent = rc.complete
+      ? `Human ${compactMoney(rc.humanMonthly, cur)}/mo vs agent ${compactMoney(rc.agentMonthly, cur)}/mo — saves ${compactMoney(rc.savingsMonthly, cur)}/mo`
+      : `Cost inputs incomplete — missing: ${rc.missing.join(', ')}. Unknowns are excluded from totals.`;
+    chip.appendChild(tip);
+    g.appendChild(chip);
   }
 
   // connect port: drag from here to another node to draw an edge
