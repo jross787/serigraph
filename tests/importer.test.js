@@ -152,3 +152,41 @@ test('fixture transcripts are realistic sizes for the pipeline', async () => {
     assert.match(text, /Joe:/, `${f} has speaker labels`);
   }
 });
+
+test('confirming a flag strips only that comment; file stays valid', async () => {
+  const { parseMap } = await import('../shared/model.js');
+  const { collectProvenance } = await import('../shared/provenance.js');
+  const { state } = await import('../app/state.js');
+  const edit = await import('../app/edit.js');
+  const src = `# keeper comment
+name: F
+nodes:
+  - id: a  # inferred: role implied but never named
+    type: role
+    label: A
+  - id: b
+    type: process
+    label: B # keeper inline
+edges:
+  - from: b  # uncertain: ordering hedged
+    to: a
+`;
+  const { doc, model, errors } = parseMap(src);
+  assert.deepEqual(errors, []);
+  state.doc = doc; state.model = model; state.standalone = false;
+  assert.equal(collectProvenance(doc).nodes.get('a'), 'role implied but never named');
+  assert.equal(collectProvenance(doc).edges.length, 1);
+
+  edit.confirmNodeFlag('a');
+  edit.confirmEdgeFlag(null, 0);
+  const out = doc.toString({ lineWidth: 0 });
+  const re = parseMap(out);
+  assert.deepEqual(re.errors, []);
+  assert.ok(!out.includes('inferred'), 'node flag comment gone');
+  assert.ok(!out.includes('uncertain'), 'edge flag comment gone');
+  assert.ok(out.includes('# keeper comment'), 'unrelated comments intact');
+  assert.ok(out.includes('# keeper inline'), 'unrelated inline comment intact');
+  assert.equal(collectProvenance(doc).nodes.size, 0);
+  assert.equal(collectProvenance(doc).edges.length, 0);
+  assert.throws(() => edit.confirmNodeFlag('a'), /no provenance flag/);
+});

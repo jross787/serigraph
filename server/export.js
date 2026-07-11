@@ -9,6 +9,7 @@ const MODULE_FILES = [
   'vendor/yaml.js',
   'shared/model.js',
   'shared/cost.js',
+  'shared/provenance.js',
   'app/state.js',
   'app/api.js',
   'app/layout.js',
