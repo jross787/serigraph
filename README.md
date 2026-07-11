@@ -28,6 +28,10 @@ That's it. No `npm install`, no build step, no cloud — the only requirement is
 | **Click** a node | Details: what happens here, outbound links (SOPs, repos, dashboards), sub-map |
 | **`#id ⧉`** in the panel | Copy a deep link — paste it in a fresh tab, land zoomed on that node |
 | **+ Node**, **Edit**, **→ Connect** | Build the map visually; every change is written back to the YAML |
+| **Drag from the palette** (or double-click empty canvas) | Drop a new typed node exactly where you release — onto a container to nest it inside |
+| **Drag a node** | Pin it exactly there — one `position: { x, y }` line in the YAML; click its pin badge to release back to auto-layout. Drag the background to pan |
+| **Drag a node onto a container** | Move it into that sub-map — nesting rewritten in the file, crossing edges re-homed, never invalid. A drop bar moves it back out |
+| **Drag from a node's ○ port** | Draw an edge to any sibling — release on it and the edge is in the file |
 | **Templates** | Drop in reusable blocks (lead intake, incident response, invoice-to-cash…) and customize |
 | **P** | Presentation mode — walk a client through the flow step by step |
 | **⬇** | Download a standalone HTML file of the map — read-only, works offline, email it to anyone |
@@ -62,6 +66,6 @@ npm run validate  # validate every map and template
 node tools/generate-map.mjs --nodes 300 --depth 4 --seed 7 --out maps/stress.yaml
 ```
 
-## Roadmap (deliberately not built yet)
+## Roadmap
 
-Read-only client shares, live node status from CRMs/GitHub. The format won't need to change for either: nodes already carry stable ids and outbound links.
+See **[docs/ROADMAP.md](docs/ROADMAP.md)** — the north star (Lucid's flexibility + Mermaid's structure), starting with manual layout adjustment that persists to the file, then direct-manipulation authoring, data-bound live status, and desktop/hosted distribution.

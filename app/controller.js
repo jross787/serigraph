@@ -58,6 +58,7 @@ export async function loadTemplates() {
 
 export async function openMap(mapId, { nodeId = null, inId = null } = {}) {
   const { source } = await api.getMap(mapId);
+  if (mapId !== state.mapId) canvas.resetScopeCameras();
   state.mapId = mapId;
   state.undoStack = [];
   state.redoStack = [];
@@ -107,7 +108,8 @@ export async function commit(mutator, { select = undefined } = {}) {
   let after;
   try {
     mutator();
-    after = state.doc.toString();
+    // lineWidth 0 = never re-wrap long lines the edit didn't touch
+    after = state.doc.toString({ lineWidth: 0 });
   } catch (e) {
     adoptSource(before); // doc may be half-mutated; rebuild from source
     bus.emit('toast', e.message, true);

@@ -1,6 +1,7 @@
 // Comment-preserving edits against the YAML document. Every function
 // mutates state.doc in place; callers serialize with doc.toString().
 import { isMap, isSeq } from '../vendor/yaml.js';
+import { ancestryOf, scopeOf } from '../shared/model.js';
 import { state } from './state.js';
 
 // ── locating things in the YAML document ─────────────────────────────
@@ -68,11 +69,26 @@ export function uniqueId(model, base, extraTaken = new Set()) {
   return id;
 }
 
+// position maps stay one-liners wherever a YAML node gets built from a plain
+// object (palette drops, templates)
+function flowPositions(node) {
+  if (isMap(node)) {
+    for (const pair of node.items) {
+      const k = typeof pair.key === 'string' ? pair.key : pair.key?.value;
+      if (k === 'position' && isMap(pair.value)) pair.value.flow = true;
+      else flowPositions(pair.value);
+    }
+  } else if (isSeq(node)) {
+    for (const it of node.items) flowPositions(it);
+  }
+}
+
 // ── node object construction (key order = file convention) ──────────
 function nodeToPlain(fields) {
   const obj = { id: fields.id, type: fields.type, label: fields.label };
   if (fields.description?.trim()) obj.description = fields.description;
   if (fields.links?.length) obj.links = fields.links.map((l) => ({ label: l.label || l.url, url: l.url }));
+  if (fields.position) obj.position = { x: fields.position.x, y: fields.position.y };
   if (fields.children) obj.children = fields.children;
   return obj;
 }
@@ -82,7 +98,9 @@ export function addNode(ownerId, fields) {
   const doc = state.doc;
   const scope = ensureScope(doc, ownerId);
   if (!scope) throw new Error(`can't find node "${ownerId}" in the file`);
-  doc.addIn(scope.nodesPath, doc.createNode(nodeToPlain(fields)));
+  const created = doc.createNode(nodeToPlain(fields));
+  flowPositions(created);
+  doc.addIn(scope.nodesPath, created);
   return fields.id;
 }
 
@@ -104,9 +122,27 @@ export function updateNode(nodeId, fields) {
   tidyKeyOrder(doc, p);
 }
 
-// keep files predictable: id, type, label, description, links, children —
-// unknown keys keep their relative order at the end
-const KEY_ORDER = ['id', 'type', 'label', 'description', 'links', 'children'];
+// Pin a node where the user dropped it: position is the node's CENTER in its
+// scope's layout coordinates, written as a one-line flow map so files stay
+// human-readable. Clearing it returns the node to automatic layout.
+export function setNodePosition(nodeId, { x, y }) {
+  const doc = state.doc;
+  const p = findNodePath(doc, nodeId);
+  if (!p) throw new Error(`node "${nodeId}" not found in file`);
+  doc.setIn([...p, 'position'], doc.createNode({ x: Math.round(x), y: Math.round(y) }, { flow: true }));
+  tidyKeyOrder(doc, p);
+}
+
+export function clearNodePosition(nodeId) {
+  const doc = state.doc;
+  const p = findNodePath(doc, nodeId);
+  if (!p) throw new Error(`node "${nodeId}" not found in file`);
+  if (doc.getIn([...p, 'position'], true)) doc.deleteIn([...p, 'position']);
+}
+
+// keep files predictable: id, type, label, description, links, position,
+// children — unknown keys keep their relative order at the end
+const KEY_ORDER = ['id', 'type', 'label', 'description', 'links', 'position', 'children'];
 function tidyKeyOrder(doc, nodePath) {
   const map = doc.getIn(nodePath, true);
   if (!isMap(map)) return;
@@ -145,6 +181,124 @@ export function deleteNode(nodeId) {
   }
   doc.deleteIn(p);
   cleanupScope(doc, ownerId);
+}
+
+// ── re-nesting ───────────────────────────────────────────────────────
+// Move a node (with its entire subtree) into another scope.
+// targetOwnerId is a container node id, or null for the root scope.
+//
+// Edge policy (documented in FORMAT.md): an edge that would no longer connect
+// siblings is re-homed to the nearest scope that contains both endpoints,
+// each endpoint rewritten to its ancestor-or-self in that scope. Edges that
+// would become self-loops, or exact duplicates of an edge already there,
+// are removed instead. Edges wholly inside the moved subtree are untouched.
+export function moveNode(nodeId, targetOwnerId) {
+  const doc = state.doc;
+  const model = state.model;
+  const node = model.byId.get(nodeId);
+  if (!node) throw new Error(`node "${nodeId}" not found`);
+  if (targetOwnerId === nodeId) throw new Error(`can't move "${nodeId}" into itself`);
+  if (targetOwnerId != null) {
+    const target = model.byId.get(targetOwnerId);
+    if (!target) throw new Error(`container "${targetOwnerId}" not found`);
+    if (ancestryOf(model, targetOwnerId).includes(nodeId)) {
+      throw new Error(`can't move "${nodeId}" inside its own sub-map`);
+    }
+  }
+  const oldOwnerId = node.ownerId;
+  if ((targetOwnerId ?? null) === (oldOwnerId ?? null)) return { moved: false, lifted: 0, dropped: 0 };
+
+  // ── plan edge re-homing from the (pre-move) model ──────────────────
+  // chain = ids from root down to the node; the node's owner chain is
+  // [null, chain[0], chain[1], …] — chain[k] is the direct child of scope
+  // owner (k ? chain[k-1] : null).
+  const repIn = (chain, scopeOwner) => {
+    if (scopeOwner == null) return chain[0];
+    const i = chain.indexOf(scopeOwner);
+    return i === -1 ? null : chain[i + 1] ?? null;
+  };
+  const movedChain = targetOwnerId == null ? [nodeId] : [...ancestryOf(model, targetOwnerId), nodeId];
+  const oldScope = scopeOf(model, oldOwnerId);
+  const plans = [];
+  for (const e of oldScope.edges) {
+    if (e.from !== nodeId && e.to !== nodeId) continue;
+    const otherId = e.from === nodeId ? e.to : e.from;
+    const otherChain = ancestryOf(model, otherId);
+    // deepest scope owner present in both owner chains (null is always shared)
+    const movedOwners = [null, ...movedChain.slice(0, -1)];
+    const otherOwners = new Set([null, ...otherChain.slice(0, -1)]);
+    let common = null;
+    for (let i = movedOwners.length - 1; i >= 0; i--) {
+      if (otherOwners.has(movedOwners[i])) { common = movedOwners[i]; break; }
+    }
+    const repMoved = repIn(movedChain, common);
+    const repOther = repIn(otherChain, common);
+    const newFrom = e.from === nodeId ? repMoved : repOther;
+    const newTo = e.to === nodeId ? repMoved : repOther;
+    plans.push({
+      from: e.from, to: e.to, label: e.label || '',
+      newFrom, newTo, common,
+      drop: !newFrom || !newTo || newFrom === newTo
+        || scopeOf(model, common).edges.some((x) =>
+          x.from === newFrom && x.to === newTo && (x.label || '') === (e.label || '')),
+    });
+  }
+
+  // ── normalize every scope we will touch BEFORE taking any paths ─────
+  // (ensureScope can rewrite list-form children to map form, which shifts
+  // paths inside that subtree)
+  ensureScope(doc, targetOwnerId);
+  for (const p of plans) {
+    if (!p.drop && p.common !== oldOwnerId) ensureScope(doc, p.common);
+  }
+  ensureScope(doc, oldOwnerId, { create: false });
+
+  // ── transplant the node's YAML item (keeps comments + subtree) ──────
+  const nodePath = findNodePath(doc, nodeId);
+  if (!nodePath) throw new Error(`node "${nodeId}" not found in file`);
+  const item = doc.getIn(nodePath, true);
+  doc.deleteIn(nodePath);
+  const targetScope = ensureScope(doc, targetOwnerId);
+  doc.addIn(targetScope.nodesPath, item);
+  // its pinned position (if any) was in the old scope's plane — meaningless now
+  if (item.get('position', true)) item.delete('position');
+
+  // ── apply the edge plans ─────────────────────────────────────────────
+  let lifted = 0, dropped = 0;
+  const srcScope = ensureScope(doc, oldOwnerId, { create: false });
+  const edgesSeq = srcScope ? doc.getIn(srcScope.edgesPath, true) : null;
+  if (isSeq(edgesSeq)) {
+    const pending = [...plans];
+    const written = new Set(); // two edges must not lift into the same edge
+    for (let i = edgesSeq.items.length - 1; i >= 0; i--) {
+      const it = edgesSeq.items[i];
+      if (!isMap(it)) continue;
+      const k = pending.findIndex((p) => p.from === it.get('from') && p.to === it.get('to')
+        && (p.label || '') === (it.get('label') ?? ''));
+      if (k === -1) continue;
+      const plan = pending.splice(k, 1)[0];
+      const key = `${plan.common ?? ''}|${plan.newFrom}|${plan.newTo}|${plan.label}`;
+      if (plan.drop || written.has(key)) {
+        doc.deleteIn([...srcScope.edgesPath, i]);
+        dropped++;
+        continue;
+      }
+      written.add(key);
+      if (plan.common === oldOwnerId) {
+        it.set('from', plan.newFrom);
+        it.set('to', plan.newTo);
+        lifted++;
+      } else {
+        doc.deleteIn([...srcScope.edgesPath, i]);
+        it.set('from', plan.newFrom);
+        it.set('to', plan.newTo);
+        doc.addIn(ensureScope(doc, plan.common).edgesPath, it);
+        lifted++;
+      }
+    }
+  }
+  cleanupScope(doc, oldOwnerId);
+  return { moved: true, lifted, dropped };
 }
 
 // remove empty children containers so files stay tidy
@@ -217,6 +371,7 @@ export function insertTemplate(ownerId, templateModel) {
     nodes: scope.nodes.map((n) => nodeToPlain({
       id: rid(n.id), type: n.type, label: n.label,
       description: n.description, links: n.links,
+      position: n.position,
       children: n.children ? plainScope(n.children) : undefined,
     })),
     edges: scope.edges.map((e) => {
@@ -229,7 +384,11 @@ export function insertTemplate(ownerId, templateModel) {
 
   const scope = ensureScope(doc, ownerId);
   if (!scope) throw new Error(`can't find scope for "${ownerId}"`);
-  for (const n of plain.nodes) doc.addIn(scope.nodesPath, doc.createNode(n));
+  for (const n of plain.nodes) {
+    const created = doc.createNode(n);
+    flowPositions(created);
+    doc.addIn(scope.nodesPath, created);
+  }
   for (const e of plain.edges) doc.addIn(scope.edgesPath, doc.createNode(e));
 
   return plain.nodes.map((n) => n.id);
