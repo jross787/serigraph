@@ -17,6 +17,11 @@ const MAPS_DIR = path.join(ROOT, 'maps');
 const TEMPLATES_DIR = path.join(ROOT, 'templates');
 const DEFAULT_PORT = Number(process.env.PORT) || 4700;
 const NO_OPEN = process.argv.includes('--no-open') || process.env.OPSMAP_NO_OPEN === '1';
+// maps hold confidential client operations data: serve localhost-only unless
+// the user explicitly opts into LAN exposure with --lan (or OPSMAP_LAN=1)
+const LAN = process.argv.includes('--lan') || process.env.OPSMAP_LAN === '1';
+const BIND_HOST = LAN ? '0.0.0.0' : '127.0.0.1';
+const LOCAL_HOSTS = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -143,6 +148,12 @@ function scheduleMapChange(filename) {
 
 // ---------------------------------------------------------------- routes
 async function handleApi(req, res, url) {
+  // requiring JSON makes every write a CORS-preflighted request, so a hostile
+  // web page in the same browser can't POST/PUT here as a "simple request"
+  if ((req.method === 'POST' || req.method === 'PUT')
+    && !/^application\/json\b/i.test(req.headers['content-type'] ?? '')) {
+    return json(res, 415, { error: 'Content-Type must be application/json' });
+  }
   const parts = url.pathname.split('/').filter(Boolean); // ['api', ...]
 
   if (parts[1] === 'maps' && parts.length === 2) {
@@ -272,6 +283,12 @@ async function handleStatic(req, res, url) {
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
+  // DNS-rebinding guard: a page at evil.example that resolves to 127.0.0.1
+  // arrives with its own Host header; refuse anything that isn't local
+  if (!LAN && !LOCAL_HOSTS.test(req.headers.host ?? '')) {
+    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    return res.end('forbidden: unrecognized Host header (start with --lan to serve beyond localhost)');
+  }
   try {
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
     if (url.pathname.startsWith('/export/')) {
@@ -311,7 +328,7 @@ async function start(port, attempt = 0) {
       process.exit(1);
     }
   });
-  server.listen(port, async () => {
+  server.listen(port, BIND_HOST, async () => {
     await primeHashes();
     watchDir(MAPS_DIR, scheduleMapChange);
     watchDir(TEMPLATES_DIR, () => broadcast({ type: 'templates-changed' }));
@@ -324,6 +341,7 @@ async function start(port, attempt = 0) {
     console.log('');
     console.log(`  maps:      ${path.relative(process.cwd(), MAPS_DIR) || 'maps'}/*.yaml  (edit them in any editor — the canvas follows)`);
     console.log(`  templates: ${path.relative(process.cwd(), TEMPLATES_DIR) || 'templates'}/*.yaml`);
+    console.log(LAN ? '  serving:   all interfaces (--lan)' : '  serving:   localhost only (start with --lan to share on your network)');
     console.log('');
     if (!NO_OPEN) openBrowser(urlStr);
   });

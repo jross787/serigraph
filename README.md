@@ -1,6 +1,6 @@
 # Opsmap
 
-**Map how a business actually operates.** Every function, stage, and handoff — as an elegantly zoomable graph of nested, typed nodes. Each map is a plain YAML file that humans, the app, and LLM agents all read and write.
+**The operating model as a file.** How a business actually runs — every function, stage, and handoff — kept as one plain YAML file and rendered as an elegantly zoomable graph of nested, typed nodes. Humans edit either side (canvas or text, comments survive); LLM agents read and write the same file; the economics of automating any step live right next to the step. Derive the first draft from a discovery-call transcript, review what was inferred, and hand the result to the agents that will eventually run it.
 
 ![Opsmap](docs/screenshot-1440.png)
 
@@ -10,9 +10,11 @@
 npm start
 ```
 
-That's it. No `npm install`, no build step, no cloud — the only requirement is [Node.js](https://nodejs.org) 18+ (the two libraries Opsmap uses are vendored into the repo). Your browser opens on the seeded example: **Summit Insurance**, an independent agency mapped from new prospect through bind, billing, claims, and renewal.
+That's it. No `npm install`, no build step, no cloud — the only requirement is [Node.js](https://nodejs.org) 18+ (the two libraries Opsmap uses are vendored into the repo). Your browser opens on the seeded examples: **Summit Insurance**, an independent agency mapped from new prospect through bind, billing, claims, and renewal, and **Brightside Dental**, a map derived from a discovery-call transcript by the ✨ importer — nested sub-maps, live economics, and two still-unconfirmed inferences included, so every hero feature is visible before you've built anything.
 
 > Port busy or don't want a browser popping open? `PORT=5000 npm start`, or `node server/main.js --no-open`.
+>
+> The server listens on **localhost only** (client data stays on your machine — see [docs/DATA-HANDLING.md](docs/DATA-HANDLING.md)). To share on your network deliberately: `node server/main.js --lan`.
 
 ## The one idea
 
@@ -70,4 +72,4 @@ node tools/generate-map.mjs --nodes 300 --depth 4 --seed 7 --out maps/stress.yam
 
 ## Roadmap
 
-See **[docs/ROADMAP.md](docs/ROADMAP.md)** — the north star (Lucid's flexibility + Mermaid's structure), starting with manual layout adjustment that persists to the file, then direct-manipulation authoring, data-bound live status, and desktop/hosted distribution.
+See **[docs/ROADMAP.md](docs/ROADMAP.md)** — the north star is the operating model file that consultants and AI agents both work from: close the trust loop around import, deepen the economics toward CFO-grade, make provenance evidence-grade, then the governed change loop (agents propose, humans approve, an audit trail records). Design decisions and the July 2026 review verdict live in **[docs/DESIGN.md](docs/DESIGN.md)**; what leaves your machine (and how to run fully local) in **[docs/DATA-HANDLING.md](docs/DATA-HANDLING.md)**.

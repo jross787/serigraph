@@ -1,6 +1,8 @@
 # Opsmap roadmap
 
-**North star:** the flexibility of Lucidchart with the structure of Mermaid — a map you can *directly manipulate* like a visual tool, backed by a plain-text file that stays the single source of truth and reads/writes cleanly for humans and LLM agents. The thing Mermaid gets wrong (no drag-and-drop, no manual layout control) and the thing Lucid gets wrong (no diffable text backend) are exactly the two edges Opsmap is built to hold at once.
+**North star:** the operating model file — how a *business* runs, kept as one plain, diffable YAML file that consultants, the app, and LLM agents all read and write. Derived from a discovery call, priced by honest human-vs-agent economics, reviewed through provenance flags, and eventually governed while agents execute against it.
+
+*(Earlier framing — "Lucid's flexibility with Mermaid's structure" — is retired: the July 2026 review found text↔visual editors are now table stakes (Mermaid Chart Visual Editor, D2 Studio, Eraser). What no one else holds is the combination above: business ontology + comment-preserving text + economics + provenance, local-first. See [DESIGN.md](DESIGN.md) § Direction.)*
 
 **Design principle that governs everything below:** structure is the source of truth; presentation is optional metadata layered on top. Auto-layout is the default. Anything a user does by hand (a pinned position, a color rule, a saved view) is an *override* written back to the file additively, and can always be removed to return to the automatic behavior. No feature is allowed to force presentation data into a file that didn't ask for it.
 
@@ -39,13 +41,17 @@ Make the map reflect reality, not just document it. Aligns with the already-scop
 - **Data linking** — bind a node to an external source (CSV, GitHub issue, CRM record) and auto-refresh its status/label.
 - **Views / layers** — saved filters that show or hide subsets ("just systems", "just what Ops owns"), toggleable in presentation mode.
 
-## Phase 4 — Vocabulary & polish (curated, from Mermaid)
+## Phase 4 — Vocabulary & polish (curated, from Mermaid)  ·  *deprioritized (July 2026 review)*
+
+*Shapes are the most commoditized surface in the category, and every addition erodes the typed-vocabulary contract that keeps maps machine-readable. Nothing here ships before the trust loop (import review queue, edge-flag rendering) and economics depth (ranges, review minutes, scenario compare) do.*
 
 - A few more **semantic node shapes** (datastore, event/trigger, sub-process) — kept small and meaningful, *not* an infinite shape library.
 - **Icon / image on nodes** for at-a-glance scanning (a system's logo, a status icon).
 - **Per-node style override** as an escape hatch when the type palette isn't enough.
 
-## Phase 5 — Distribution & persistence
+## Phase 5 — Distribution & persistence  ·  *re-scoped (July 2026 review)*
+
+*Full hosted accounts/sync would recreate every disadvantage against Miro/Lucid. The slice that matters is the consultant's follow-up email: a one-command "publish this map read-only to a URL" client portal. Electron only if consultants ask for it.*
 
 - **Hosted mode on Cloudflare** with login and cloud-saved maps (accounts, sync) — extends the deferred "read-only client shares."
 - **Electron desktop app** — launchable, persistent, runs offline as a native app.
@@ -70,9 +76,11 @@ Turn the map from documentation into a decision tool — what a process *costs* 
 
 Shipped as: optional `cost:` inputs per node (`runs`/month, `human: {minutes, rate}`, `agent: {perRun, setup}`) plus a one-line `costModel:` for currency and a default rate — documented with the formulas in [FORMAT.md](FORMAT.md). Every number is computed live in `shared/cost.js` (app, tests, and standalone exports share it): per-node chips on the canvas, a cost editor in the detail panel, and a map-level economics bar with human vs. agent totals, savings, payback, first-year ROI, and a coverage indicator. Unknowns render as "—" and are excluded from totals — never silently zero. Simulation and gap analysis remain open.
 
-## Phase 8 — Enterprise platform & the agent substrate
+## Phase 8 — Enterprise platform & the agent substrate  ·  *re-scoped (July 2026 review)*
 
 Where the 10X lives: the map as a governed, machine-readable operating model that AI agents run on. **Foundational — gets a plan-first approval before any code.**
+
+*Re-scope: the five-lens review split this phase in two. **8a — the governed change loop** (MCP server over local maps: read/query + propose-diff → a human approves a semantic visual diff → audit trail) is the product, and is cheap because the backend is text and the validator already exists; its prerequisites are versioned writes (`If-Match`/409 + mutator replay) and the localhost-bind hardening shipped in July 2026. **8b — platform plumbing** (SSO/SCIM, subtree RBAC, residency, real-time presence) is commodity infrastructure that Pega/Signavio/Celonis already own; it waits for a named design partner whose procurement demands it, and gets bought rather than built where possible.*
 
 - **MCP / agent API over the map** — any LLM or agent can query it, propose diffs, or bind to a node as its job. The map becomes the control plane agents operate through. This is the moat no diffable-text-less competitor can copy.
 - **Multi-user, hosted** — real-time collaboration (presence, comments, @mentions), accounts/workspaces, SSO (SAML/OIDC), SCIM, RBAC with node/subtree-level permissions.

@@ -1,0 +1,269 @@
+name: "Brightside — New Patient Flow"
+description: How a new patient moves through Brightside, from first contact through treatment, billing, and recall.
+costModel:
+  currency: USD
+  defaultRate: 55
+nodes:
+  - id: first-contact
+    type: process
+    label: First contact
+    description: Patients either call or fill out the form on the website — roughly a third arrive by web form now. Marisol checks the web forms first thing every morning and calls back, usually same day.
+    cost:
+      runs: 260
+      human: {minutes: 9, rate: 42}
+      agent: {perRun: 0.18, setup: 900}
+  - id: triage
+    type: decision
+    label: Emergency or routine?
+    description: On the intake call Marisol gets the basics — name, birthdate, insurance info, and what's bothering them — and the complaint decides the path.
+  - id: emergency-visit
+    type: process
+    label: Same-day emergency visit
+    description: Pain, swelling, or a broken tooth gets seen that day or next morning; the 11:40 slot before lunch is kept loose for exactly this.
+    children:
+      nodes:
+        - id: limited-exam
+          type: process
+          label: Limited exam
+          description: Problem-focused exam with one x-ray of the tooth in question; the doctor diagnoses.
+        - id: immediate-treatment
+          type: process
+          label: Immediate treatment
+          description: Handle the immediate thing and get the patient out of pain; the two paths merge back together after this first visit.
+      edges:
+        - from: limited-exam
+          to: immediate-treatment
+          label: diagnosis
+  - id: schedule-comprehensive
+    type: process
+    label: Book comprehensive exam
+    description: Routine new patients book a ninety-minute comprehensive exam — x-rays plus the exam plus usually a cleaning if the gums allow it. Currently books out about two to two-and-a-half weeks.
+  - id: pre-visit-prep
+    type: process
+    label: Pre-visit prep
+    description: Everything between booking and the visit — insurance verification, appointment reminders, and online paperwork.
+    children:
+      nodes:
+        - id: insurance-verification  # uncertain: "two days out" was Karen's guess
+          type: process
+          label: Insurance verification
+          description: Marisol runs verifications every morning for anyone coming in about two days out, then keys whatever comes back into Dentrix for the front desk.
+        - id: availity
+          type: system
+          label: Availity
+          description: The clearinghouse used for most payers' eligibility checks.
+        - id: insurance-breakdown
+          type: artifact
+          label: Insurance breakdown
+          description: Deductible, what percent the payer covers on major work, and frequency limits — visible to the front desk in Dentrix.
+        - id: reminders
+          type: process
+          label: Appointment reminders
+          description: Text three days before and again the morning of; if the three-day text goes unconfirmed it flags in Dentrix and somebody calls.
+        - id: reminder-vendor
+          type: system
+          label: Texting vendor (unnamed)
+          description: Reminder add-on that plugs into Dentrix and sends the appointment texts; Karen declined to name it.
+        - id: online-paperwork
+          type: artifact
+          label: Online intake paperwork
+          description: Health history and consent forms sent as a link ahead of time; maybe half complete it, the rest fill out the clipboard in the lobby.
+      edges:
+        - from: insurance-verification
+          to: availity
+          label: eligibility checks
+        - from: insurance-verification
+          to: insurance-breakdown
+          label: results keyed into Dentrix
+        - from: reminders  # inferred: paperwork link delivery via reminder texts implied
+          to: online-paperwork
+          label: link sent to new patients
+  - id: comprehensive-exam
+    type: process
+    label: Comprehensive exam visit
+    description: The ninety-minute new-patient visit — hygienist workup first, then the doctor's exam and diagnosis.
+    children:
+      nodes:
+        - id: hygienist
+          type: role
+          label: Hygienist
+          description: Takes the new patient back first; also handles the six-month recall cleanings, which are all hygiene.
+        - id: hygienist-workup
+          type: process
+          label: X-rays, perio charting, cleaning
+          description: X-rays, perio charting — measuring the gums — and the cleaning if it's a straightforward one.
+        - id: doctor-exam
+          type: process
+          label: Doctor exam and diagnosis
+          description: The doctors do the actual exam and diagnosis; they are the only ones who can diagnose.
+      edges:
+        - from: hygienist
+          to: hygienist-workup
+          label: takes patient back first
+        - from: hygienist-workup
+          to: doctor-exam
+          label: patient handed off
+  - id: treatment-planning
+    type: process
+    label: Treatment planning
+    description: When the doctor finds work — a crown, fillings — the recommendations become a priced plan the patient signs before treatment is booked.
+    children:
+      nodes:
+        - id: enter-procedures
+          type: process
+          label: Enter recommended procedures
+          description: The doctor enters the recommended procedures into Dentrix.
+        - id: present-estimate
+          type: process
+          label: Present plan and estimate
+          description: Front desk prints or emails the plan with procedure codes and the estimate based on the insurance breakdown Marisol pulled, then walks the patient through what insurance should pay versus their estimated portion.
+        - id: signed-plan
+          type: artifact
+          label: Signed treatment plan
+          description: The signature always comes before booking treatment — learned the hard way from a patient disputing an eight-hundred-dollar crown she had signed for.
+      edges:
+        - from: enter-procedures
+          to: present-estimate
+          label: procedure codes and estimate
+        - from: present-estimate
+          to: signed-plan
+          label: patient signs
+  - id: treatment-visit
+    type: process
+    label: Treatment appointment
+    description: Usually scheduled as a separate appointment, unless it's small and can be done same-day when a chair is open and the doctor is willing.
+  - id: billing
+    type: process
+    label: Claims and billing
+    description: After the visit the notes get signed off, claims batch out through the clearinghouse, and denials loop until paid or the balance goes to the patient.
+    cost:
+      runs: 340
+      human: {minutes: 14}
+      agent: {perRun: 0.42, setup: 2600}
+    children:
+      nodes:
+        - id: chart-signoff
+          type: process
+          label: Chart sign-off
+          description: The doctor signs off on the chart notes, supposedly the same day.
+        - id: claim-submission  # uncertain: Tue/Fri batch days stated tentatively
+          type: process
+          label: Batch and submit claims
+          description: Dana batches the claims and sends them through the clearinghouse, roughly Tuesdays and Fridays, attaching x-rays and perio charts for payers that require them.
+        - id: denial-rework
+          type: process
+          label: Denial rework
+          description: Denials come back with a reason code — often something small like a missing tooth clause, a wanted narrative, or a subscriber ID off by a digit. Dana fixes it or writes the narrative and resubmits; legit clinical denials pull the doctor in for a justification. The loop runs thirty to forty-five days, sometimes twice.
+        - id: patient-balance
+          type: process
+          label: Patient balance
+          description: If the claim finally dies the balance goes to the patient — Dana sends a statement first and calls only if it ages past sixty days.
+      edges:
+        - from: chart-signoff
+          to: claim-submission
+          label: signed notes
+        - from: claim-submission
+          to: denial-rework
+          label: denied with reason code
+        - from: denial-rework
+          to: claim-submission
+          label: corrected claim resubmitted
+        - from: denial-rework
+          to: patient-balance
+          label: claim exhausted
+  - id: recall
+    type: process
+    label: Recall
+    description: The six-month cleaning cycle; recall visits are all hygiene, with a doctor drifting through toward the end to take a peek and say hi.
+    children:
+      nodes:
+        - id: checkout-decision
+          type: decision
+          label: Pre-book at checkout?
+          description: At checkout the desk asks the patient to book the next cleaning six months out.
+        - id: prebook
+          type: process
+          label: Pre-book next cleaning
+          description: Booked six months out, right there at the desk.
+        - id: recall-list
+          type: process
+          label: Recall list
+          description: Patients who won't book go on a recall list and get texts when they're due.
+      edges:
+        - from: checkout-decision
+          to: prebook
+          label: books at the desk
+        - from: checkout-decision
+          to: recall-list
+          label: won't book
+  - id: marisol
+    type: role
+    label: Marisol
+    description: Checks the web-form leads first thing each morning, runs the intake calls, and does the daily insurance verifications.
+  - id: doctors
+    type: role
+    label: Doctors
+    description: The only ones who can diagnose — they do the exams, enter treatment plans, write denial justifications, and sign off chart notes.
+  - id: dana
+    type: role
+    label: Dana
+    description: Batches and submits claims, works the denial loop, and sends patient statements, calling once a balance ages past sixty days.
+  - id: dentrix
+    type: system
+    label: Dentrix
+    description: The practice management system — benefit breakdowns, reminder flags, treatment plans, and charting all live in it.
+edges:
+  - from: first-contact
+    to: triage
+    label: basics and chief complaint
+  - from: triage
+    to: emergency-visit
+    label: emergency — pain, swelling, broken tooth
+  - from: triage
+    to: schedule-comprehensive
+    label: routine
+  - from: schedule-comprehensive
+    to: pre-visit-prep
+    label: booked about two-plus weeks out
+  - from: pre-visit-prep
+    to: comprehensive-exam
+    label: verified and reminded
+  - from: comprehensive-exam
+    to: treatment-planning
+    label: doctor finds needed work
+  - from: comprehensive-exam  # inferred: no-findings path to checkout never stated
+    to: recall
+    label: no further treatment
+  - from: emergency-visit
+    to: treatment-planning
+    label: anything bigger becomes a plan
+  - from: treatment-planning
+    to: treatment-visit
+    label: signed plan
+  - from: treatment-visit
+    to: billing
+    label: completed procedures
+  - from: marisol
+    to: first-contact
+    label: calls web leads back same day
+  - from: marisol  # inferred: Marisol implied to make the triage call
+    to: triage
+    label: triages on the intake call
+  - from: marisol
+    to: pre-visit-prep
+    label: runs verifications every morning
+  - from: doctors
+    to: comprehensive-exam
+    label: exam and diagnosis
+  - from: doctors
+    to: billing
+    label: chart sign-off
+  - from: dana
+    to: billing
+    label: batches claims and works denials
+  - from: pre-visit-prep
+    to: dentrix
+    label: benefit breakdown keyed in
+  - from: treatment-planning
+    to: dentrix
+    label: recommended procedures entered
