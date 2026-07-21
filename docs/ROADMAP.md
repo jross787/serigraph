@@ -1,4 +1,4 @@
-# Opsmap roadmap
+# Serigraph roadmap
 
 **North star:** the operating model file — how a *business* runs, kept as one plain, diffable YAML file that consultants, the app, and LLM agents all read and write. Derived from a discovery call, priced by honest human-vs-agent economics, reviewed through provenance flags, and eventually governed while agents execute against it.
 
@@ -60,7 +60,7 @@ Make the map reflect reality, not just document it. Aligns with the already-scop
 
 The map builds itself from how a business is *described*, not just drawn.
 
-- **Transcript → map (discovery import)** — paste or upload a meeting / discovery-call transcript and derive the process (steps, decisions, roles, systems, artifacts, handoffs) into reviewable Opsmap YAML, with low-confidence inferences flagged for the user to confirm. This is the consultant's core workflow, productized.
+- **Transcript → map (discovery import)** — paste or upload a meeting / discovery-call transcript and derive the process (steps, decisions, roles, systems, artifacts, handoffs) into reviewable Serigraph YAML, with low-confidence inferences flagged for the user to confirm. This is the consultant's core workflow, productized.
 - **In-canvas copilot** — "find the bottleneck", "draft the servicing sub-map", "where's the compliance risk".
 - **Agent scaffolding** — from a node's spec, generate the automation/agent stub that runs that step.
 
@@ -94,6 +94,6 @@ Where the 10X lives: the map as a governed, machine-readable operating model tha
 
 ## Deliberately *not* doing
 
-Lucid's power is also its bloat: infinite freeform shapes, manual coordinate fiddling as the norm, feature sprawl. Opsmap's differentiator is the curated, typed, text-backed structure. Keep the shape set semantic and small; keep auto-layout the default and manual positioning an override; keep the file diffable and agent-writable. That line is what stops "Mermaid structure" from eroding into "Lucid freeform."
+Lucid's power is also its bloat: infinite freeform shapes, manual coordinate fiddling as the norm, feature sprawl. Serigraph's differentiator is the curated, typed, text-backed structure. Keep the shape set semantic and small; keep auto-layout the default and manual positioning an override; keep the file diffable and agent-writable. That line is what stops "Mermaid structure" from eroding into "Lucid freeform."
 
 We're already ahead of Mermaid on its worst friction — the write-text-then-re-render loop — via live file-sync plus visual editing. Don't lose it.

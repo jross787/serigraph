@@ -1,0 +1,133 @@
+name: Product Requirement Slice
+description: A traceable objective, requirement, proof, metric, risk, and release milestone for an existing PRD or roadmap.
+
+document:
+  kind: prd
+  version: "1"
+  status: draft
+  summary: Reusable product requirement block.
+  audience: [Product, Engineering]
+  goals: [Define one outcome and one testable requirement.]
+  nonGoals: [Document the entire release.]
+  successMetrics: [The requirement traces to one objective and one metric.]
+
+nodes:
+  - id: product-objective
+    type: process
+    label: Product objective
+    description: The measurable outcome this work should create.
+    owner: Product
+    planning:
+      type: objective
+      status: draft
+      priority: must
+      phase: next
+      evidence: [Add the evidence behind this objective.]
+      rice: { reach: 100, impact: 3, confidence: 70, effort: 2 }
+    relations:
+      - to: success-metric
+        type: measured-by
+
+  - id: product-requirement
+    type: artifact
+    label: Testable requirement
+    description: Describe observable behavior, not an implementation preference.
+    owner: Product & Engineering
+    planning:
+      type: requirement
+      status: draft
+      priority: should
+      phase: next
+      acceptance:
+        - A user can complete the intended outcome.
+        - Failure and empty states are explicit.
+      evidence:
+        - Add a customer, operational, or analytical source.
+      dependsOn: [product-objective]
+      rice: { reach: 80, impact: 2, confidence: 70, effort: 4 }
+    relations:
+      - to: product-objective
+        type: supports
+      - to: acceptance-proof
+        type: validated-by
+      - to: product-risk
+        type: mitigates
+
+  - id: acceptance-proof
+    type: artifact
+    label: Acceptance proof
+    description: The test, observation, or review that proves completion.
+    owner: Quality
+    planning:
+      type: decision
+      status: draft
+      priority: must
+      phase: next
+      acceptance: [The requirement's acceptance criteria pass.]
+      evidence: [Add the verification record.]
+      rice: { reach: 80, impact: 2, confidence: 80, effort: 2 }
+
+  - id: success-metric
+    type: system
+    label: Success metric
+    description: Record baseline, target, source, and review cadence.
+    owner: Product Analytics
+    planning:
+      type: metric
+      status: draft
+      priority: must
+      phase: next
+      target: Define target
+      evidence: [Add the system of record.]
+      rice: { reach: 100, impact: 3, confidence: 65, effort: 2 }
+
+  - id: product-risk
+    type: decision
+    label: Product risk
+    description: A material reason the requirement may not create the intended outcome.
+    owner: Product
+    planning:
+      type: risk
+      status: draft
+      priority: should
+      phase: next
+      risks: [Describe likelihood and consequence.]
+      evidence: [Add the signal that makes this risk credible.]
+      rice: { reach: 70, impact: 2, confidence: 60, effort: 1 }
+  - id: release-milestone
+    type: process
+    label: Release milestone
+    description: The smallest coherent release that delivers and measures this requirement.
+    owner: Product & Engineering
+    planning:
+      type: release
+      status: planned
+      priority: should
+      phase: next
+      target: Next release
+      acceptance:
+        - Requirement, proof, metric, and risk have accountable owners.
+        - Launch and rollback decisions are recorded.
+      evidence: [Add the release review.]
+      dependsOn: [product-requirement, acceptance-proof]
+      rice: { reach: 80, impact: 2, confidence: 70, effort: 5 }
+    relations:
+      - to: product-objective
+        type: delivers
+
+edges:
+  - from: product-objective
+    to: product-requirement
+    label: shapes
+  - from: product-requirement
+    to: acceptance-proof
+    label: proved by
+  - from: acceptance-proof
+    to: release-milestone
+    label: gates
+  - from: success-metric
+    to: release-milestone
+    label: measures
+  - from: product-risk
+    to: release-milestone
+    label: mitigated before

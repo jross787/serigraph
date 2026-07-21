@@ -1,4 +1,4 @@
-name: Deploy Operanda site to Pages
+name: Deploy Serigraph site to Pages
 
 on:
   push:

@@ -84,14 +84,74 @@ function flowPositions(node) {
   }
 }
 
+export function updateDocument(fields = {}) {
+  const doc = state.doc;
+  if (!doc.getIn(['document'], true)) doc.setIn(['document'], doc.createNode({}));
+  for (const key of ['kind', 'version', 'summary', 'owner', 'status', 'updated']) {
+    if (fields[key] === undefined) continue;
+    const value = String(fields[key] ?? '').trim();
+    if (value) doc.setIn(['document', key], value);
+    else if (doc.getIn(['document', key], true)) doc.deleteIn(['document', key]);
+  }
+  for (const key of ['audience', 'goals', 'nonGoals', 'successMetrics']) {
+    if (fields[key] === undefined) continue;
+    const values = (fields[key] ?? []).map((item) => String(item).trim()).filter(Boolean);
+    if (values.length) doc.setIn(['document', key], doc.createNode(values));
+    else if (doc.getIn(['document', key], true)) doc.deleteIn(['document', key]);
+  }
+}
+
 // ── node object construction (key order = file convention) ──────────
 function nodeToPlain(fields) {
   const obj = { id: fields.id, type: fields.type, label: fields.label };
   if (fields.description?.trim()) obj.description = fields.description;
+  if (fields.owner?.trim()) obj.owner = fields.owner.trim();
+  if (fields.trigger?.trim()) obj.trigger = fields.trigger.trim();
+  if (fields.sla?.trim()) obj.sla = fields.sla.trim();
+  if (fields.automation?.trim()) obj.automation = fields.automation.trim();
+  if (fields.systems?.length) obj.systems = fields.systems.map((s) => String(s).trim()).filter(Boolean);
+  if (fields.planning) {
+    const planning = planningToPlain(fields.planning);
+    if (Object.keys(planning).length) obj.planning = planning;
+  }
   if (fields.links?.length) obj.links = fields.links.map((l) => ({ label: l.label || l.url, url: l.url }));
   if (fields.position) obj.position = { x: fields.position.x, y: fields.position.y };
+  if (fields.relations?.length) obj.relations = fields.relations
+    .filter((relation) => relation?.to && relation?.type)
+    .map((relation) => ({ to: String(relation.to).trim(), type: String(relation.type).trim() }));
+  if (fields.review?.length) obj.review = fields.review.map((r) => ({
+    id: r.id,
+    body: r.body,
+    author: r.author || 'Reviewer',
+    createdAt: r.createdAt || '',
+    ...(r.resolved ? { resolved: true } : {}),
+  }));
   if (fields.children) obj.children = fields.children;
   return obj;
+}
+
+function planningToPlain(value = {}) {
+  const out = {};
+  for (const key of ['type', 'status', 'priority', 'phase', 'target']) {
+    if (String(value[key] ?? '').trim()) out[key] = String(value[key]).trim();
+  }
+  for (const key of ['acceptance', 'evidence', 'risks', 'dependsOn']) {
+    const items = (value[key] ?? []).map((item) => String(item).trim()).filter(Boolean);
+    if (items.length) out[key] = items;
+  }
+  const rice = {};
+  for (const key of ['reach', 'impact', 'confidence', 'effort']) {
+    if (value.rice?.[key] === '' || value.rice?.[key] == null) continue;
+    const number = Number(value.rice[key]);
+    const invalid = !Number.isFinite(number)
+      || number < 0
+      || (key === 'effort' && number <= 0)
+      || (key === 'confidence' && number > 100);
+    if (invalid) throw new Error(`planning.rice.${key} has an invalid value`);
+    rice[key] = number;
+  }
+  if (Object.keys(rice).length) out.rice = rice;
+  return out;
 }
 
 // ── operations ───────────────────────────────────────────────────────
@@ -111,6 +171,21 @@ export function updateNode(nodeId, fields) {
   if (!p) throw new Error(`node "${nodeId}" not found in file`);
   if (fields.label != null) doc.setIn([...p, 'label'], fields.label);
   if (fields.type != null) doc.setIn([...p, 'type'], fields.type);
+  for (const key of ['owner', 'trigger', 'sla', 'automation']) {
+    if (fields[key] === undefined) continue;
+    if (String(fields[key] ?? '').trim()) doc.setIn([...p, key], String(fields[key]).trim());
+    else if (doc.getIn([...p, key], true)) doc.deleteIn([...p, key]);
+  }
+  if (fields.systems !== undefined) {
+    const systems = (fields.systems ?? []).map((s) => String(s).trim()).filter(Boolean);
+    if (systems.length) doc.setIn([...p, 'systems'], doc.createNode(systems));
+    else if (doc.getIn([...p, 'systems'], true)) doc.deleteIn([...p, 'systems']);
+  }
+  if (fields.planning !== undefined) {
+    const planning = fields.planning ? planningToPlain(fields.planning) : {};
+    if (Object.keys(planning).length) doc.setIn([...p, 'planning'], doc.createNode(planning));
+    else if (doc.getIn([...p, 'planning'], true)) doc.deleteIn([...p, 'planning']);
+  }
   if (fields.description !== undefined) {
     if (fields.description?.trim()) doc.setIn([...p, 'description'], fields.description);
     else if (doc.getIn([...p, 'description'], true)) doc.deleteIn([...p, 'description']);
@@ -119,6 +194,24 @@ export function updateNode(nodeId, fields) {
     const links = (fields.links ?? []).filter((l) => l.url?.trim());
     if (links.length) doc.setIn([...p, 'links'], doc.createNode(links.map((l) => ({ label: l.label?.trim() || l.url, url: l.url }))));
     else if (doc.getIn([...p, 'links'], true)) doc.deleteIn([...p, 'links']);
+  }
+  if (fields.relations !== undefined) {
+    const relations = (fields.relations ?? [])
+      .filter((relation) => relation?.to && relation?.type)
+      .map((relation) => ({ to: String(relation.to).trim(), type: String(relation.type).trim() }));
+    if (relations.length) doc.setIn([...p, 'relations'], doc.createNode(relations));
+    else if (doc.getIn([...p, 'relations'], true)) doc.deleteIn([...p, 'relations']);
+  }
+  if (fields.review !== undefined) {
+    const review = (fields.review ?? []).filter((r) => r?.body?.trim()).map((r) => ({
+      id: r.id || `note-${Date.now().toString(36)}`,
+      body: String(r.body).trim(),
+      author: String(r.author || 'Reviewer').trim() || 'Reviewer',
+      createdAt: String(r.createdAt || ''),
+      ...(r.resolved ? { resolved: true } : {}),
+    }));
+    if (review.length) doc.setIn([...p, 'review'], doc.createNode(review));
+    else if (doc.getIn([...p, 'review'], true)) doc.deleteIn([...p, 'review']);
   }
   tidyKeyOrder(doc, p);
 }
@@ -226,8 +319,8 @@ export function confirmEdgeFlag(ownerId, index) {
   if (!item || !stripFlagComments(item)) throw new Error('no provenance flag on this edge');
 }
 
-// keep the top level predictable: name, description, costModel, nodes, edges
-const TOP_ORDER = ['name', 'description', 'costModel', 'nodes', 'edges'];
+// keep the top level predictable across process and product documents
+const TOP_ORDER = ['name', 'description', 'document', 'costModel', 'nodes', 'edges'];
 function tidyTopOrder(doc) {
   const map = doc.contents;
   if (!isMap(map)) return;
@@ -242,9 +335,43 @@ function tidyTopOrder(doc) {
     .map(([pair]) => pair);
 }
 
-// keep files predictable: id, type, label, description, links, cost,
-// position, children — unknown keys keep their relative order at the end
-const KEY_ORDER = ['id', 'type', 'label', 'description', 'links', 'cost', 'position', 'children'];
+export function addReviewComment(nodeId, { body, author = 'You', createdAt = new Date().toISOString() }) {
+  const doc = state.doc;
+  const p = findNodePath(doc, nodeId);
+  if (!p) throw new Error(`node "${nodeId}" not found`);
+  const message = String(body || '').trim();
+  if (!message) throw new Error('write a note before saving');
+  const reviewPath = [...p, 'review'];
+  if (!doc.getIn(reviewPath, true)) doc.setIn(reviewPath, doc.createNode([]));
+  const id = `note-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  doc.addIn(reviewPath, doc.createNode({ id, body: message, author: String(author || 'You').trim() || 'You', createdAt }));
+  tidyKeyOrder(doc, p);
+  return id;
+}
+
+export function setReviewResolved(nodeId, reviewId, resolved) {
+  const doc = state.doc;
+  const p = findNodePath(doc, nodeId);
+  if (!p) throw new Error(`node "${nodeId}" not found`);
+  const review = doc.getIn([...p, 'review'], true);
+  if (!isSeq(review)) throw new Error('review note not found');
+  for (let i = 0; i < review.items.length; i++) {
+    const item = review.items[i];
+    if (isMap(item) && item.get('id') === reviewId) {
+      if (resolved) doc.setIn([...p, 'review', i, 'resolved'], true);
+      else if (doc.getIn([...p, 'review', i, 'resolved'], true)) doc.deleteIn([...p, 'review', i, 'resolved']);
+      return;
+    }
+  }
+  throw new Error('review note not found');
+}
+
+// keep files predictable; unknown keys keep their relative order at the end
+const KEY_ORDER = [
+  'id', 'type', 'label', 'description', 'owner', 'trigger', 'sla',
+  'automation', 'systems', 'planning', 'links', 'relations', 'review',
+  'cost', 'position', 'children',
+];
 function tidyKeyOrder(doc, nodePath) {
   const map = doc.getIn(nodePath, true);
   if (!isMap(map)) return;
@@ -264,6 +391,32 @@ export function deleteNode(nodeId) {
   const doc = state.doc;
   const node = state.model.byId.get(nodeId);
   if (!node) throw new Error(`node "${nodeId}" not found`);
+  const removedIds = new Set();
+  (function collect(current) {
+    removedIds.add(current.id);
+    for (const child of current.children?.nodes ?? []) collect(child);
+  })(node);
+
+  // Product-document relations and dependencies can point across scopes.
+  // Remove references to the full deleted subtree first so the resulting
+  // document remains valid and the normal commit pipeline can save it.
+  for (const candidate of state.model.byId.values()) {
+    if (removedIds.has(candidate.id)) continue;
+    const candidatePath = findNodePath(doc, candidate.id);
+    if (!candidatePath) continue;
+    for (const [tail, readValue] of [
+      [['relations'], (item) => isMap(item) ? item.get('to') : null],
+      [['planning', 'dependsOn'], (item) => item?.value ?? item],
+    ]) {
+      const listPath = [...candidatePath, ...tail];
+      const list = doc.getIn(listPath, true);
+      if (!isSeq(list)) continue;
+      for (let i = list.items.length - 1; i >= 0; i--) {
+        if (removedIds.has(readValue(list.items[i]))) doc.deleteIn([...listPath, i]);
+      }
+      if (list.items.length === 0) doc.deleteIn(listPath);
+    }
+  }
   const ownerId = node.ownerId;
   // normalize the parent scope FIRST — list-form children get rewritten to
   // map form, which would invalidate any path computed before this call
@@ -472,7 +625,19 @@ export function insertTemplate(ownerId, templateModel) {
   const plainScope = (scope) => ({
     nodes: scope.nodes.map((n) => nodeToPlain({
       id: rid(n.id), type: n.type, label: n.label,
-      description: n.description, links: n.links,
+      description: n.description,
+      owner: n.owner,
+      trigger: n.trigger,
+      sla: n.sla,
+      automation: n.automation,
+      systems: n.systems,
+      planning: n.planning ? {
+        ...n.planning,
+        dependsOn: n.planning.dependsOn.map(rid),
+      } : null,
+      links: n.links,
+      relations: n.relations.map((relation) => ({ ...relation, to: rid(relation.to) })),
+      review: n.review,
       position: n.position,
       children: n.children ? plainScope(n.children) : undefined,
     })),

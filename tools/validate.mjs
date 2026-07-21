@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Validate one or more Opsmap YAML files: node tools/validate.mjs maps/*.yaml
+// Validate one or more Serigraph YAML files: node tools/validate.mjs maps/*.yaml
 import { readFileSync } from 'node:fs';
 import { parseMap } from '../shared/model.js';
 

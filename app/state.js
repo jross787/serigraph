@@ -17,6 +17,14 @@ export const state = {
 
   connectFrom: null,   // node id while in connect mode
   presenting: false,
+  workspaceView: 'map', // map | brief | roadmap | audit
+
+  // Workbench modes are intentionally ephemeral. The document remains YAML;
+  // the editor state should never make a map harder to move or review.
+  activeTool: 'select',
+  probeStartId: null,
+  probePath: null,
+  ownerLanes: false,
 
   undoStack: [],       // previous sources
   redoStack: [],

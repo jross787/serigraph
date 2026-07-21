@@ -1,0 +1,642 @@
+# Serigraph roadmap — every card is a real graph node, not a second planning store.
+name: Serigraph — Product Roadmap
+description: A sequenced portfolio for turning process maps into an operating system for discovering, governing, and automating work.
+
+document:
+  kind: roadmap
+  version: "1.1"
+  status: planned
+  owner: Product
+  updated: "2026-07-18"
+  summary: Serigraph wins by understanding how work actually runs, then connecting product intent, operational evidence, automation design, and measurable outcomes in one living graph.
+  audience:
+    - Product and engineering
+    - Automation consultants and operators
+    - Design partners and executive sponsors
+  goals:
+    - Establish product documents as a first-class Serigraph workflow.
+    - Capture the real process faster than it can be documented manually.
+    - Connect maps to live operating systems and delivery tools.
+    - Make change impact, automation value, and business outcomes inspectable.
+  nonGoals:
+    - Become a generic freeform whiteboard.
+    - Compete on hundreds of unrelated diagram stencils.
+    - Replace specialized execution and analytics systems.
+  successMetrics:
+    - At least 90% of active roadmap items have an owner, target, acceptance criteria, evidence, and objective relation.
+    - A process discovery session produces an automation-ready map in under one hour.
+    - A reviewer can trace a shipped change from evidence to outcome without leaving Serigraph.
+
+nodes:
+  - id: roadmap-problem
+    type: artifact
+    label: Process truth is expensive to discover
+    description: Teams spend weeks interviewing, diagramming, reconciling, and re-documenting operations before automation work can even begin.
+    owner: Product
+    planning:
+      type: problem
+      status: validated
+      priority: must
+      phase: now
+      evidence:
+        - Process maps become stale when disconnected from the systems and decisions that run the work.
+      rice: { reach: 100, impact: 3, confidence: 90, effort: 1 }
+  - id: roadmap-objective
+    type: process
+    label: From observed work to measurable automation
+    description: Serigraph becomes the fastest trustworthy path from seeing a business process to improving it and proving the result.
+    owner: Product
+    planning:
+      type: objective
+      status: validated
+      priority: must
+      phase: now
+      evidence:
+        - The current product already combines nested maps, automation context, scoring, review, and portable YAML.
+      rice: { reach: 100, impact: 3, confidence: 90, effort: 2 }
+    relations:
+      - to: roadmap-outcome-metric
+        type: measured-by
+
+  - id: roadmap-now
+    type: process
+    label: Now · Product documents
+    description: Turn the product plan into a first-class Serigraph graph and establish the schema, views, prioritization, publishing, and quality gates needed for everything that follows.
+    owner: Product & Engineering
+    planning:
+      type: milestone
+      status: shipped
+      priority: must
+      phase: now
+      target: v1.1
+      acceptance:
+        - PRD, roadmap, traceability, readiness, RICE, and publishing work from one YAML graph.
+        - Existing process maps remain compatible.
+      evidence:
+        - The Serigraph PRD and roadmap are checked-in, valid product documents.
+      rice: { reach: 100, impact: 3, confidence: 95, effort: 8 }
+    relations:
+      - to: roadmap-objective
+        type: supports
+    children:
+      nodes:
+        - id: rm-document-model
+          type: artifact
+          label: Product-document schema
+          description: Structured document metadata, planning semantics, relations, proof, dependencies, and RICE live in YAML.
+          owner: Platform
+          planning:
+            type: requirement
+            status: shipped
+            priority: must
+            phase: now
+            target: v1.1
+            acceptance:
+              - New product metadata validates and round-trips.
+              - Legacy process maps remain valid.
+            evidence:
+              - Automated parser and editor tests.
+            rice: { reach: 100, impact: 3, confidence: 95, effort: 3 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+            - to: roadmap-risk
+              type: mitigates
+        - id: rm-prd-view
+          type: artifact
+          label: Living PRD view
+          description: A readable brief is generated from the graph with stable navigation back to source nodes.
+          owner: Product Design
+          planning:
+            type: requirement
+            status: shipped
+            priority: must
+            phase: now
+            target: v1.1
+            acceptance:
+              - Professional PRD sections render from structured fields.
+              - Relation chips locate nested nodes.
+            evidence:
+              - Serigraph dogfood PRD and browser review.
+            rice: { reach: 95, impact: 3, confidence: 92, effort: 4 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+        - id: rm-roadmap-view
+          type: process
+          label: Roadmap portfolio lanes
+          description: Now, Next, Later lanes with status, priority, owner, and search filters show sequence without duplicating data.
+          owner: Product
+          planning:
+            type: requirement
+            status: shipped
+            priority: must
+            phase: now
+            target: v1.1
+            acceptance:
+              - Combined filters and empty states behave predictably.
+              - Cards retain exact node identity and navigation.
+            evidence:
+              - This roadmap renders every horizon from the same file.
+            rice: { reach: 90, impact: 3, confidence: 90, effort: 4 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+        - id: rm-traceability
+          type: system
+          label: Cross-scope traceability
+          description: Typed relations connect evidence, objectives, requirements, proof, metrics, risks, and dependencies across nested scopes.
+          owner: Platform
+          planning:
+            type: requirement
+            status: shipped
+            priority: must
+            phase: now
+            target: v1.1
+            acceptance:
+              - Any stable node can relate to another node.
+              - Missing targets fail validation.
+            evidence:
+              - The PRD and roadmap use root-to-nested relations.
+            rice: { reach: 88, impact: 3, confidence: 88, effort: 5 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+        - id: rm-readiness
+          type: decision
+          label: Product readiness gate
+          description: An inspectable structural audit exposes missing ownership, proof, traceability, metrics, schedule, blockers, cycles, and mitigation.
+          owner: Product Operations
+          planning:
+            type: requirement
+            status: shipped
+            priority: must
+            phase: now
+            target: v1.1
+            acceptance:
+              - Stable issue codes explain exact gaps.
+              - The score never claims factual product validity.
+            evidence:
+              - Complete and incomplete fixtures are tested.
+            rice: { reach: 85, impact: 3, confidence: 90, effort: 4 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+        - id: rm-rice
+          type: process
+          label: RICE prioritization lab
+          description: Explainable inputs and deterministic ordering help teams compare work without opaque scoring.
+          owner: Product
+          planning:
+            type: requirement
+            status: shipped
+            priority: should
+            phase: now
+            target: v1.1
+            acceptance:
+              - The formula is editable, validated, and visible.
+              - Invalid inputs cannot produce NaN or Infinity.
+            evidence:
+              - Pure formula tests and live editor preview.
+            rice: { reach: 80, impact: 2, confidence: 92, effort: 3 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+        - id: rm-publishing
+          type: artifact
+          label: Product-document publishing
+          description: Markdown and standalone HTML make product plans durable, portable, and reviewable outside the authoring session.
+          owner: Platform
+          planning:
+            type: requirement
+            status: shipped
+            priority: should
+            phase: now
+            target: v1.1
+            acceptance:
+              - Markdown includes requirements, proof, risk, and readiness.
+              - Standalone HTML retains all product views read-only.
+            evidence:
+              - Export tests cover every client module.
+            rice: { reach: 72, impact: 2, confidence: 94, effort: 2 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+      edges:
+        - from: rm-document-model
+          to: rm-prd-view
+        - from: rm-document-model
+          to: rm-traceability
+        - from: rm-prd-view
+          to: rm-roadmap-view
+        - from: rm-traceability
+          to: rm-readiness
+        - from: rm-rice
+          to: rm-roadmap-view
+        - from: rm-readiness
+          to: rm-publishing
+
+  - id: roadmap-next
+    type: process
+    label: Next · Observe and connect
+    description: Collapse discovery time by observing real workflows, linking live systems, and turning product review into an accountable team process.
+    owner: Product & Engineering
+    planning:
+      type: milestone
+      status: planned
+      priority: must
+      phase: next
+      target: v1.2–v1.4
+      acceptance:
+        - A real workflow can be captured and enriched with live operating evidence.
+        - Product changes can be reviewed, approved, and traced to delivery systems.
+      evidence:
+        - Lucid gap analysis identified Process Capture, integrations, collaboration, and version comparison as high-value gaps.
+      dependsOn: [roadmap-now]
+      rice: { reach: 90, impact: 3, confidence: 78, effort: 20 }
+    relations:
+      - to: roadmap-objective
+        type: supports
+    children:
+      nodes:
+        - id: rm-process-capture
+          type: process
+          label: Process Capture
+          description: Record a user performing work, redact sensitive moments, and generate a draft Serigraph map with roles, systems, artifacts, handoffs, and uncertainty markers.
+          owner: Applied AI
+          planning:
+            type: requirement
+            status: discovery
+            priority: must
+            phase: next
+            target: v1.2
+            acceptance:
+              - A screen recording produces an editable, source-linked draft map.
+              - Sensitive frames can be excluded before analysis.
+            evidence:
+              - Lucid introduced screen-recording-to-process diagrams in 2026.
+            dependsOn: [rm-document-model]
+            rice: { reach: 85, impact: 3, confidence: 72, effort: 10 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+        - id: rm-live-data
+          type: system
+          label: Live operational data
+          description: Read-only connectors show real volume, SLA, error rate, queue depth, owner, and automation state on process nodes.
+          owner: Integrations
+          planning:
+            type: requirement
+            status: planned
+            priority: must
+            phase: next
+            target: v1.2
+            acceptance:
+              - A connector can map external fields to stable node metrics.
+              - Stale or failed sync is visible and never silently trusted.
+            evidence:
+              - System links and stable IDs already exist in the map format.
+            dependsOn: [rm-document-model]
+            rice: { reach: 82, impact: 3, confidence: 76, effort: 12 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+        - id: rm-review-workflow
+          type: role
+          label: Assigned review and approvals
+          description: Turn review notes into accountable tasks with assignees, due dates, approvals, decisions, and notification boundaries.
+          owner: Collaboration
+          planning:
+            type: requirement
+            status: planned
+            priority: should
+            phase: next
+            target: v1.3
+            acceptance:
+              - A review gap can be assigned, resolved, approved, and audited.
+              - Standalone viewers clearly distinguish read-only review state.
+            evidence:
+              - YAML-backed review notes already persist and resolve.
+            dependsOn: [rm-traceability]
+            rice: { reach: 78, impact: 2, confidence: 84, effort: 7 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+        - id: rm-decision-records
+          type: artifact
+          label: Decision records
+          description: Capture rationale, alternatives, evidence, approvers, date, and supersession as durable graph objects.
+          owner: Product Operations
+          planning:
+            type: requirement
+            status: planned
+            priority: should
+            phase: next
+            target: v1.3
+            acceptance:
+              - A decision links to the requirements and evidence it changes.
+              - Superseded decisions remain inspectable without appearing current.
+            evidence:
+              - Current review notes establish a compatible persistence pattern.
+            dependsOn: [rm-traceability, rm-review-workflow]
+            rice: { reach: 72, impact: 2, confidence: 82, effort: 5 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+        - id: rm-impact-analysis
+          type: system
+          label: Change impact analysis
+          description: Before changing a requirement or process, show affected downstream steps, tests, metrics, owners, integrations, and release commitments.
+          owner: Platform
+          planning:
+            type: requirement
+            status: planned
+            priority: must
+            phase: next
+            target: v1.3
+            acceptance:
+              - Impact follows typed relations across every nesting level.
+              - The result separates direct, downstream, and uncertain effects.
+            evidence:
+              - Cross-scope relations provide the dependency graph.
+            dependsOn: [rm-traceability, rm-decision-records]
+            rice: { reach: 76, impact: 3, confidence: 78, effort: 8 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+        - id: rm-version-diff
+          type: artifact
+          label: Visual version comparison
+          description: Compare current/future state or two revisions with highlighted semantic and metadata changes.
+          owner: Platform
+          planning:
+            type: requirement
+            status: planned
+            priority: should
+            phase: next
+            target: v1.4
+            acceptance:
+              - Added, removed, changed, and moved semantics are separately visible.
+              - A reviewer can restore or deep-link either version safely.
+            evidence:
+              - Local revision recovery already retains the last thirty sources.
+            dependsOn: [rm-document-model]
+            rice: { reach: 68, impact: 2, confidence: 86, effort: 6 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+        - id: rm-delivery-sync
+          type: system
+          label: Jira, Linear, and GitHub sync
+          description: Link requirements and milestones to delivery state without turning Serigraph into a ticket tracker.
+          owner: Integrations
+          planning:
+            type: requirement
+            status: discovery
+            priority: should
+            phase: next
+            target: v1.4
+            acceptance:
+              - Delivery state refreshes with clear source and timestamp.
+              - Serigraph product intent remains authoritative while execution stays in its native tool.
+            evidence:
+              - Lucid's integration breadth sets the interoperability expectation.
+            dependsOn: [rm-live-data, rm-review-workflow]
+            rice: { reach: 70, impact: 2, confidence: 70, effort: 10 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+      edges:
+        - from: rm-process-capture
+          to: rm-live-data
+          label: enrich with truth
+        - from: rm-live-data
+          to: rm-impact-analysis
+          label: powers
+        - from: rm-review-workflow
+          to: rm-decision-records
+          label: records
+        - from: rm-decision-records
+          to: rm-impact-analysis
+          label: explains change
+        - from: rm-impact-analysis
+          to: rm-version-diff
+          label: visualizes
+        - from: rm-review-workflow
+          to: rm-delivery-sync
+          label: coordinates
+
+  - id: roadmap-later
+    type: process
+    label: Later · Learn and govern
+    description: Evolve from a map of intended work into a continuously learning operating model with simulation, outcome measurement, portfolio intelligence, AI assistance, and enterprise controls.
+    owner: Product
+    planning:
+      type: milestone
+      status: planned
+      priority: should
+      phase: later
+      target: v2
+      acceptance:
+        - Serigraph can compare planned, observed, simulated, and achieved states.
+        - Portfolio governance scales without compromising local ownership.
+      evidence:
+        - These bets depend on product-document, capture, data, and collaboration foundations.
+      dependsOn: [roadmap-next]
+      rice: { reach: 70, impact: 3, confidence: 62, effort: 35 }
+    relations:
+      - to: roadmap-objective
+        type: supports
+    children:
+      nodes:
+        - id: rm-ai-architect
+          type: system
+          label: AI Product and Process Architect
+          description: Draft, critique, and repair maps while labeling assumptions, citing evidence, and asking before consequential changes.
+          owner: Applied AI
+          planning:
+            type: requirement
+            status: discovery
+            priority: should
+            phase: later
+            target: v2
+            acceptance:
+              - Suggestions distinguish evidence, inference, and assumption.
+              - Every accepted change remains a normal reviewable YAML edit.
+            evidence:
+              - The format is already compact and LLM-readable.
+            dependsOn: [rm-process-capture, rm-impact-analysis]
+            rice: { reach: 75, impact: 3, confidence: 65, effort: 14 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+        - id: rm-simulation
+          type: process
+          label: Operational scenario simulation
+          description: Model volume, queue, staffing, failure, and automation assumptions to compare current and proposed operating designs.
+          owner: Decision Science
+          planning:
+            type: requirement
+            status: discovery
+            priority: should
+            phase: later
+            target: v2
+            acceptance:
+              - Assumptions are explicit, editable, and separable from observed facts.
+              - Scenarios compare cycle time, cost, capacity, and risk.
+            evidence:
+              - The current Automation Opportunity lens establishes a deterministic modeling pattern.
+            dependsOn: [rm-live-data, rm-impact-analysis]
+            rice: { reach: 64, impact: 3, confidence: 64, effort: 16 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+        - id: rm-portfolio
+          type: artifact
+          label: Portfolio roll-up
+          description: Aggregate multiple product and process maps into an executive view of dependencies, investment, risk, and outcomes.
+          owner: Product Operations
+          planning:
+            type: requirement
+            status: planned
+            priority: could
+            phase: later
+            target: v2
+            acceptance:
+              - Cross-map dependencies retain stable source and ownership.
+              - Roll-ups never silently double-count shared work or metrics.
+            evidence:
+              - Map switching and stable file IDs provide the initial collection boundary.
+            dependsOn: [rm-delivery-sync, rm-version-diff]
+            rice: { reach: 58, impact: 2, confidence: 65, effort: 12 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+        - id: rm-outcome-observability
+          type: system
+          label: Outcome observability
+          description: Compare the baseline, launch target, and live result for the metrics connected to product and automation changes.
+          owner: Data Platform
+          planning:
+            type: requirement
+            status: planned
+            priority: must
+            phase: later
+            target: v2
+            acceptance:
+              - Every observed metric shows source, freshness, baseline, target, and current value.
+              - Outcome reviews link back to the exact release and requirements.
+            evidence:
+              - Live data and metric nodes establish the data contract.
+            dependsOn: [rm-live-data, rm-delivery-sync]
+            rice: { reach: 68, impact: 3, confidence: 68, effort: 13 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+        - id: rm-enterprise-governance
+          type: role
+          label: Enterprise governance
+          description: Permissions, cloud revisions, audit trails, retention, SSO, classification, and controlled sharing for regulated organizations.
+          owner: Enterprise Platform
+          planning:
+            type: requirement
+            status: planned
+            priority: could
+            phase: later
+            target: v2
+            acceptance:
+              - Access and retention policy are enforceable and auditable.
+              - Local export and customer ownership remain explicit.
+            evidence:
+              - Lucid's enterprise controls define buyer expectations for large deployments.
+            dependsOn: [rm-review-workflow, rm-version-diff]
+            rice: { reach: 42, impact: 3, confidence: 60, effort: 18 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+        - id: rm-interoperability
+          type: artifact
+          label: Diagram and document interoperability
+          description: Import and export common process, diagram, and structured documentation formats while preserving what can be represented faithfully.
+          owner: Platform
+          planning:
+            type: requirement
+            status: discovery
+            priority: could
+            phase: later
+            target: v2
+            acceptance:
+              - Visio, Draw.io, BPMN, and structured CSV imports report fidelity limits.
+              - PDF, SVG, and image exports match the visible map.
+            evidence:
+              - Lucid supports broad diagram import and export expected by migrating teams.
+            dependsOn: [rm-document-model, rm-version-diff]
+            rice: { reach: 50, impact: 2, confidence: 62, effort: 15 }
+          relations:
+            - to: roadmap-objective
+              type: supports
+      edges:
+        - from: rm-ai-architect
+          to: rm-simulation
+          label: designs scenarios
+        - from: rm-simulation
+          to: rm-outcome-observability
+          label: compared with reality
+        - from: rm-outcome-observability
+          to: rm-portfolio
+          label: rolls up
+        - from: rm-portfolio
+          to: rm-enterprise-governance
+          label: governed by
+        - from: rm-enterprise-governance
+          to: rm-interoperability
+          label: distributes safely
+
+  - id: roadmap-outcome-metric
+    type: system
+    label: Time from observation to verified improvement
+    description: Median elapsed time from first workflow observation to a mapped, reviewed, automated, and measured process improvement.
+    owner: Product Analytics
+    planning:
+      type: metric
+      status: planned
+      priority: must
+      phase: next
+      target: Under 30 days
+      evidence:
+        - Baseline will be established with the first five design partners.
+      rice: { reach: 100, impact: 3, confidence: 70, effort: 3 }
+  - id: roadmap-risk
+    type: decision
+    label: Breadth dilutes the wedge
+    description: Chasing general-purpose diagram parity would obscure Serigraph's advantage in process discovery, product traceability, automation design, and operating outcomes.
+    owner: Product
+    planning:
+      type: risk
+      status: validated
+      priority: must
+      phase: now
+      evidence:
+        - Lucid's long-tail canvas feature set is large and not the source of Serigraph's differentiation.
+      risks:
+        - Roadmap expansion could pull resources toward low-leverage parity features.
+      rice: { reach: 100, impact: 3, confidence: 90, effort: 2 }
+edges:
+  - from: roadmap-problem
+    to: roadmap-objective
+    label: motivates
+  - from: roadmap-objective
+    to: roadmap-now
+    label: begins with
+  - from: roadmap-now
+    to: roadmap-next
+    label: unlocks
+  - from: roadmap-next
+    to: roadmap-later
+    label: compounds into
+  - from: roadmap-later
+    to: roadmap-outcome-metric
+    label: judged by
+  - from: roadmap-outcome-metric
+    to: roadmap-risk
+    label: protected from

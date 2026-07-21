@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Generate synthetic Opsmap YAML files for performance and adversarial testing.
+// Generate synthetic Serigraph YAML files for performance and adversarial testing.
 //
 //   node tools/generate-map.mjs --nodes 300 --depth 4 --out maps/perf-300.yaml [--seed 42] [--unicode] [--name "Perf Test"]
 //

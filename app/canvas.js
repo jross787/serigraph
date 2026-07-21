@@ -43,7 +43,24 @@ export function resetScopeCameras() {
   camerasResetPending = true;
 }
 
+// Motion is deliberately a little springy rather than merely slow. The map
+// should feel connected to the pointer — like a taut string — without making
+// a process diagram feel like a toy. These values settle in well under a
+// second and only allow a small, controlled overshoot.
+let panFrame = 0;
+let panTarget = null;
+let panVelocity = { x: 0, y: 0 };
+let panLastTime = 0;
+
 const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const rubberEase = (t) => {
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  const overshoot = 1.18;
+  const u = t - 1;
+  return 1 + (overshoot + 1) * u * u * u + overshoot * u * u;
+};
+const prefersReducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 // ── setup ────────────────────────────────────────────────────────────
 export function initCanvas(svgEl, minimapSvg) {
@@ -113,13 +130,27 @@ function applyCamera() {
   gridPattern.setAttribute('height', spacing);
   gridPattern.setAttribute('x', camera.x % spacing);
   gridPattern.setAttribute('y', camera.y % spacing);
+  // Dense maps stay legible and responsive: secondary copy disappears before
+  // the whole graph turns into unreadable visual noise.
+  svg.classList.toggle('canvas-overview', camera.k < 0.58);
   updateMinimapView();
   bus.emit('camera-changed', camera);
 }
 
 export const getCamera = () => ({ ...camera });
 export const isTransitioning = () => transitioning;
+export function nodeScreenRect(nodeId) {
+  const n = currentLayout?.nodes.find((x) => x.id === nodeId);
+  if (!n) return null;
+  return {
+    x: camera.x + n.x * camera.k,
+    y: camera.y + n.y * camera.k,
+    width: n.w * camera.k,
+    height: n.h * camera.k,
+  };
+}
 export function setCamera(c) {
+  stopPanMotion();
   animToken++; // an explicit camera set cancels any in-flight camera animation
   camera = { ...c };
   applyCamera();
@@ -170,14 +201,27 @@ function fitCamera(bounds, pad = null, maxK = 1.15) {
   };
 }
 
-function animate(ms, step) {
+function usableViewport() {
+  const full = { width: vw || window.innerWidth || 1200, height: vh || window.innerHeight || 800 };
+  const panel = document.getElementById('detail');
+  if (!panel || panel.hidden || full.width <= 700) return full;
+  const panelRect = panel.getBoundingClientRect();
+  const svgRect = svg.getBoundingClientRect();
+  if (panelRect.left <= svgRect.left || panelRect.left >= svgRect.right) return full;
+  return {
+    width: Math.max(360, panelRect.left - svgRect.left - 12),
+    height: full.height,
+  };
+}
+
+function animate(ms, step, curve = ease) {
   const token = ++animToken;
   return new Promise((resolve) => {
     const t0 = performance.now();
     const frame = (now) => {
       if (token !== animToken) return resolve(false); // superseded
       const t = Math.min(1, (now - t0) / ms);
-      step(ease(t), t);
+      step(curve(t), t);
       if (t < 1) requestAnimationFrame(frame);
       else resolve(true);
     };
@@ -186,6 +230,11 @@ function animate(ms, step) {
 }
 
 export function animateCamera(target, ms = 420) {
+  stopPanMotion();
+  if (!ms || prefersReducedMotion()) {
+    setCamera(target);
+    return Promise.resolve(true);
+  }
   const from = { ...camera };
   return animate(ms, (e) => {
     camera = {
@@ -194,7 +243,21 @@ export function animateCamera(target, ms = 420) {
       k: from.k + (target.k - from.k) * e,
     };
     applyCamera();
-  });
+  }, rubberEase);
+}
+
+export function focusOn(nodeId, ms = 380) {
+  const n = currentLayout?.nodes.find((x) => x.id === nodeId);
+  if (!n) return;
+  const k = Math.min(1.12, Math.max(camera.k, 0.78));
+  const usable = usableViewport();
+  const target = {
+    k,
+    x: usable.width / 2 - (n.x + n.w / 2) * k,
+    y: usable.height * 0.5 - (n.y + n.h / 2) * k,
+  };
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  return ms && !reduced ? animateCamera(target, ms) : setCamera(target);
 }
 
 const layoutBounds = (l) => ({ x: l.x ?? 0, y: l.y ?? 0, w: l.w, h: l.h });
@@ -208,8 +271,68 @@ export function fit(ms = 420) {
 export function zoomBy(factor, cx = vw / 2, cy = vh / 2) {
   const k = Math.min(3, Math.max(0.04, camera.k * factor));
   const wp = screenToWorld(cx, cy);
-  camera = { k, x: cx - wp.x * k, y: cy - wp.y * k };
-  applyCamera();
+  return animateCamera({ k, x: cx - wp.x * k, y: cy - wp.y * k }, 240);
+}
+
+function stopPanMotion({ snap = false } = {}) {
+  if (panFrame) cancelAnimationFrame(panFrame);
+  panFrame = 0;
+  if (snap && panTarget) {
+    camera = { ...panTarget };
+    applyCamera();
+  }
+  panTarget = null;
+  panVelocity = { x: 0, y: 0 };
+}
+
+function springPanTo(target) {
+  if (prefersReducedMotion()) {
+    camera = { ...target };
+    applyCamera();
+    return;
+  }
+  if (panTarget) {
+    // Give a fresh pointer delta a little momentum. This keeps the canvas
+    // connected to the user's hand instead of lagging behind it.
+    panVelocity.x += (target.x - panTarget.x) * 18;
+    panVelocity.y += (target.y - panTarget.y) * 18;
+  }
+  panTarget = { ...target };
+  if (panFrame) return;
+  panLastTime = performance.now();
+
+  const step = (now) => {
+    if (!panTarget) { panFrame = 0; return; }
+    const dt = Math.min(0.034, Math.max(0.001, (now - panLastTime) / 1000));
+    panLastTime = now;
+    const dx = panTarget.x - camera.x;
+    const dy = panTarget.y - camera.y;
+    // Near-critical damping with a touch of give. The tiny overshoot on a
+    // release is the tactile "rubber band" finish, not a cartoon bounce.
+    const stiffness = 210;
+    const damping = 24;
+    panVelocity.x = (panVelocity.x + dx * stiffness * dt) * Math.exp(-damping * dt);
+    panVelocity.y = (panVelocity.y + dy * stiffness * dt) * Math.exp(-damping * dt);
+    camera = {
+      k: panTarget.k,
+      x: camera.x + panVelocity.x * dt,
+      y: camera.y + panVelocity.y * dt,
+    };
+    applyCamera();
+
+    const distance = Math.hypot(panTarget.x - camera.x, panTarget.y - camera.y);
+    const speed = Math.hypot(panVelocity.x, panVelocity.y);
+    if (distance < 0.12 && speed < 0.12) {
+      camera = { ...panTarget };
+      applyCamera();
+      panTarget = null;
+      panVelocity = { x: 0, y: 0 };
+      panFrame = 0;
+      return;
+    }
+    panFrame = requestAnimationFrame(step);
+  };
+  panFrame = requestAnimationFrame(step);
 }
 
 // ── node + edge rendering ───────────────────────────────────────────
@@ -251,6 +374,23 @@ function textLines(lines, x, startY, cls, anchor = 'start', lh = 17) {
   return t;
 }
 
+function summaryLines(text, maxChars = 31, maxLines = 2) {
+  const words = String(text || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const trial = line ? `${line} ${word}` : word;
+    if (trial.length <= maxChars || !line) line = trial;
+    else { lines.push(line); line = word; }
+    if (lines.length === maxLines) break;
+  }
+  if (lines.length < maxLines && line) lines.push(line);
+  if (lines.join(' ').length < words.join(' ').length && lines.length) {
+    lines[lines.length - 1] = `${lines[lines.length - 1].replace(/[.,;:]$/, '')}…`;
+  }
+  return lines;
+}
+
 const MINI_NODE_CAP = 90;
 
 function buildNode(n) {
@@ -269,28 +409,18 @@ function buildNode(n) {
     g.appendChild(nodeShape(n));
     g.appendChild(iconChip(node.type, 13, 10));
     g.appendChild(textLines(n.lines, 45, 26, 'label', 'start', 19));
-
-    const m = n.mini;
-    g.appendChild(el('rect', { x: 13, y: m.headerH, width: m.frameW, height: m.frameH }, 'mini-frame'));
-    const miniG = el('g', { transform: `translate(${m.dx},${m.dy}) scale(${m.scale})` });
-    const kids = m.child.nodes.slice(0, MINI_NODE_CAP);
-    if (m.child.edges.length <= 60) {
-      for (const e of m.child.edges) {
-        miniG.appendChild(el('path', {
-          d: edgePath(e.points, 8),
-          'stroke-width': Math.min(10, 1.4 / m.scale),
-        }, 'mini-edge'));
-      }
-    }
-    for (const k of kids) {
-      miniG.appendChild(el('rect', { x: k.x, y: k.y, width: k.w, height: k.h, rx: 8 / m.scale > k.h / 2 ? k.h / 4 : 10 }, `mini-node t-${k.node.type}`));
-    }
-    g.appendChild(miniG);
+    const desc = summaryLines(node.description);
+    if (desc.length) g.appendChild(textLines(desc, 14, 58, 'node-summary', 'start', 15));
+    const meta = el('text', { x: 14, y: n.h - 15 }, 'node-meta');
+    meta.textContent = node.owner || `${node.stats.childCount} steps`;
+    g.appendChild(meta);
+    const automation = node.automation || 'not-assessed';
+    g.appendChild(el('circle', { cx: n.w - 15, cy: n.h - 17, r: 4 }, `automation-dot a-${automation}`));
 
     // count chip — the "there's more inside" affordance; click dives in
     const label = `${node.stats.childCount}`;
     const chipW = 30 + label.length * 6.5;
-    const chip = el('g', { transform: `translate(${n.w - chipW - 10},${n.h - 26})` });
+    const chip = el('g', { transform: `translate(${n.w - chipW - 28},${n.h - 26})` });
     chip.dataset.dive = node.id;
     chip.style.cursor = 'zoom-in';
     chip.appendChild(el('rect', { width: chipW, height: 19, rx: 9.5 }, 'count-chip-bg'));
@@ -432,13 +562,42 @@ function buildEdge(e) {
   return g;
 }
 
+function renderOwnerLanes(layout) {
+  const group = el('g', {}, 'owner-lanes');
+  if (!state.ownerLanes) return group;
+
+  const byOwner = new Map();
+  for (const n of layout.nodes) {
+    const owner = String(n.node.owner || '').trim();
+    if (!owner) continue;
+    if (!byOwner.has(owner)) byOwner.set(owner, []);
+    byOwner.get(owner).push(n);
+  }
+
+  for (const [owner, nodes] of byOwner) {
+    if (!nodes.length) continue;
+    const pad = 24;
+    const x1 = Math.min(...nodes.map((n) => n.x)) - pad;
+    const y1 = Math.min(...nodes.map((n) => n.y)) - pad - 18;
+    const x2 = Math.max(...nodes.map((n) => n.x + n.w)) + pad;
+    const y2 = Math.max(...nodes.map((n) => n.y + n.h)) + pad;
+    group.appendChild(el('rect', { x: x1, y: y1, width: x2 - x1, height: y2 - y1, rx: 8 }, 'owner-lane'));
+    const label = el('text', { x: x1 + 12, y: y1 + 16 }, 'owner-lane-label');
+    label.textContent = owner;
+    group.appendChild(label);
+  }
+  return group;
+}
+
 function renderScope(model, ownerId) {
   const layout = layoutScope(model, ownerId);
   const layer = el('g', {}, 'scope-layer');
+  const lanesG = renderOwnerLanes(layout);
   const edgesG = el('g', {}, 'edges');
   const nodesG = el('g', {}, 'nodes');
   for (const e of layout.edges) edgesG.appendChild(buildEdge(e));
   for (const n of layout.nodes) nodesG.appendChild(buildNode(n));
+  layer.appendChild(lanesG);
   layer.appendChild(edgesG);
   layer.appendChild(nodesG);
   return { layer, layout };
@@ -446,6 +605,7 @@ function renderScope(model, ownerId) {
 
 // ── scope management + transitions ───────────────────────────────────
 export function showScope(model, ownerId, { transition = null, focusId = null } = {}) {
+  stopPanMotion({ snap: true });
   if (transitioning) { animToken++; finishTransition(); }
   if (transition === 'dive' && currentLayout) return diveTo(model, ownerId, focusId);
   if (transition === 'rise' && currentLayout) return riseTo(model, ownerId);
@@ -478,6 +638,7 @@ function finishTransition() {
 }
 
 async function diveTo(model, containerId, focusId) {
+  stopPanMotion({ snap: true });
   const parentLayout = currentLayout;
   const ln = parentLayout.nodes.find((n) => n.id === containerId);
   if (!ln || !ln.mini) return showScope(model, containerId, { focusId });
@@ -509,11 +670,12 @@ async function diveTo(model, containerId, focusId) {
   };
   pendingFinish = myFinish;
 
-  await animate(500, (e) => {
+  await animate(500, (e, t) => {
+    const cameraEase = rubberEase(t);
     camera = {
-      x: from.x + (camTarget.x - from.x) * e,
-      y: from.y + (camTarget.y - from.y) * e,
-      k: from.k + (camTarget.k - from.k) * e,
+      x: from.x + (camTarget.x - from.x) * cameraEase,
+      y: from.y + (camTarget.y - from.y) * cameraEase,
+      k: from.k + (camTarget.k - from.k) * cameraEase,
     };
     applyCamera();
     newLayer.style.opacity = Math.min(1, e * 1.5);
@@ -530,6 +692,7 @@ async function diveTo(model, containerId, focusId) {
 }
 
 async function riseTo(model, parentOwnerId) {
+  stopPanMotion({ snap: true });
   const childOwnerId = currentLayout.ownerId;
   const { layer: parentLayer, layout: parentLayout } = renderScope(model, parentOwnerId);
   const ln = parentLayout.nodes.find((n) => n.id === childOwnerId);
@@ -560,11 +723,11 @@ async function riseTo(model, parentOwnerId) {
   };
   pendingFinish = myFinish;
 
-  const done = await animate(500, (e) => {
+  const done = await animate(500, (e, t) => {
+    const cameraEase = rubberEase(t);
     camera = {
-      x: from.x + (camTarget.x - from.x) * e,
-      y: from.y + (camTarget.y - from.y) * e,
-      k: from.k + (camTarget.k - from.k) * e,
+      x: from.x + (camTarget.x - from.x) * cameraEase,
+      y: from.y + (camTarget.y - from.y) * cameraEase,
     };
     applyCamera();
     parentLayer.style.opacity = Math.min(1, e * 1.3);
@@ -591,14 +754,20 @@ export function refreshScope(model) {
   applyCamera();
 }
 
+export function setOwnerLanes(enabled) {
+  state.ownerLanes = !!enabled;
+  if (state.model && currentLayout) refreshScope(state.model);
+}
+
 export function centerOn(nodeId, ms = 420) {
   const n = currentLayout?.nodes.find((x) => x.id === nodeId);
   if (!n) return Promise.resolve(false);
   const k = Math.min(1.2, Math.max(0.65, camera.k));
+  const usable = usableViewport();
   const target = {
     k,
-    x: vw / 2 - (n.x + n.w / 2) * k,
-    y: vh / 2 - (n.y + n.h / 2) * k,
+    x: usable.width / 2 - (n.x + n.w / 2) * k,
+    y: usable.height / 2 - (n.y + n.h / 2) * k,
   };
   return ms ? animateCamera(target, ms) : Promise.resolve(setCamera(target) ?? true);
 }
@@ -611,20 +780,53 @@ export function ensureVisible(nodeId, margin = 30) {
   if (!n) return;
   const x1 = camera.x + n.x * camera.k, y1 = camera.y + n.y * camera.k;
   const x2 = x1 + n.w * camera.k, y2 = y1 + n.h * camera.k;
-  if (x1 < margin || y1 < margin || x2 > vw - margin || y2 > vh - margin) centerOn(nodeId, 320);
+  const usable = usableViewport();
+  if (x1 < margin || y1 < margin || x2 > usable.width - margin || y2 > usable.height - margin) centerOn(nodeId, 320);
 }
 
 // ── selection visuals (no re-render) ─────────────────────────────────
 export function paintSelection() {
   if (!currentLayer) return;
+  const selected = state.selectedId;
+  const probeNodes = new Set(state.probePath?.nodeIds ?? []);
+  const probeEdges = new Set(state.probePath?.edgeIndexes ?? []);
+  const adjacent = new Set(selected ? [selected] : []);
+  if (selected) {
+    for (const e of currentLayout.edges) {
+      if (e.edge.from === selected || e.edge.to === selected) {
+        adjacent.add(e.edge.from);
+        adjacent.add(e.edge.to);
+      }
+    }
+  }
   for (const g of currentLayer.querySelectorAll('.node')) {
     g.classList.toggle('selected', g.dataset.id === state.selectedId);
     g.classList.toggle('connect-target', !!state.connectFrom && g.dataset.id !== state.connectFrom);
+    g.classList.toggle('probe-node', probeNodes.has(g.dataset.id));
+    g.classList.toggle('probe-dimmed', probeNodes.size > 0 && !probeNodes.has(g.dataset.id));
+    g.classList.toggle('focus-dimmed', probeNodes.size === 0 && !!selected && !adjacent.has(g.dataset.id));
   }
   for (const g of currentLayer.querySelectorAll('.edge')) {
     g.classList.toggle('selected', state.selectedEdge != null && Number(g.dataset.index) === state.selectedEdge.index);
+    const e = currentLayout.edges.find((x) => x.index === Number(g.dataset.index));
+    const isProbeEdge = probeEdges.has(Number(g.dataset.index));
+    g.classList.toggle('probe-edge', isProbeEdge);
+    g.classList.toggle('probe-dimmed', probeNodes.size > 0 && !isProbeEdge);
+    g.classList.toggle('focus-dimmed', probeNodes.size === 0 && !!selected && e?.edge.from !== selected && e?.edge.to !== selected);
   }
   svg.classList.toggle('connecting', !!state.connectFrom);
+}
+
+export function setProbePath(path = null) {
+  state.probePath = path;
+  paintSelection();
+}
+
+export function paintScenario(nodeId = null) {
+  if (!currentLayer) return;
+  for (const g of currentLayer.querySelectorAll('.node')) {
+    g.classList.toggle('scenario-node', !!nodeId && g.dataset.id === nodeId);
+  }
 }
 
 export function dimExcept(nodeId) {
@@ -679,6 +881,7 @@ function wirePointer() {
 
   svg.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0) return;
+    stopPanMotion({ snap: true });
     // remember the real pressed element: with pointer capture active the
     // browser retargets pointerup/click to the <svg>, so hit-testing must
     // use this, never ev.target of the up event.
@@ -786,8 +989,7 @@ function wirePointer() {
         }
         setDropHighlight(nodeDrag.dropInto);
       } else {
-        camera = { ...camera, x: down.cam.x + dx, y: down.cam.y + dy };
-        applyCamera();
+        springPanTo({ ...camera, x: down.cam.x + dx, y: down.cam.y + dy });
       }
     }
   });
@@ -881,8 +1083,8 @@ function wirePointer() {
     if (ev.ctrlKey || ev.metaKey) {
       zoomBy(Math.exp(-ev.deltaY * 0.012), cx, cy);
     } else {
-      camera = { ...camera, x: camera.x - ev.deltaX, y: camera.y - ev.deltaY };
-      applyCamera();
+      const base = panTarget ?? camera;
+      springPanTo({ ...base, x: base.x - ev.deltaX, y: base.y - ev.deltaY });
     }
   }, { passive: false });
 }
@@ -928,8 +1130,7 @@ function wireMinimap() {
     const r = mmSvg.getBoundingClientRect();
     const wx = (ev.clientX - r.left - mmOff.x) / mmScale;
     const wy = (ev.clientY - r.top - mmOff.y) / mmScale;
-    camera = { ...camera, x: vw / 2 - wx * camera.k, y: vh / 2 - wy * camera.k };
-    applyCamera();
+    springPanTo({ ...camera, x: vw / 2 - wx * camera.k, y: vh / 2 - wy * camera.k });
   };
   mmSvg.addEventListener('pointerdown', (ev) => { dragging = true; mmSvg.setPointerCapture(ev.pointerId); moveTo(ev); });
   mmSvg.addEventListener('pointermove', (ev) => { if (dragging) moveTo(ev); });

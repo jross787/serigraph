@@ -1,4 +1,4 @@
-// Transcript → Opsmap YAML extraction pipeline.
+// Transcript → Serigraph YAML extraction pipeline.
 // callLLM is injected so tests run offline against fixtures; the server
 // injects the real provider chain from server/llm.js.
 import { parseMap } from '../shared/model.js';
@@ -10,7 +10,7 @@ export const MAX_TRANSCRIPT_CHARS = 120_000;
 // The extraction contract. Faithfulness rules are the point: emit only what
 // the transcript supports, and flag inferences as inline YAML comments that
 // survive the round-trip into the saved file.
-export const SYSTEM_PROMPT = `You are an expert business-process analyst. You turn a meeting or discovery-call transcript into an Opsmap process map: one YAML document describing how the business operates.
+export const SYSTEM_PROMPT = `You are an expert business-process analyst. You turn a meeting or discovery-call transcript into a Serigraph process map: one YAML document describing how the business operates.
 
 ## Output format (the complete contract)
 
@@ -60,7 +60,7 @@ If the input is not really a transcript, or no operating process can be derived 
 ERROR: <one short line saying why>`;
 
 export function buildPrompt(transcript) {
-  return `Derive the Opsmap YAML map from this transcript.\n\n<transcript>\n${transcript}\n</transcript>`;
+  return `Derive the Serigraph YAML map from this transcript.\n\n<transcript>\n${transcript}\n</transcript>`;
 }
 
 // strip markdown fences if the model added them despite instructions

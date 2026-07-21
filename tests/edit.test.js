@@ -68,12 +68,20 @@ test('updateNode edits fields and manages links', () => {
   edit.updateNode('parse', {
     label: 'Parse & extract',
     description: 'regex + LLM fallback',
+    owner: 'Automation team',
+    trigger: 'New email',
+    sla: '10 minutes',
+    automation: 'assisted',
+    systems: ['Outlook', 'Salesforce'],
     links: [{ label: 'Repo', url: 'https://github.com/acme/parse-agent' }],
   });
   const { model } = reserialize();
   const n = model.byId.get('parse');
   assert.equal(n.label, 'Parse & extract');
   assert.equal(n.links[0].url, 'https://github.com/acme/parse-agent');
+  assert.equal(n.owner, 'Automation team');
+  assert.equal(n.automation, 'assisted');
+  assert.deepEqual(n.systems, ['Outlook', 'Salesforce']);
 
   edit.updateNode('parse', { links: [] });
   const { model: m2 } = reserialize();
@@ -91,6 +99,45 @@ test('deleteNode removes node, its edges, and empty children container', () => {
   const { out: out2, model: m2 } = reserialize();
   assert.ok(!m2.byId.get('intake').children, 'empty children container cleaned up');
   assert.ok(!out2.includes('children:'), 'children key gone from file');
+});
+
+test('deleteNode removes cross-scope relations and dependencies to the deleted subtree', () => {
+  load(`
+name: Product deletion
+document: { kind: prd }
+nodes:
+  - id: group
+    type: process
+    label: Group
+    children:
+      nodes:
+        - id: target
+          type: artifact
+          label: Target
+          children:
+            - id: nested-target
+              type: artifact
+              label: Nested target
+  - id: keeper
+    type: process
+    label: Keeper
+    planning:
+      type: requirement
+      dependsOn: [target, nested-target]
+    relations:
+      - { to: target, type: supports }
+      - { to: nested-target, type: validated-by }
+edges: []
+`);
+  edit.deleteNode('group');
+  const { out, model } = reserialize();
+  assert.ok(!model.byId.has('group'));
+  assert.ok(!model.byId.has('target'));
+  assert.ok(!model.byId.has('nested-target'));
+  assert.deepEqual(model.byId.get('keeper').planning.dependsOn, []);
+  assert.deepEqual(model.byId.get('keeper').relations, []);
+  assert.ok(!out.includes('dependsOn:'), 'empty dependency list is removed');
+  assert.ok(!out.includes('relations:'), 'empty relation list is removed');
 });
 
 test('addEdge / updateEdge / deleteEdge', () => {
@@ -175,4 +222,186 @@ test('updateNode keeps key order: description/links before children (regression)
   for (let i = 1; i < order.length; i++) {
     assert.ok(order[i] > order[i - 1], `key #${i} in order (${order.join(',')})`);
   }
+});
+
+test('review notes persist, resolve, and stay in the predictable YAML order', () => {
+  const id = edit.addReviewComment('qualify', {
+    body: 'Confirm the decline path before implementation.',
+    author: 'Sam',
+    createdAt: '2026-07-18T10:00:00.000Z',
+  });
+  let { out, model } = reserialize();
+  assert.deepEqual(model.byId.get('qualify').review, [{
+    id,
+    body: 'Confirm the decline path before implementation.',
+    author: 'Sam',
+    createdAt: '2026-07-18T10:00:00.000Z',
+    resolved: false,
+  }]);
+  const block = out.slice(out.indexOf('- id: qualify'));
+  assert.ok(block.indexOf('review:') < block.indexOf('edges:'), 'review stays with the node');
+
+  state.model = model;
+  edit.setReviewResolved('qualify', id, true);
+  ({ model } = reserialize());
+  assert.equal(model.byId.get('qualify').review[0].resolved, true);
+});
+
+test('updateDocument creates, normalizes, and clears product-document metadata', () => {
+  edit.updateDocument({
+    kind: 'prd',
+    version: ' 1.2 ',
+    summary: ' A living release contract ',
+    owner: ' Product Ops ',
+    status: 'in-progress',
+    updated: '2026-07-18',
+    audience: [' Product ', '', 'Engineering'],
+    goals: ['One graph for product truth'],
+    nonGoals: [' Replace delivery tracking '],
+    successMetrics: ['Every requirement has proof'],
+  });
+  let { out, model } = reserialize();
+  assert.deepEqual(model.document, {
+    kind: 'prd',
+    version: '1.2',
+    summary: 'A living release contract',
+    owner: 'Product Ops',
+    status: 'in-progress',
+    updated: '2026-07-18',
+    audience: ['Product', 'Engineering'],
+    goals: ['One graph for product truth'],
+    nonGoals: ['Replace delivery tracking'],
+    successMetrics: ['Every requirement has proof'],
+  });
+  assert.match(out, /^document:/m, 'metadata is written as a top-level YAML field');
+
+  edit.updateDocument({
+    kind: '', version: '', summary: '', owner: '', status: '', updated: '',
+    audience: [], goals: [], nonGoals: [], successMetrics: [],
+  });
+  ({ out, model } = reserialize());
+  assert.equal(model.document.kind, 'process', 'removing kind returns to the legacy default');
+  assert.equal(model.document.summary, '');
+  assert.deepEqual(model.document.audience, []);
+  assert.match(out, /document:\s*\{\}/, 'an empty metadata map remains valid and explicit');
+});
+
+test('updateNode round-trips planning, dependencies, RICE, and typed relations', () => {
+  edit.updateNode('qualify', {
+    owner: 'Product',
+    planning: {
+      type: 'requirement',
+      status: 'planned',
+      priority: 'must',
+      phase: 'now',
+      target: 'v1.2',
+      acceptance: [' Approval is visible ', 'Decision is traceable'],
+      evidence: ['Design partner review'],
+      risks: ['Policy ambiguity'],
+      dependsOn: ['intake'],
+      rice: { reach: '100', impact: 3, confidence: 85, effort: 5 },
+    },
+    relations: [
+      { to: 'intake', type: 'supports' },
+      { to: '', type: 'measured-by' },
+    ],
+  });
+  let { out, model } = reserialize();
+  const node = model.byId.get('qualify');
+  assert.deepEqual(node.planning, {
+    type: 'requirement',
+    status: 'planned',
+    priority: 'must',
+    phase: 'now',
+    target: 'v1.2',
+    acceptance: ['Approval is visible', 'Decision is traceable'],
+    evidence: ['Design partner review'],
+    risks: ['Policy ambiguity'],
+    dependsOn: ['intake'],
+    rice: { reach: 100, impact: 3, confidence: 85, effort: 5 },
+  });
+  assert.deepEqual(node.relations, [{ to: 'intake', type: 'supports' }]);
+  const block = out.slice(out.indexOf('- id: qualify'), out.indexOf('\nedges:'));
+  const planningIndex = block.indexOf('planning:');
+  const relationsIndex = block.indexOf('relations:');
+  assert.ok(planningIndex > block.indexOf('owner:'));
+  assert.ok(relationsIndex > planningIndex);
+
+  edit.updateNode('qualify', { planning: null, relations: [] });
+  ({ out, model } = reserialize());
+  assert.equal(model.byId.get('qualify').planning, null);
+  assert.deepEqual(model.byId.get('qualify').relations, []);
+  assert.ok(!out.slice(out.indexOf('- id: qualify'), out.indexOf('\nedges:')).includes('planning:'));
+});
+
+test('updateNode rejects invalid RICE values before they can be serialized', () => {
+  assert.throws(() => edit.updateNode('qualify', {
+    planning: { type: 'requirement', rice: { reach: 10, impact: 2, confidence: 101, effort: 0 } },
+  }), /planning\.rice\.(confidence|effort) has an invalid value/);
+});
+
+test('insertTemplate preserves rich metadata and rewrites dependencies, relations, and edges after collisions', () => {
+  const template = parseMap(`
+name: Product slice
+nodes:
+  - id: intake
+    type: artifact
+    label: Template requirement
+    description: A reusable requirement slice.
+    owner: Product Design
+    trigger: Approved brief
+    sla: This quarter
+    automation: assisted
+    systems: [Linear, GitHub]
+    links:
+      - label: Source
+        url: https://example.com/source
+    planning:
+      type: requirement
+      status: planned
+      priority: must
+      phase: next
+      target: v2
+      acceptance: [The capability ships]
+      evidence: [Customer evidence]
+      risks: [Scope growth]
+      dependsOn: [parse]
+      rice: { reach: 80, impact: 3, confidence: 75, effort: 6 }
+    relations:
+      - to: parse
+        type: supports
+    review:
+      - id: product-review
+        body: Confirm the release boundary
+        author: PM
+  - id: parse
+    type: process
+    label: Template objective
+    planning:
+      type: objective
+      status: validated
+edges:
+  - from: parse
+    to: intake
+    label: enables
+`);
+  assert.deepEqual(template.errors, []);
+
+  const inserted = edit.insertTemplate(null, template.model);
+  const { model } = reserialize();
+  assert.deepEqual(inserted, ['intake-2', 'parse-2']);
+  const requirement = model.byId.get('intake-2');
+  assert.equal(requirement.description, 'A reusable requirement slice.');
+  assert.equal(requirement.owner, 'Product Design');
+  assert.equal(requirement.trigger, 'Approved brief');
+  assert.equal(requirement.sla, 'This quarter');
+  assert.equal(requirement.automation, 'assisted');
+  assert.deepEqual(requirement.systems, ['Linear', 'GitHub']);
+  assert.equal(requirement.links[0].url, 'https://example.com/source');
+  assert.equal(requirement.review[0].id, 'product-review');
+  assert.deepEqual(requirement.planning.dependsOn, ['parse-2']);
+  assert.deepEqual(requirement.planning.rice, { reach: 80, impact: 3, confidence: 75, effort: 6 });
+  assert.deepEqual(requirement.relations, [{ to: 'parse-2', type: 'supports' }]);
+  assert.ok(model.byId.get('parse-2'));
+  assert.ok(model.root.edges.some((edge) => edge.from === 'parse-2' && edge.to === 'intake-2' && edge.label === 'enables'));
 });

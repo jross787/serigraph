@@ -86,6 +86,9 @@ function go(i) {
 
 export function enterPresent() {
   if (!state.model) return;
+  // The workbench is purposefully a construction surface; a presentation is a
+  // clean reading surface. Clear any transient probe before taking the stage.
+  canvas.setProbePath(null);
   steps = stepOrder();
   if (!steps.length) { bus.emit('toast', 'Nothing to present in this level'); return; }
   state.presenting = true;
