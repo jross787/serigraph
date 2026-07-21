@@ -1,8 +1,14 @@
-// Parse + validate Opsmap YAML into a normalized model.
+// Parse + validate Serigraph YAML into a normalized model.
 // Runs in the browser, in Node, and inside standalone HTML exports.
 import * as YAML from '../vendor/yaml.js';
 
 export const NODE_TYPES = ['process', 'decision', 'system', 'role', 'artifact'];
+export const AUTOMATION_STATES = ['manual', 'assisted', 'automated', 'at-risk'];
+export const DOCUMENT_KINDS = ['process', 'prd', 'roadmap'];
+export const PLANNING_TYPES = ['objective', 'problem', 'requirement', 'milestone', 'metric', 'risk', 'decision', 'research', 'release'];
+export const PLAN_STATUSES = ['draft', 'discovery', 'planned', 'in-progress', 'blocked', 'validated', 'shipped', 'archived'];
+export const PLAN_PRIORITIES = ['must', 'should', 'could', 'wont'];
+export const RELATION_TYPES = ['informed-by', 'supports', 'satisfies', 'depends-on', 'validated-by', 'measured-by', 'mitigates', 'blocks', 'delivers'];
 
 const TYPE_HINTS = {
   step: 'process', stage: 'process', task: 'process', activity: 'process',
@@ -52,6 +58,42 @@ export function parseMap(source) {
 
   const byId = new Map();
   const seenIds = new Map(); // id -> first path (for duplicate messages)
+  const nodePaths = new Map();
+
+  const stringList = (raw, path, label) => {
+    if (raw == null) return [];
+    if (!Array.isArray(raw) || raw.some((item) => typeof item !== 'string')) {
+      err(path, `${label} must be a list of text values.`);
+      return [];
+    }
+    return raw.map((item) => item.trim()).filter(Boolean);
+  };
+
+  const documentRaw = data.document == null ? {} : data.document;
+  if (documentRaw == null || typeof documentRaw !== 'object' || Array.isArray(documentRaw)) {
+    err(['document'], '"document:" must be a map of product-document metadata.');
+  }
+  const documentData = documentRaw && typeof documentRaw === 'object' && !Array.isArray(documentRaw) ? documentRaw : {};
+  const documentKind = typeof documentData.kind === 'string' ? documentData.kind : 'process';
+  if (!DOCUMENT_KINDS.includes(documentKind)) {
+    err(['document', 'kind'], `"document.kind:" must be one of: ${DOCUMENT_KINDS.join(', ')}.`);
+  }
+  const documentStatus = typeof documentData.status === 'string' ? documentData.status : '';
+  if (documentStatus && !PLAN_STATUSES.includes(documentStatus)) {
+    err(['document', 'status'], `"document.status:" must be one of: ${PLAN_STATUSES.join(', ')}.`);
+  }
+  const document = {
+    kind: DOCUMENT_KINDS.includes(documentKind) ? documentKind : 'process',
+    version: documentData.version == null ? '' : String(documentData.version),
+    summary: typeof documentData.summary === 'string' ? documentData.summary.trim() : '',
+    owner: typeof documentData.owner === 'string' ? documentData.owner.trim() : '',
+    status: PLAN_STATUSES.includes(documentStatus) ? documentStatus : '',
+    updated: typeof documentData.updated === 'string' ? documentData.updated.trim() : '',
+    audience: stringList(documentData.audience, ['document', 'audience'], '"document.audience:"'),
+    goals: stringList(documentData.goals, ['document', 'goals'], '"document.goals:"'),
+    nonGoals: stringList(documentData.nonGoals, ['document', 'nonGoals'], '"document.nonGoals:"'),
+    successMetrics: stringList(documentData.successMetrics, ['document', 'successMetrics'], '"document.successMetrics:"'),
+  };
 
   function normalizeScope(rawNodes, rawEdges, ownerId, path, depth) {
     const nodes = [];
@@ -75,6 +117,7 @@ export function parseMap(source) {
         return;
       }
       seenIds.set(id, npath.join('.') || '(top)');
+      nodePaths.set(id, npath);
 
       let type = raw.type;
       if (type == null) {
@@ -87,6 +130,20 @@ export function parseMap(source) {
       }
       const label = typeof raw.label === 'string' && raw.label.trim() ? raw.label : null;
       if (!label) err([...npath, 'label'], `Node "${id}" is missing its "label:".`);
+
+      let automation = typeof raw.automation === 'string' ? raw.automation : '';
+      if (automation && !AUTOMATION_STATES.includes(automation)) {
+        err([...npath, 'automation'], `Node "${id}": "automation:" must be one of: ${AUTOMATION_STATES.join(', ')}.`);
+        automation = '';
+      }
+      let systems = [];
+      if (raw.systems != null) {
+        if (!Array.isArray(raw.systems) || raw.systems.some((s) => typeof s !== 'string')) {
+          err([...npath, 'systems'], `Node "${id}": "systems:" must be a list of names.`);
+        } else {
+          systems = raw.systems.map((s) => s.trim()).filter(Boolean);
+        }
+      }
 
       const links = [];
       if (raw.links != null) {
@@ -145,13 +202,127 @@ export function parseMap(source) {
         }
       }
 
+      const relations = [];
+      if (raw.relations != null) {
+        const relationPath = [...npath, 'relations'];
+        if (!Array.isArray(raw.relations)) {
+          err(relationPath, `Node "${id}": "relations:" must be a list of { to, type } references.`);
+        } else {
+          raw.relations.forEach((relation, j) => {
+            const rpath = [...relationPath, j];
+            if (!relation || typeof relation !== 'object' || Array.isArray(relation)) {
+              err(rpath, `Node "${id}": relation #${j + 1} must be a map.`);
+              return;
+            }
+            const to = typeof relation.to === 'string' ? relation.to.trim() : '';
+            const type = typeof relation.type === 'string' ? relation.type.trim() : '';
+            if (!to) err([...rpath, 'to'], `Node "${id}": relation #${j + 1} needs a "to:" node id.`);
+            if (!RELATION_TYPES.includes(type)) {
+              err([...rpath, 'type'], `Node "${id}": relation #${j + 1} "type:" must be one of: ${RELATION_TYPES.join(', ')}.`);
+            }
+            if (to && RELATION_TYPES.includes(type)) relations.push({ to, type });
+          });
+        }
+      }
+
+      const review = [];
+      if (raw.review != null) {
+        if (!Array.isArray(raw.review)) {
+          err([...npath, 'review'], `Node "${id}": "review:" must be a list of notes.`);
+        } else {
+          raw.review.forEach((item, j) => {
+            const rpath = [...npath, 'review', j];
+            if (!item || typeof item !== 'object' || Array.isArray(item)) {
+              err(rpath, `Node "${id}": review note #${j + 1} must be a map.`);
+              return;
+            }
+            const body = typeof item.body === 'string' ? item.body.trim() : '';
+            if (!body) {
+              err([...rpath, 'body'], `Node "${id}": review note #${j + 1} needs a "body:".`);
+              return;
+            }
+            review.push({
+              id: typeof item.id === 'string' && item.id.trim() ? item.id.trim() : `note-${j + 1}`,
+              body,
+              author: typeof item.author === 'string' && item.author.trim() ? item.author.trim() : 'Reviewer',
+              createdAt: typeof item.createdAt === 'string' ? item.createdAt : '',
+              resolved: item.resolved === true,
+            });
+          });
+        }
+      }
+
+      let planning = null;
+      if (raw.planning != null) {
+        const ppath = [...npath, 'planning'];
+        if (typeof raw.planning !== 'object' || Array.isArray(raw.planning)) {
+          err(ppath, `Node "${id}": "planning:" must be a map.`);
+        } else {
+          const p = raw.planning;
+          const planningType = typeof p.type === 'string' ? p.type : '';
+          const status = typeof p.status === 'string' ? p.status : '';
+          const priority = typeof p.priority === 'string' ? p.priority : '';
+          if (planningType && !PLANNING_TYPES.includes(planningType)) {
+            err([...ppath, 'type'], `Node "${id}": "planning.type:" must be one of: ${PLANNING_TYPES.join(', ')}.`);
+          }
+          if (status && !PLAN_STATUSES.includes(status)) {
+            err([...ppath, 'status'], `Node "${id}": "planning.status:" must be one of: ${PLAN_STATUSES.join(', ')}.`);
+          }
+          if (priority && !PLAN_PRIORITIES.includes(priority)) {
+            err([...ppath, 'priority'], `Node "${id}": "planning.priority:" must be one of: ${PLAN_PRIORITIES.join(', ')}.`);
+          }
+          const riceRaw = p.rice == null ? {} : p.rice;
+          if (riceRaw == null || typeof riceRaw !== 'object' || Array.isArray(riceRaw)) {
+            err([...ppath, 'rice'], `Node "${id}": "planning.rice:" must be a map.`);
+          }
+          const rice = {};
+          const riceData = riceRaw && typeof riceRaw === 'object' && !Array.isArray(riceRaw) ? riceRaw : {};
+          for (const key of ['reach', 'impact', 'confidence', 'effort']) {
+            if (riceData[key] == null || riceData[key] === '') continue;
+            const invalid = typeof riceData[key] !== 'number'
+              || !Number.isFinite(riceData[key])
+              || riceData[key] < 0
+              || (key === 'effort' && riceData[key] <= 0)
+              || (key === 'confidence' && riceData[key] > 100);
+            if (invalid) {
+              const rule = key === 'effort' ? 'a number greater than zero'
+                : key === 'confidence' ? 'a number from 0 to 100'
+                  : 'a non-negative number';
+              err([...ppath, 'rice', key], `Node "${id}": "planning.rice.${key}:" must be ${rule}.`);
+            } else {
+              rice[key] = riceData[key];
+            }
+          }
+          planning = {
+            type: PLANNING_TYPES.includes(planningType) ? planningType : '',
+            status: PLAN_STATUSES.includes(status) ? status : '',
+            priority: PLAN_PRIORITIES.includes(priority) ? priority : '',
+            phase: typeof p.phase === 'string' ? p.phase.trim() : '',
+            target: typeof p.target === 'string' ? p.target.trim() : '',
+            acceptance: stringList(p.acceptance, [...ppath, 'acceptance'], `Node "${id}": "planning.acceptance:"`),
+            evidence: stringList(p.evidence, [...ppath, 'evidence'], `Node "${id}": "planning.evidence:"`),
+            risks: stringList(p.risks, [...ppath, 'risks'], `Node "${id}": "planning.risks:"`),
+            dependsOn: stringList(p.dependsOn, [...ppath, 'dependsOn'], `Node "${id}": "planning.dependsOn:"`),
+            rice,
+          };
+        }
+      }
+
       const node = {
         id, type,
         label: label ?? id,
         description: typeof raw.description === 'string' ? raw.description : '',
+        owner: typeof raw.owner === 'string' ? raw.owner.trim() : '',
+        trigger: typeof raw.trigger === 'string' ? raw.trigger.trim() : '',
+        sla: typeof raw.sla === 'string' ? raw.sla.trim() : '',
+        automation,
+        systems,
         links,
         position,
         cost,
+        relations,
+        review,
+        planning,
         children: null,
         ownerId,
         depth,
@@ -225,6 +396,21 @@ export function parseMap(source) {
 
   const root = normalizeScope(data.nodes, data.edges, null, [], 0);
 
+  for (const node of byId.values()) {
+    for (const relation of node.relations) {
+      if (!byId.has(relation.to)) {
+        const path = nodePaths.get(node.id) ?? [];
+        err([...path, 'relations'], `Node "${node.id}": relation target "${relation.to}" does not exist in this document.`);
+      }
+    }
+    for (const dependencyId of node.planning?.dependsOn ?? []) {
+      if (!byId.has(dependencyId)) {
+        const path = nodePaths.get(node.id) ?? [];
+        err([...path, 'planning', 'dependsOn'], `Node "${node.id}": dependency "${dependencyId}" does not exist in this document.`);
+      }
+    }
+  }
+
   // Edges referencing nodes defined later in the file: normalizeScope checks
   // siblingIds after all siblings parse, so ordering is already handled.
 
@@ -260,6 +446,7 @@ export function parseMap(source) {
     name: data.name,
     description: typeof data.description === 'string' ? data.description : '',
     costModel,
+    document,
     root,
     byId,
     nodeCount: byId.size,

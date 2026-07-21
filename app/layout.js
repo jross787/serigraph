@@ -43,7 +43,7 @@ function sizeNode(node, model) {
   if (isContainer) {
     const lines = wrapText(node.label, 168, HEADER_FONT, 2);
     const lw = Math.max(...lines.map((l) => measure(l, HEADER_FONT)), 60);
-    const w = Math.min(288, Math.max(196, lw + 96));
+    const w = Math.min(236, Math.max(184, lw + 82));
     // height finished in layoutScope once the child layout (aspect) is known
     return { w, h: 0, lines };
   }
@@ -83,7 +83,7 @@ function components(nodes, edges) {
 
 function layoutComponent(comp, sized) {
   const g = new dagre.graphlib.Graph({ multigraph: true });
-  g.setGraph({ rankdir: 'LR', nodesep: 32, ranksep: 70, edgesep: 18, marginx: 4, marginy: 4 });
+  g.setGraph({ rankdir: 'LR', nodesep: 28, ranksep: 48, edgesep: 16, marginx: 4, marginy: 4 });
   g.setDefaultEdgeLabel(() => ({}));
   for (const n of comp.nodes) {
     const s = sized.get(n.id);
@@ -230,9 +230,9 @@ export function layoutScope(model, ownerId) {
       const child = layoutScope(model, n.id); // recursive; cached
       const frameW = s.w - 26;
       const aspect = child.w > 0 ? child.h / child.w : 0.55;
-      const frameH = Math.max(56, Math.min(118, frameW * aspect));
+      const frameH = Math.max(42, Math.min(64, frameW * aspect));
       const headerH = 12 + (s.lines?.length ?? 1) * 19 + 8;
-      s.h = headerH + frameH + 16;
+      s.h = Math.max(116, headerH + frameH + 12);
       const scale = child.w > 0
         ? Math.min(frameW / child.w, frameH / child.h, 0.24)
         : 0.1;

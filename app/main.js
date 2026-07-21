@@ -5,12 +5,14 @@ import * as ctrl from './controller.js';
 import * as canvas from './canvas.js';
 import * as ui from './ui.js';
 import * as edit from './edit.js';
+import * as workbench from './workbench.js';
+import * as productWorkspace from './product-workspace.js';
 import { togglePresent, exitPresent } from './present.js';
 
 // ── theme ────────────────────────────────────────────────────────────
 function initTheme() {
   const saved = localStorage.getItem('opsmap-theme');
-  const dark = saved ? saved === 'dark' : window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+  const dark = saved ? saved === 'dark' : false;
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
 }
 function toggleTheme() {
@@ -23,6 +25,7 @@ function toggleTheme() {
 function wireCanvasEvents() {
   bus.on('node-click', (id) => {
     if (state.presenting) return;
+    if (workbench.handleNodeClick(id)) return;
     if (state.connectFrom) {
       const from = state.connectFrom;
       state.connectFrom = null;
@@ -33,10 +36,12 @@ function wireCanvasEvents() {
           if (!ok) return;
           const scope = state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children;
           ctrl.selectEdge(scope.edges.length - 1);
+          workbench.completeConnect();
           ui.toast('Edge added — set its label in the panel');
         });
       return;
     }
+    ui.armContextActions(id);
     ctrl.selectNode(id);
   });
 
@@ -139,7 +144,7 @@ function wireCanvasEvents() {
 // ── keyboard ─────────────────────────────────────────────────────────
 function isTyping() {
   const el = document.activeElement;
-  return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+  return el && (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes(el.tagName) || el.isContentEditable);
 }
 function dialogOpen() {
   return !!document.querySelector('.dialog-backdrop') || !document.getElementById('search-overlay').hidden;
@@ -189,9 +194,14 @@ function wireKeyboard() {
     if (meta && ev.shiftKey && ev.key.toLowerCase() === 'z') { ev.preventDefault(); ctrl.redo(); return; }
     if (meta) return;
 
+    if (ev.shiftKey && ev.key.toLowerCase() === 'p') { productWorkspace.setWorkspaceView('map'); togglePresent(); return; }
+    if (state.workspaceView !== 'map') return;
+    if (workbench.shortcutTool(ev.key)) { ev.preventDefault(); return; }
+
     switch (ev.key) {
       case 'Escape':
         if (state.connectFrom) { state.connectFrom = null; canvas.paintSelection(); ui.toast('Connect cancelled'); }
+        else if (state.activeTool !== 'select') workbench.cancelTool();
         else if (!document.getElementById('templates-panel').hidden) ui.toggleTemplates(false);
         else if (state.scopeId != null) ctrl.riseUp(); // one level per press, always
         else if (state.selectedId || state.selectedEdge != null) { ctrl.clearSelection(); ui.hideDetail(); }
@@ -205,15 +215,6 @@ function wireKeyboard() {
       case 'ArrowRight': case 'ArrowLeft': case 'ArrowUp': case 'ArrowDown':
         ev.preventDefault();
         spatialMove(ev.key);
-        break;
-      case 'n': case 'N':
-        if (!state.standalone && state.model) ui.addNodeDialog(state.scopeId);
-        break;
-      case 'p': case 'P':
-        togglePresent();
-        break;
-      case 't': case 'T':
-        if (!state.standalone) ui.toggleTemplates();
         break;
       case '+': case '=':
         canvas.zoomBy(1.25);
@@ -237,22 +238,28 @@ function wireKeyboard() {
 function wireToolbar() {
   const on = (id, fn) => document.getElementById(id)?.addEventListener('click', fn);
   on('btn-search', ui.openSearch);
-  on('btn-templates', () => ui.toggleTemplates());
-  on('btn-add-node', () => ui.addNodeDialog(state.scopeId));
-  on('btn-economics', () => ui.toggleEconomics());
-  on('btn-import', () => ui.importDialog());
-  on('btn-present', togglePresent);
+  on('btn-templates', () => { productWorkspace.setWorkspaceView('map'); ui.toggleTemplates(); });
+  on('btn-add-node', () => { productWorkspace.setWorkspaceView('map'); ui.addNodeDialog(state.scopeId); });
+  on('btn-economics', () => { productWorkspace.setWorkspaceView('map'); ui.toggleEconomics(); });
+  on('btn-import', () => { productWorkspace.setWorkspaceView('map'); ui.importDialog(); });
+  on('btn-present', () => { productWorkspace.setWorkspaceView('map'); togglePresent(); });
   on('btn-theme', toggleTheme);
   on('btn-help', ui.helpDialog);
   on('btn-export', () => {
     if (state.mapId) window.location.href = `/export/${encodeURIComponent(state.mapId)}.html`;
   });
+  on('btn-share', workbench.openShareDialog);
+  on('btn-history', workbench.openHistory);
   on('zoom-in', () => canvas.zoomBy(1.3));
   on('zoom-out', () => canvas.zoomBy(0.77));
   on('zoom-fit', () => canvas.fit());
+  for (const button of document.querySelectorAll('.utility-popover button')) {
+    button.addEventListener('click', () => { const menu = button.closest('details'); if (menu) menu.open = false; });
+  }
   document.querySelector('.logo')?.addEventListener('click', (ev) => {
     ev.preventDefault();
     if (state.presenting) exitPresent();
+    productWorkspace.setWorkspaceView('map');
     if (state.model) ctrl.gotoScope(null);
   });
 }
@@ -262,6 +269,8 @@ async function boot() {
   initTheme();
   canvas.initCanvas(document.getElementById('canvas'), document.querySelector('#minimap svg'));
   ui.initUI();
+  workbench.initWorkbench();
+  productWorkspace.initProductWorkspace();
   wireCanvasEvents();
   wireKeyboard();
   wireToolbar();
@@ -270,7 +279,7 @@ async function boot() {
   try {
     await ctrl.loadMapList();
   } catch (e) {
-    ui.toast('Could not reach the Opsmap server: ' + e.message, true);
+    ui.toast('Could not reach the Serigraph server: ' + e.message, true);
     return;
   }
 

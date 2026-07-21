@@ -1,0 +1,675 @@
+# Serigraph dogfoods its own product-document format. This chart is the PRD.
+name: Serigraph — Product Documents
+description: A graph-backed product operating system for requirements, roadmaps,
+  traceability, prioritization, and release confidence.
+
+document:
+  kind: prd
+  version: "1.1"
+  status: validated
+  owner: Product & Engineering
+  updated: "2026-07-18"
+  summary: Serigraph turns the product plan itself into a living, navigable graph.
+    Strategy, requirements, proof, delivery, and future bets share one source of
+    truth instead of drifting across diagrams, documents, and spreadsheets.
+  audience:
+    - Product managers shaping a release
+    - Operators designing automation programs
+    - Engineers validating scope and acceptance
+    - Executives reviewing sequence, risk, and outcomes
+  goals:
+    - Make a professional PRD readable, testable, and presentable from one graph.
+    - Let a reviewer trace why a requirement exists and how completion will be
+      proved.
+    - Turn the same source into a prioritized roadmap and durable product
+      documentation.
+    - Preserve Serigraph's local-first, plain-YAML, zero-build operating model.
+  nonGoals:
+    - Recreate a full rich-text editor such as Notion.
+    - Replace Jira, Linear, or GitHub as an execution tracker in this release.
+    - Add real-time multiplayer or cloud identity in this release.
+    - Use AI to fabricate customer evidence or product certainty.
+  successMetrics:
+    - A first-time PM can understand the release contract in under five minutes.
+    - Every shipped requirement has an owner, priority, acceptance criteria, and
+      objective relation.
+    - The same YAML produces a map, readable PRD, roadmap, readiness audit, and
+      Markdown export.
+    - Existing operations maps and all legacy tests remain compatible.
+
+nodes:
+  - id: prd-problem
+    type: artifact
+    label: Fragmented product truth
+    description: Product intent usually fractures across prose, diagrams,
+      spreadsheets, tickets, and status decks. The links decay, decisions become
+      folklore, and reviewers cannot quickly answer why a feature exists or what
+      proves it is done.
+    owner: Product
+    planning:
+      type: problem
+      status: validated
+      priority: must
+      phase: now
+      evidence:
+        - Lucidchart gap audit showed collaboration and documentation breadth,
+          but no automation-native product operating model.
+        - The current repository already has stable graph IDs, YAML persistence,
+          review notes, templates, deep links, and deterministic analysis.
+      rice:
+        reach: 100
+        impact: 3
+        confidence: 95
+        effort: 1
+  - id: prd-objective
+    type: process
+    label: One graph runs the product story
+    description: A reviewer can move from problem to objective to requirement to
+      proof to release without changing tools or reconciling duplicate sources.
+    owner: Product
+    planning:
+      type: objective
+      status: validated
+      priority: must
+      phase: now
+      evidence:
+        - Serigraph already renders nested, typed, deep-linkable graphs from
+          plain YAML.
+      rice:
+        reach: 100
+        impact: 3
+        confidence: 95
+        effort: 2
+    relations:
+      - to: prd-adoption-metric
+        type: measured-by
+      - to: prd-problem
+        type: informed-by
+
+  - id: prd-solution
+    type: process
+    label: Product-document release
+    description: Seven integrated capabilities make the chart useful as a
+      professional product artifact while preserving the underlying process
+      editor.
+    owner: Product & Engineering
+    planning:
+      type: release
+      status: shipped
+      priority: must
+      phase: now
+      target: v1.1
+      acceptance:
+        - All release requirements render from the same YAML graph.
+        - Product views are usable in the local app and standalone export.
+      evidence:
+        - Automated schema, editing, analytics, artifact, and export tests pass.
+      rice:
+        reach: 100
+        impact: 3
+        confidence: 90
+        effort: 8
+    relations:
+      - to: prd-objective
+        type: supports
+    children:
+      nodes:
+        - id: req-document-model
+          type: artifact
+          label: Structured product-document model
+          description: Optional document metadata, planning semantics, RICE inputs,
+            acceptance criteria, evidence, dependencies, and cross-scope
+            relations extend the YAML contract without breaking process maps.
+          owner: Platform
+          planning:
+            type: requirement
+            status: shipped
+            priority: must
+            phase: now
+            target: v1.1
+            acceptance:
+              - Legacy process maps parse and render without adding product
+                metadata.
+              - Invalid enums, RICE values, dependencies, and relation targets
+                return line-numbered errors.
+              - Planning metadata survives edit, undo, template insertion, and
+                export round trips.
+            evidence:
+              - Parser and editor unit tests exercise valid, invalid, nested,
+                and legacy documents.
+            risks:
+              - Schema growth could make hand-authored YAML noisy without
+                careful defaults.
+            rice:
+              reach: 100
+              impact: 3
+              confidence: 95
+              effort: 3
+          relations:
+            - to: prd-objective
+              type: supports
+            - to: qa-schema
+              type: validated-by
+
+        - id: req-brief-view
+          type: artifact
+          label: Graph-backed PRD view
+          description: Serigraph generates an editorially calm, readable product brief from
+            document metadata and planning nodes while retaining stable links
+            back to the map.
+          owner: Product Design
+          planning:
+            type: requirement
+            status: shipped
+            priority: must
+            phase: now
+            target: v1.1
+            acceptance:
+              - Brief view presents context, outcomes, requirements, decisions,
+                risks, audience, and non-goals.
+              - Every related item and requirement can locate its source node on
+                the map.
+              - Missing content is explicit and never fabricated.
+            evidence:
+              - The Serigraph PRD renders itself in Brief view on desktop and
+                mobile.
+            risks:
+              - Large documents require restrained hierarchy and readable
+                density.
+            rice:
+              reach: 95
+              impact: 3
+              confidence: 92
+              effort: 4
+          relations:
+            - to: prd-objective
+              type: supports
+            - to: qa-brief
+              type: validated-by
+
+        - id: req-roadmap-view
+          type: process
+          label: Outcome-led roadmap lanes
+          description: A filterable Now, Next, Later portfolio view groups planned work
+            without duplicating or rewriting the source graph.
+          owner: Product
+          planning:
+            type: requirement
+            status: shipped
+            priority: must
+            phase: now
+            target: v1.1
+            acceptance:
+              - Roadmap cards group by phase and retain status, priority, owner,
+                target, and score.
+              - Status, priority, owner, and text filters combine predictably
+                and can be reset.
+              - Empty lanes, blocked items, and unscheduled work are clearly
+                legible.
+            evidence:
+              - The Serigraph roadmap contains shipped, planned, blocked, and
+                later work across all horizons.
+            risks:
+              - Roadmap phases can imply certainty unless evidence and
+                confidence remain visible.
+            rice:
+              reach: 90
+              impact: 3
+              confidence: 90
+              effort: 4
+          relations:
+            - to: prd-objective
+              type: supports
+            - to: qa-roadmap
+              type: validated-by
+
+        - id: req-traceability
+          type: system
+          label: Cross-scope traceability
+          description: Typed relations connect any two stable nodes across nesting levels,
+            making evidence, objectives, requirements, tests, metrics, risks,
+            and dependencies navigable.
+          owner: Platform
+          planning:
+            type: requirement
+            status: shipped
+            priority: must
+            phase: now
+            target: v1.1
+            acceptance:
+              - A relation can reference any node in the document regardless of
+                nesting.
+              - Clicking a relation chip lands on the exact related node.
+              - Missing targets fail validation and dependency cycles appear in
+                the audit.
+            evidence:
+              - This PRD links root objectives to nested requirements and nested
+                quality gates.
+            risks:
+              - Dense relationship sets need progressive disclosure instead of
+                extra canvas lines.
+            rice:
+              reach: 88
+              impact: 3
+              confidence: 88
+              effort: 5
+          relations:
+            - to: prd-objective
+              type: supports
+            - to: qa-traceability
+              type: validated-by
+
+        - id: req-readiness
+          type: decision
+          label: Deterministic readiness audit
+          description: Serigraph exposes structural gaps in product documents—ownership,
+            proof, traceability, metrics, priority, targets, blockers, cycles,
+            and mitigations—without claiming factual completeness.
+          owner: Product Operations
+          planning:
+            type: requirement
+            status: shipped
+            priority: must
+            phase: now
+            target: v1.1
+            acceptance:
+              - Readiness returns Draft, Reviewable, or Ready with an
+                inspectable score.
+              - Every issue has a stable code, severity, explanation, and source
+                node when applicable.
+              - Fixing a gap updates the audit from the same graph source.
+            evidence:
+              - Pure audit tests cover complete, incomplete, cyclic, nested, and
+                process-only documents.
+            risks:
+              - A structural score must not be mistaken for product truth or
+                customer validation.
+            rice:
+              reach: 85
+              impact: 3
+              confidence: 90
+              effort: 4
+          relations:
+            - to: prd-objective
+              type: supports
+            - to: qa-audit
+              type: validated-by
+            - to: prd-risk
+              type: mitigates
+
+        - id: req-rice
+          type: process
+          label: Transparent RICE prioritization
+          description: Reach, impact, confidence, and effort produce an explainable score
+            that orders roadmap items by full precision while keeping every
+            input editable in YAML and UI.
+          owner: Product
+          planning:
+            type: requirement
+            status: shipped
+            priority: should
+            phase: now
+            target: v1.1
+            acceptance:
+              - Incomplete or invalid values never produce NaN or Infinity.
+              - The score editor previews the formula and persists all four
+                inputs.
+              - Roadmap ordering uses full precision with deterministic
+                tie-breaking.
+            evidence:
+              - Unit tests freeze the formula and cover missing, invalid,
+                decimal, zero, and large inputs.
+            risks:
+              - Scores are decision support, not an automatic substitute for
+                product judgment.
+            rice:
+              reach: 80
+              impact: 2
+              confidence: 92
+              effort: 3
+          relations:
+            - to: prd-objective
+              type: supports
+            - to: qa-rice
+              type: validated-by
+
+        - id: req-publishing
+          type: artifact
+          label: Publishable product documentation
+          description: Any PRD or roadmap downloads as clean Markdown, while the
+            standalone HTML export retains Brief, Roadmap, Audit, relations, and
+            read-only navigation.
+          owner: Platform
+          planning:
+            type: requirement
+            status: shipped
+            priority: should
+            phase: now
+            target: v1.1
+            acceptance:
+              - Markdown contains document metadata, goals, metrics,
+                requirements, proof, risks, and readiness.
+              - Standalone HTML includes every product workspace module with no
+                unresolved import.
+              - User-authored content remains text-safe in generated views.
+            evidence:
+              - Export tests verify embedded source, module completeness, and
+                dangerous replacement patterns.
+            risks:
+              - Markdown intentionally favors portability over pixel-perfect
+                parity with the application.
+            rice:
+              reach: 72
+              impact: 2
+              confidence: 94
+              effort: 2
+          relations:
+            - to: prd-objective
+              type: supports
+            - to: qa-publishing
+              type: validated-by
+
+        - id: req-blueprints
+          type: artifact
+          label: Serigraph-native PRD and roadmap blueprints
+          description: The product ships with fully populated PRD and roadmap graphs that
+            explain the product direction and demonstrate the complete planning
+            workflow immediately.
+          owner: Product
+          planning:
+            type: requirement
+            status: shipped
+            priority: should
+            phase: now
+            target: v1.1
+            acceptance:
+              - The map switcher includes a Serigraph PRD and a Serigraph
+                roadmap.
+              - The roadmap contains at least ten concrete future capabilities
+                across Now, Next, and Later.
+              - Both artifacts validate with the same public format contract as
+                customer maps.
+            evidence:
+              - Artifact tests parse, audit, count, and cross-check the
+                checked-in YAML files.
+            risks:
+              - Dogfood documents must stay current as the product evolves.
+            rice:
+              reach: 70
+              impact: 2
+              confidence: 95
+              effort: 2
+          relations:
+            - to: prd-objective
+              type: supports
+            - to: qa-artifacts
+              type: validated-by
+      edges:
+        - from: req-document-model
+          to: req-brief-view
+          label: enables
+        - from: req-document-model
+          to: req-traceability
+          label: enables
+        - from: req-traceability
+          to: req-readiness
+          label: powers
+        - from: req-brief-view
+          to: req-roadmap-view
+          label: same source
+        - from: req-rice
+          to: req-roadmap-view
+          label: prioritizes
+        - from: req-readiness
+          to: req-publishing
+          label: publishes confidence
+        - from: req-publishing
+          to: req-blueprints
+          label: dogfoods
+
+  - id: prd-proof
+    type: artifact
+    label: Release proof
+    description: The release is accepted through deterministic domain tests, real
+      artifact validation, standalone export checks, and browser verification
+      across the primary workflows.
+    owner: Quality
+    planning:
+      type: milestone
+      status: validated
+      priority: must
+      phase: now
+      target: Release gate
+      acceptance:
+        - Every shipped requirement has automated domain coverage.
+        - Desktop and mobile product-document workflows pass visual and
+          interaction review.
+      evidence:
+        - npm test and npm run validate complete without failures.
+      rice:
+        reach: 100
+        impact: 3
+        confidence: 95
+        effort: 4
+    relations:
+      - to: prd-objective
+        type: supports
+    children:
+      nodes:
+        - id: qa-schema
+          type: artifact
+          label: Schema and editing tests
+          owner: Engineering
+          planning:
+            type: decision
+            status: validated
+            priority: must
+            phase: now
+            acceptance:
+              - Valid, invalid, nested, legacy, and round-trip cases pass.
+            evidence:
+              - Automated unit suite.
+            rice: { reach: 100, impact: 3, confidence: 100, effort: 1 }
+        - id: qa-brief
+          type: artifact
+          label: Brief workflow verified
+          owner: Product Design
+          planning:
+            type: decision
+            status: validated
+            priority: must
+            phase: now
+            acceptance:
+              - Content hierarchy, node location, document editing, and Markdown
+                work.
+            evidence:
+              - Browser verification record.
+            rice: { reach: 90, impact: 2, confidence: 95, effort: 1 }
+        - id: qa-roadmap
+          type: artifact
+          label: Roadmap workflow verified
+          owner: Product
+          planning:
+            type: decision
+            status: validated
+            priority: must
+            phase: now
+            acceptance:
+              - Lanes, combined filters, card navigation, and empty states work.
+            evidence:
+              - Browser verification record.
+            rice: { reach: 90, impact: 2, confidence: 95, effort: 1 }
+        - id: qa-traceability
+          type: artifact
+          label: Relation navigation verified
+          owner: Quality
+          planning:
+            type: decision
+            status: validated
+            priority: must
+            phase: now
+            acceptance:
+              - Cross-scope targets validate and navigate exactly.
+            evidence:
+              - Parser and browser tests.
+            rice: { reach: 85, impact: 3, confidence: 95, effort: 1 }
+        - id: qa-audit
+          type: artifact
+          label: Readiness rules verified
+          owner: Product Operations
+          planning:
+            type: decision
+            status: validated
+            priority: must
+            phase: now
+            acceptance:
+              - Stable issue codes and scores match complete and incomplete
+                fixtures.
+            evidence:
+              - Pure audit tests.
+            rice: { reach: 85, impact: 2, confidence: 95, effort: 1 }
+        - id: qa-rice
+          type: artifact
+          label: RICE formula verified
+          owner: Product
+          planning:
+            type: decision
+            status: validated
+            priority: should
+            phase: now
+            acceptance:
+              - Formula, validation, display, and ordering are deterministic.
+            evidence:
+              - Pure prioritization tests.
+            rice: { reach: 80, impact: 2, confidence: 98, effort: 1 }
+        - id: qa-publishing
+          type: artifact
+          label: Publishing verified
+          owner: Platform
+          planning:
+            type: decision
+            status: validated
+            priority: should
+            phase: now
+            acceptance:
+              - Markdown and portable HTML include product content and
+                navigation.
+            evidence:
+              - Export and browser tests.
+            rice: { reach: 72, impact: 2, confidence: 98, effort: 1 }
+        - id: qa-artifacts
+          type: artifact
+          label: Dogfood artifacts verified
+          owner: Product
+          planning:
+            type: decision
+            status: validated
+            priority: should
+            phase: now
+            acceptance:
+              - PRD and roadmap validate and exceed the feature-count gate.
+            evidence:
+              - Product artifact tests.
+            rice: { reach: 70, impact: 2, confidence: 98, effort: 1 }
+      edges:
+        - from: qa-schema
+          to: qa-brief
+        - from: qa-brief
+          to: qa-roadmap
+        - from: qa-roadmap
+          to: qa-traceability
+        - from: qa-traceability
+          to: qa-audit
+        - from: qa-audit
+          to: qa-rice
+        - from: qa-rice
+          to: qa-publishing
+        - from: qa-publishing
+          to: qa-artifacts
+
+  - id: prd-adoption-metric
+    type: system
+    label: Product-document comprehension
+    description: A reviewer can answer why, what, who, when, how prioritized, and
+      how proved in under thirty seconds per requirement.
+    owner: Product Operations
+    planning:
+      type: metric
+      status: planned
+      priority: must
+      phase: next
+      target: 30 seconds
+      evidence:
+        - Usability review protocol in the launch plan.
+      rice:
+        reach: 100
+        impact: 3
+        confidence: 75
+        effort: 2
+  - id: prd-risk
+    type: decision
+    label: Structure mistaken for truth
+    description: A complete graph can still encode a weak product decision. Serigraph
+      must expose missing structure without pretending that a score validates
+      the underlying evidence.
+    owner: Product
+    planning:
+      type: risk
+      status: validated
+      priority: must
+      phase: now
+      risks:
+        - Teams may optimize for checklist completion instead of learning.
+      evidence:
+        - Readiness copy explicitly says deterministic structural audit.
+      rice:
+        reach: 100
+        impact: 3
+        confidence: 90
+        effort: 2
+  - id: prd-launch
+    type: process
+    label: Ship, observe, revise
+    description: Release locally with the dogfood documents, validate the complete
+      flow, then use the roadmap to sequence capture, integrations, and
+      collaboration.
+    owner: Product & Engineering
+    planning:
+      type: release
+      status: shipped
+      priority: must
+      phase: now
+      target: v1.1
+      acceptance:
+        - Five or more integrated product-document features are live.
+        - The checked-in roadmap contains more than ten future capabilities.
+      evidence:
+        - Release audit and verification record.
+      rice:
+        reach: 100
+        impact: 3
+        confidence: 95
+        effort: 8
+    relations:
+      - to: prd-objective
+        type: delivers
+
+edges:
+  - from: prd-problem
+    to: prd-objective
+    label: creates urgency for
+  - from: prd-objective
+    to: prd-solution
+    label: shapes
+  - from: prd-solution
+    to: prd-proof
+    label: accepted by
+  - from: prd-proof
+    to: prd-adoption-metric
+    label: earns measurement
+  - from: prd-adoption-metric
+    to: prd-risk
+    label: monitored with
+  - from: prd-risk
+    to: prd-launch
+    label: mitigated before

@@ -1,0 +1,993 @@
+name: Meridian Funding — Operations Map
+description: Direct consumer & small-business lender. Leads arrive by email;
+  funded loans are serviced in-house.
+
+# =====================================================================
+#  TOP LEVEL — end-to-end deal flow plus company-wide systems & roles.
+#  Flow: email intake → qualification → underwriting → closing/funding
+#        → servicing, with collections and adverse-action as branches.
+# =====================================================================
+nodes:
+
+  # ── Deal flow ──
+  - id: lead-intake
+    type: process
+    label: Lead intake
+    description: "Front door of the business. ~40 inbound leads a day arrive as
+      email to deals@meridianfunding.com plus a few web-form submissions. Goal:
+      every lead acknowledged within 15 minutes and a Salesforce lead created
+      within the hour."
+    owner: RevOps / Automation
+    trigger: New inbound lead
+    sla: 15 minutes
+    automation: assisted
+    systems: [Outlook, Salesforce]
+    links:
+      - label: Intake SOP
+        url: https://docs.meridianfunding.com/sops/lead-intake
+      - label: lead-intake-agent (GitHub)
+        url: https://github.com/meridian-ops/lead-intake-agent
+    children:
+      nodes:
+        - id: li-intake-coordinator
+          type: role
+          label: Intake Coordinator
+          description: "Owns the inbox during business hours (8-6 CT). Cleans up agent
+            misses, handles phone-ins, and makes sure nothing sits
+            unacknowledged past the 15-minute SLA."
+        - id: li-inbox-monitor
+          type: process
+          label: Monitor shared inbox
+          description: "Watches the deals@ shared inbox. A new-email webhook fires the
+            Lead Intake Agent; anything it cannot parse is flagged for the
+            Intake Coordinator."
+        - id: li-parse-agent
+          type: system
+          label: Lead Intake Agent
+          description: "Automation that reads inbound lead emails, extracts business name,
+            requested amount, contact and stated use, and drafts a Salesforce
+            lead. Handles ~85% end-to-end; low-confidence extracts go to a
+            human."
+          links:
+            - label: Agent repo & prompts
+              url: https://github.com/meridian-ops/lead-intake-agent
+        - id: li-dedupe
+          type: decision
+          label: Duplicate / existing borrower?
+          description: "Checks the email/EIN/phone against existing Salesforce records. A
+            new borrower opens a fresh Application File; an existing borrower is
+            attached to the prior record and routed to their loan officer."
+        - id: li-create-lead
+          type: process
+          label: Create lead in Salesforce
+          description: "Creates the Salesforce lead, assigns a loan officer by round-robin
+            and territory, and starts the 15-minute SLA timer."
+        - id: li-application-file
+          type: artifact
+          label: Application File
+          description: "The deal folder — application, uploaded docs, stated use of funds,
+            and every system link. Referenced by every downstream stage."
+        - id: li-autoresponder
+          type: process
+          label: Send acknowledgment + intake link
+          description: "Sends the acknowledgment email with a secure intake link (business
+            details + bank connection) and a calendar link to book the loan
+            officer."
+      edges:
+        - from: li-intake-coordinator
+          to: li-inbox-monitor
+          label: "monitors"
+        - from: li-inbox-monitor
+          to: li-parse-agent
+          label: "new email"
+        - from: li-parse-agent
+          to: li-dedupe
+          label: "extracted fields"
+        - from: li-dedupe
+          to: li-create-lead
+          label: "new borrower"
+        - from: li-dedupe
+          to: li-application-file
+          label: "existing — attach"
+        - from: li-create-lead
+          to: li-application-file
+          label: "opens"
+        - from: li-create-lead
+          to: li-autoresponder
+          label: "triggers"
+
+  - id: qualification
+    type: process
+    label: Qualification
+    description: "Loan officer sizes up fit before we spend money on a hard pull.
+      Confirms licensed state, industry, time-in-business and minimum monthly
+      revenue, then a soft-pull scoring model routes the deal. ~55% of leads
+      clear qualification."
+    owner: Loan Officer
+    trigger: Lead created
+    sla: 2 business hours
+    automation: assisted
+    systems: [Salesforce]
+    children:
+      nodes:
+        - id: qual-loan-officer
+          type: role
+          label: Loan Officer
+          description: "Owns the deal from qualification through approval. Carries ~30
+            active deals and is the first human to actually talk to the
+            borrower."
+        - id: qual-review-app
+          type: process
+          label: Review application & stated use
+          description: "Reviews the submitted application and stated use of funds, and
+            confirms the ask is inside product limits ($10k-$500k, 6-24 month
+            terms)."
+        - id: qual-basic-checks
+          type: process
+          label: Basic eligibility checks
+          description: "Hard eligibility gates that don't need a credit pull — geography,
+            industry, and minimum operating history / revenue."
+          children:
+            nodes:
+              - id: qb-geo-check
+                type: decision
+                label: Licensed state?
+                description: "Is the business in a state where Meridian is licensed to lend?
+                  Currently 41 states; the rest are auto-declined."
+              - id: qb-industry-check
+                type: decision
+                label: Prohibited industry?
+                description: "Screens against the prohibited-industry list (cannabis, firearms,
+                  adult, crypto, gambling). A hit stops the deal."
+              - id: qb-min-criteria
+                type: process
+                label: Time-in-business & revenue floor
+                description: "Minimum bar: 12+ months in business and $15k+ average monthly
+                  revenue. Borderline cases get a manual override from the loan
+                  officer."
+            edges:
+              - from: qb-geo-check
+                to: qb-industry-check
+                label: "licensed"
+              - from: qb-industry-check
+                to: qb-min-criteria
+                label: "allowed"
+        - id: qual-soft-pull
+          type: process
+          label: Soft credit pull
+          description: "Soft credit inquiry (no score impact) to get the FICO band and
+            gross tradeline picture before committing to a hard pull."
+        - id: qual-score-model
+          type: system
+          label: Lead scoring model
+          description: "Scoring service that blends soft-pull data, stated revenue and
+            firmographics into a 0-100 fit score with a recommended action."
+        - id: qual-term-sheet
+          type: artifact
+          label: Preliminary Term Sheet
+          description: "Preliminary, non-binding term sheet — indicative amount, rate band
+            and term — sent to qualified applicants to gauge intent."
+      edges:
+        - from: qual-loan-officer
+          to: qual-review-app
+          label: "owns"
+        - from: qual-review-app
+          to: qual-basic-checks
+          label: "runs"
+        - from: qual-basic-checks
+          to: qual-soft-pull
+          label: "passes"
+        - from: qual-soft-pull
+          to: qual-score-model
+          label: "feeds"
+        - from: qual-score-model
+          to: qual-term-sheet
+          label: "generates"
+
+  - id: qual-decision
+    type: decision
+    label: Qualified?
+    description: "Gate on the qualification score and hard eligibility rules.
+      Qualified deals move to underwriting; the rest get an adverse-action or
+      'not a fit' response."
+    owner: Loan Officer
+    trigger: Qualification complete
+    sla: Immediate
+    automation: automated
+    systems: [Salesforce]
+
+  # ── Underwriting ──
+  - id: underwriting
+    type: process
+    label: Underwriting
+    description: "The real credit work: document collection, tri-merge credit
+      analysis, bank-statement cash-flow, income verification and fraud checks,
+      ending in a written Credit Memo. SLA is a decision within 4 business hours
+      of a complete file."
+    owner: Credit Committee
+    trigger: Qualified application
+    sla: 4 business hours
+    automation: assisted
+    systems: [Salesforce, Plaid, Data warehouse]
+    links:
+      - label: Underwriting SOP
+        url: https://docs.meridianfunding.com/sops/underwriting
+      - label: Credit policy
+        url: https://docs.meridianfunding.com/policy/credit
+    children:
+      nodes:
+        - id: uw-underwriter
+          type: role
+          label: Underwriter
+          description: "Credit professional who owns the file end-to-end and writes the
+            recommendation. Target of 6-8 completed files per day."
+        - id: uw-doc-collection
+          type: process
+          label: Document collection
+          description: "Chases the stipulation list — 3-6 months of bank statements, tax
+            returns, driver's license, voided check. Missing items are the #1
+            cause of SLA misses."
+        - id: uw-credit-analysis
+          type: process
+          label: Credit analysis
+          description: "Pulls and reads the tri-merge credit report: tradelines,
+            utilization, derogatories and score bands feed the credit decision."
+          children:
+            nodes:
+              - id: uwc-analyst
+                type: role
+                label: Credit Analyst
+                description: "Supports the underwriter on complex files; owns the tradeline and
+                  derogatory deep-dives."
+              - id: uwc-credit-pull
+                type: process
+                label: Tri-merge credit pull
+                description: "Pulls the tri-merge (Experian / Equifax / TransUnion) hard inquiry
+                  via the bureau integration and stores the Credit File."
+              - id: uwc-credit-file
+                type: artifact
+                label: Credit File
+                description: "Stored tri-merge report plus the analyst's annotations — the
+                  evidentiary backup for the credit decision."
+              - id: uwc-tradeline-review
+                type: process
+                label: Tradeline review
+                description: "Line-by-line read of every tradeline — balances, limits, payment
+                  history and recent behavior."
+                children:
+                  nodes:
+                    - id: uwt-revolving
+                      type: process
+                      label: Revolving utilization review
+                      description: "Cards and lines of credit. Over 80% aggregate utilization is a
+                        yellow flag on capacity."
+                    - id: uwt-installment
+                      type: process
+                      label: Installment & term debt review
+                      description: "Autos, equipment, SBA and prior term loans; builds the
+                        fixed-obligation picture."
+                    - id: uwt-recent-inquiries
+                      type: process
+                      label: Recent inquiries & new accounts
+                      description: "Recent hard inquiries and newly opened accounts — a spike often
+                        signals loan stacking or distress."
+                    - id: uwt-dti-calc
+                      type: process
+                      label: DTI / debt-service calc
+                      description: "Rolls tradeline obligations into a monthly debt service and
+                        computes DTI and DSCR against verified cash flow."
+                    - id: uwt-stacking-flag
+                      type: decision
+                      label: MCA stacking detected?
+                      description: "Does the pattern indicate active merchant-cash-advance stacking? A
+                        yes materially changes structure or kills the deal."
+                    - id: uwt-worksheet
+                      type: artifact
+                      label: Tradeline worksheet
+                      description: "Every line categorized with the computed DTI / DSCR feeding the
+                        credit memo."
+                  edges:
+                    - from: uwt-revolving
+                      to: uwt-installment
+                      label: "then"
+                    - from: uwt-installment
+                      to: uwt-recent-inquiries
+                      label: "then"
+                    - from: uwt-recent-inquiries
+                      to: uwt-dti-calc
+                      label: "then"
+                    - from: uwt-dti-calc
+                      to: uwt-stacking-flag
+                      label: "computed"
+                    - from: uwt-stacking-flag
+                      to: uwt-worksheet
+                      label: "no stacking"
+              - id: uwc-derog-review
+                type: process
+                label: Derogatory & public records review
+                description: "Reviews collections, charge-offs, tax liens, judgments and
+                  bankruptcies; anything recent or unresolved is a decline
+                  driver."
+              - id: uwc-score-model
+                type: system
+                label: Credit decision engine
+                description: "Scores the bureau data into a risk grade A-E used for pricing."
+                links:
+                  - label: credit-decision-engine (GitHub)
+                    url: https://github.com/meridian-ops/credit-decision-engine
+            edges:
+              - from: uwc-analyst
+                to: uwc-credit-pull
+                label: "runs"
+              - from: uwc-credit-pull
+                to: uwc-credit-file
+                label: "produces"
+              - from: uwc-credit-file
+                to: uwc-tradeline-review
+                label: "feeds"
+              - from: uwc-tradeline-review
+                to: uwc-derog-review
+                label: "then"
+              - from: uwc-derog-review
+                to: uwc-score-model
+                label: "scores"
+        - id: uw-bank-analysis
+          type: process
+          label: Bank statement analysis
+          description: "Analyzes bank cash flow via Plaid — average balances, NSF /
+            overdraft frequency and existing daily-debit (MCA) activity."
+          children:
+            nodes:
+              - id: uwb-plaid-link
+                type: process
+                label: Plaid connection
+                description: "Borrower connects their operating account via Plaid; pulls 90 days
+                  of transactions and real-time balances."
+              - id: uwb-cashflow
+                type: process
+                label: Cash-flow & NSF analysis
+                description: "Computes average daily balance, deposit consistency, and NSF /
+                  overdraft counts over the trailing 3 months."
+              - id: uwb-mca-detection
+                type: decision
+                label: Existing MCA / daily debits?
+                description: "Are there daily or weekly fixed debits indicating an existing
+                  merchant cash advance? Changes affordability and structure."
+            edges:
+              - from: uwb-plaid-link
+                to: uwb-cashflow
+                label: "transactions"
+              - from: uwb-cashflow
+                to: uwb-mca-detection
+                label: "analyzed"
+        - id: uw-income-verification
+          type: process
+          label: Income verification
+          description: "Reconciles stated revenue against bank deposits and tax returns;
+            large gaps trigger a request for additional documentation."
+        - id: uw-fraud-check
+          type: decision
+          label: Fraud / identity flags?
+          description: "Identity, synthetic-fraud and bank-ownership checks. Any flag
+            pauses the file and bounces it back for re-verification."
+        - id: uw-decision-engine
+          type: system
+          label: Decision engine
+          description: "Rules-plus-scorecard engine that ingests credit and cash-flow
+            features and returns a recommended decision and max exposure.
+            Advisory, not binding."
+        - id: uw-credit-memo
+          type: artifact
+          label: Credit Memo
+          description: "The written underwriting recommendation — strengths, risks,
+            proposed structure and conditions. What Credit Committee reads on
+            exceptions."
+          links:
+            - label: Credit Memo template
+              url: https://docs.meridianfunding.com/templates/credit-memo
+      edges:
+        - from: uw-underwriter
+          to: uw-doc-collection
+          label: "runs"
+        - from: uw-doc-collection
+          to: uw-credit-analysis
+          label: "docs in"
+        - from: uw-doc-collection
+          to: uw-bank-analysis
+          label: "statements in"
+        - from: uw-credit-analysis
+          to: uw-income-verification
+          label: "credit ok"
+        - from: uw-bank-analysis
+          to: uw-income-verification
+          label: "cash-flow ok"
+        - from: uw-income-verification
+          to: uw-fraud-check
+          label: "verified"
+        - from: uw-fraud-check
+          to: uw-credit-memo
+          label: "clear"
+        - from: uw-fraud-check
+          to: uw-doc-collection
+          label: "flag — reverify"
+        - from: uw-decision-engine
+          to: uw-credit-memo
+          label: "scores"
+
+  - id: credit-decision
+    type: decision
+    label: Credit decision
+    description: "Underwriter's recommendation plus the decision-engine score.
+      Outcomes: approved (to closing), needs docs (back to underwriting for
+      stips), or declined (adverse action). Exceptions over $250k route to
+      Credit Committee."
+    owner: Credit Committee
+    trigger: Credit memo ready
+    sla: 1 business hour
+    automation: assisted
+    systems: [Salesforce, Slack]
+
+  # ── Closing & Funding ──
+  - id: closing-funding
+    type: process
+    label: Closing & funding
+    description: "Turns an approval into money out the door. Docs are drafted,
+      e-signed, the funding account is verified, ACH/wire is released, and the
+      loan is boarded to LoanPro. Median approval-to-funding is 1.5 business
+      days."
+    owner: Closing Specialist
+    trigger: Credit approved
+    sla: 1.5 business days
+    automation: automated
+    systems: [DocuSign, LoanPro]
+    children:
+      nodes:
+        - id: cf-closer
+          type: role
+          label: Closing Specialist
+          description: "Assembles the package, orders docs and coordinates signing and
+            funding."
+        - id: cf-doc-prep
+          type: process
+          label: Loan doc prep
+          description: "Generates the loan agreement, note, ACH authorization and
+            disclosures from approved terms using versioned templates."
+        - id: cf-loan-agreement
+          type: artifact
+          label: Loan Agreement & Note
+          description: "The executed loan agreement and promissory note — the binding
+            contract governing the loan."
+        - id: cf-esign
+          type: system
+          label: DocuSign envelope
+          description: "DocuSign envelope for the full closing package; reminders
+            auto-fire at 24 and 48 hours if unsigned."
+        - id: cf-verify-signatures
+          type: decision
+          label: All docs executed?
+          description: "Is every required signature and initial captured? Missing items
+            bounce back to doc prep for a corrected envelope."
+        - id: cf-funding
+          type: process
+          label: Disbursement
+          description: "The money movement — verify the funding account, set up ACH, and
+            release principal net of any fees."
+          links:
+            - label: Funding checklist
+              url: https://docs.meridianfunding.com/checklists/funding
+          children:
+            nodes:
+              - id: cff-treasury
+                type: role
+                label: Treasury / Finance
+                description: "Second set of eyes on every disbursement and owner of the bank
+                  cutoffs."
+              - id: cff-bank-verify
+                type: process
+                label: Verify funding account
+                description: "Confirms the disbursement account belongs to the borrower via
+                  Plaid instant-verify, falling back to micro-deposits."
+              - id: cff-ach-setup
+                type: process
+                label: ACH / wire setup
+                description: "Configures ACH origination — routing/account, payment schedule and
+                  NACHA authorization in LoanPro."
+              - id: cff-fund-release
+                type: process
+                label: Release funds
+                description: "Treasury releases principal by same-day ACH or wire once the
+                  four-eyes check passes; cutoff is 2pm CT."
+              - id: cff-funding-package
+                type: artifact
+                label: Funding Package
+                description: "Executed docs, verification evidence and disbursement confirmation
+                  — archived for audit."
+            edges:
+              - from: cff-treasury
+                to: cff-bank-verify
+                label: "runs"
+              - from: cff-bank-verify
+                to: cff-ach-setup
+                label: "verified"
+              - from: cff-ach-setup
+                to: cff-fund-release
+                label: "scheduled"
+              - from: cff-fund-release
+                to: cff-funding-package
+                label: "packages"
+        - id: cf-boarding
+          type: process
+          label: Board loan to LoanPro
+          description: "Boards the funded loan into LoanPro — creates the account, ledger
+            and amortization schedule and starts servicing."
+        - id: cf-amortization
+          type: artifact
+          label: Amortization Schedule
+          description: "Payment dates, principal/interest split and payoff curve shared
+            with the borrower."
+      edges:
+        - from: cf-closer
+          to: cf-doc-prep
+          label: "prepares"
+        - from: cf-doc-prep
+          to: cf-loan-agreement
+          label: "produces"
+        - from: cf-loan-agreement
+          to: cf-esign
+          label: "sent via"
+        - from: cf-esign
+          to: cf-verify-signatures
+          label: "executed"
+        - from: cf-verify-signatures
+          to: cf-funding
+          label: "all signed"
+        - from: cf-verify-signatures
+          to: cf-doc-prep
+          label: "missing — redraft"
+        - from: cf-funding
+          to: cf-boarding
+          label: "disbursed"
+        - from: cf-boarding
+          to: cf-amortization
+          label: "generates"
+
+  # ── Servicing ──
+  - id: servicing
+    type: process
+    label: Servicing
+    description: "Everything after funding while the loan performs: ACH payment
+      runs, statements, borrower support, payoffs and hardship modifications.
+      Runs on LoanPro."
+    owner: Servicing Operations
+    trigger: Loan funded
+    sla: Same business day
+    automation: automated
+    systems: [LoanPro, Data warehouse]
+    links:
+      - label: Servicing SOP
+        url: https://docs.meridianfunding.com/sops/servicing
+    children:
+      nodes:
+        - id: sv-specialist
+          type: role
+          label: Servicing Specialist
+          description: "Handles the performing book — payments, statements, borrower
+            questions and modifications."
+        - id: sv-payment-processing
+          type: process
+          label: Payment processing
+          description: "Scheduled ACH draft runs, payment posting, reconciliation and
+            failed-payment handling — the servicing engine room."
+          children:
+            nodes:
+              - id: svp-ach-scheduler
+                type: process
+                label: ACH scheduling / draft run
+                description: "Builds the daily draft list from due-date schedules and assembles
+                  the ACH batch (2-business-day lead)."
+              - id: svp-nacha-file
+                type: artifact
+                label: NACHA batch file
+                description: "The NACHA-formatted ACH batch file submitted to the processor each
+                  morning."
+              - id: svp-processor
+                type: system
+                label: Payment processor
+                description: "ACH processor (Dwolla). Originates drafts and returns settlement /
+                  return files keyed by ACH return codes."
+              - id: svp-post-payments
+                type: process
+                label: Payment posting & reconciliation
+                description: "Posts settled payments to the ledger and reconciles the batch
+                  against the processor return report."
+              - id: svp-reconcile
+                type: decision
+                label: Batch reconciles?
+                description: "Does the settled batch tie out to expected? Unmatched returns
+                  route to failed-payment handling."
+              - id: svp-failed-payment
+                type: process
+                label: Failed-payment handling
+                description: "Handles returns and NSFs — classify, retry within Reg E limits,
+                  assess fees, dun, and escalate uncured accounts."
+                links:
+                  - label: Failed-payment runbook
+                    url: https://docs.meridianfunding.com/runbooks/failed-payments
+                  - label: dunning-agent (GitHub)
+                    url: https://github.com/meridian-ops/dunning-agent
+                children:
+                  nodes:
+                    - id: svf-nsf-classify
+                      type: decision
+                      label: NSF or admin return?
+                      description: "On the ACH return code: R01 insufficient funds (NSF, retryable) vs
+                        administrative returns like R02/R03 (closed/invalid
+                        account) that must not be re-drafted."
+                    - id: svf-retry
+                      type: process
+                      label: Smart retry
+                      description: "Up to 2 re-presentments of NSF returns within Reg E / NACHA
+                        limits, timed to likely deposit days."
+                    - id: svf-late-fee
+                      type: process
+                      label: Assess late fee & re-amortize
+                      description: "Assesses the contractual late fee after the grace period and
+                        re-amortizes if needed."
+                    - id: svf-dunning
+                      type: process
+                      label: Dunning sequence
+                      description: "Automated email/SMS reminders on a fixed cadence; the dunning
+                        agent posts status to Slack."
+                    - id: svf-notice
+                      type: artifact
+                      label: Return / late notice
+                      description: "Sent to the borrower after a failed draft, with instructions to
+                        cure."
+                    - id: svf-escalate
+                      type: process
+                      label: Escalate to collections
+                      description: "Moves accounts uncured after 10 days into the collections queue
+                        with full payment history attached."
+                  edges:
+                    - from: svf-nsf-classify
+                      to: svf-retry
+                      label: "NSF"
+                    - from: svf-nsf-classify
+                      to: svf-dunning
+                      label: "admin return"
+                    - from: svf-retry
+                      to: svf-late-fee
+                      label: "failed again"
+                    - from: svf-late-fee
+                      to: svf-dunning
+                      label: "assessed"
+                    - from: svf-dunning
+                      to: svf-notice
+                      label: "sends"
+                    - from: svf-dunning
+                      to: svf-escalate
+                      label: "no cure in 10 days"
+            edges:
+              - from: svp-ach-scheduler
+                to: svp-nacha-file
+                label: "builds"
+              - from: svp-nacha-file
+                to: svp-processor
+                label: "submitted to"
+              - from: svp-processor
+                to: svp-post-payments
+                label: "settlement"
+              - from: svp-post-payments
+                to: svp-reconcile
+                label: "posts"
+              - from: svp-reconcile
+                to: svp-failed-payment
+                label: "returns / NSF"
+        - id: sv-statements
+          type: process
+          label: Statements & notices
+          description: "Generates monthly statements and regulatory notices (rate /
+            payment changes) and delivers them by email and portal."
+        - id: sv-customer-support
+          type: process
+          label: Borrower support
+          description: "Fields borrower email and calls via support@meridianfunding.com;
+            balance/payoff questions, due-date changes and disputes.
+            1-business-day response SLA."
+        - id: sv-modifications
+          type: process
+          label: Modifications / hardship
+          description: "Handles hardship requests — deferrals, due-date changes and
+            short-term interest-only plans — with CCO sign-off over defined
+            thresholds."
+        - id: sv-los
+          type: system
+          label: LoanPro servicing
+          description: "LoanPro servicing module — the account ledger, payment schedule
+            and ACH engine of record."
+        - id: sv-ledger
+          type: artifact
+          label: Loan ledger
+          description: "The per-loan ledger — every charge, payment, fee and adjustment;
+            the source of truth for payoff and delinquency."
+      edges:
+        - from: sv-specialist
+          to: sv-payment-processing
+          label: "oversees"
+        - from: sv-payment-processing
+          to: sv-statements
+          label: "posted"
+        - from: sv-statements
+          to: sv-customer-support
+          label: "questions"
+        - from: sv-customer-support
+          to: sv-modifications
+          label: "hardship"
+        - from: sv-los
+          to: sv-ledger
+          label: "maintains"
+        - from: sv-payment-processing
+          to: sv-ledger
+          label: "updates"
+
+  # ── Collections ──
+  - id: collections
+    type: process
+    label: Collections
+    description: "Handles accounts past due. Early-stage reminders (1-30 dpd),
+      late-stage workouts (31-90 dpd), and charge-off/recovery beyond 90. ~4% of
+      the book touches collections in a given month."
+    owner: Collections
+    trigger: Payment 30+ days past due
+    sla: 1 business day
+    automation: at-risk
+    systems: [LoanPro, Salesforce]
+    links:
+      - label: Collections playbook
+        url: https://docs.meridianfunding.com/playbooks/collections
+    children:
+      nodes:
+        - id: col-specialist
+          type: role
+          label: Collections Specialist
+          description: "Works the delinquent queue; carries roughly 120 accounts across
+            stages."
+        - id: col-dialer
+          type: system
+          label: Dialer / SMS platform
+          description: "Compliant outbound calling and SMS (TCPA windows enforced); logs
+            every attempt to the account."
+        - id: col-early-stage
+          type: process
+          label: Early-stage (1-30 dpd)
+          description: "Automated reminders plus courtesy outbound calls; most accounts
+            cure here."
+        - id: col-late-stage
+          type: process
+          label: Late-stage (31-90 dpd)
+          description: "Skip-tracing, negotiated settlements and, when needed, referral to
+            legal or an agency."
+          children:
+            nodes:
+              - id: cll-skip-trace
+                type: process
+                label: Skip tracing
+                description: "Locates non-responsive borrowers via skip-trace tools when phone
+                  and email go dark."
+              - id: cll-settlement-offer
+                type: process
+                label: Settlement offer
+                description: "Extends a discounted lump-sum or structured settlement within
+                  CCO-approved authority."
+              - id: cll-legal-review
+                type: decision
+                label: Refer to legal / agency?
+                description: "Refer to outside counsel or an agency for demand and suit, or
+                  continue working the account in-house?"
+            edges:
+              - from: cll-skip-trace
+                to: cll-settlement-offer
+                label: "located"
+              - from: cll-settlement-offer
+                to: cll-legal-review
+                label: "no response"
+        - id: col-workout
+          type: decision
+          label: Workout eligible?
+          description: "Is the borrower a workout candidate (willing and able to pay a
+            modified plan) or heading to charge-off?"
+        - id: col-payment-plan
+          type: process
+          label: Payment plan / settlement
+          description: "Negotiated repayment or settlement plan with documented terms and
+            auto-drafted payments."
+        - id: col-charge-off
+          type: process
+          label: Charge-off & recovery
+          description: "Charge-off at 90+ dpd with recovery pursued in-house or via
+            agency; feeds loss reporting to the warehouse."
+        - id: col-notes
+          type: artifact
+          label: Collection activity log
+          description: "Time-stamped log — calls, promises-to-pay and outcomes; the
+            compliance record."
+      edges:
+        - from: col-specialist
+          to: col-early-stage
+          label: "works"
+        - from: col-dialer
+          to: col-early-stage
+          label: "powers outreach"
+        - from: col-early-stage
+          to: col-late-stage
+          label: "31+ dpd"
+        - from: col-early-stage
+          to: col-notes
+          label: "logs"
+        - from: col-late-stage
+          to: col-workout
+          label: "assess"
+        - from: col-workout
+          to: col-payment-plan
+          label: "yes"
+        - from: col-workout
+          to: col-charge-off
+          label: "no / 90+ dpd"
+
+  # ── Adverse action (decline path) ──
+  - id: adverse-action
+    type: process
+    label: Adverse action
+    description: "Compliance-owned decline path. Generates and mails
+      FCRA/ECOA-compliant adverse action notices within 30 days and logs the
+      principal reasons in Salesforce."
+    owner: Compliance
+    trigger: Application declined
+    sla: 30 calendar days
+    automation: automated
+    systems: [Salesforce]
+    children:
+      nodes:
+        - id: aa-compliance
+          type: role
+          label: Compliance
+          description: "Owns decline messaging and the 30-day ECOA clock; audits a sample
+            of notices monthly."
+        - id: aa-generate-notice
+          type: process
+          label: Generate adverse action notice
+          description: "Produces the notice with the specific principal reasons and the
+            credit bureau contact info (FCRA/ECOA)."
+        - id: aa-notice
+          type: artifact
+          label: Adverse Action Notice
+          description: "The borrower's copy and the retained compliance copy of the
+            decline notice."
+        - id: aa-send
+          type: process
+          label: Send within 30 days
+          description: "Mails/emails the notice within the regulatory window and logs
+            delivery to Salesforce."
+      edges:
+        - from: aa-compliance
+          to: aa-generate-notice
+          label: "owns"
+        - from: aa-generate-notice
+          to: aa-notice
+          label: "produces"
+        - from: aa-notice
+          to: aa-send
+          label: "mailed via"
+
+  # ── Company-wide systems ──
+  - id: shared-inbox
+    type: system
+    label: Shared inbox (Outlook)
+    description: "deals@meridianfunding.com — a shared Microsoft 365 mailbox
+      monitored by the intake team and the Lead Intake Agent. Also the reply-to
+      for borrower correspondence."
+    links:
+      - label: Inbox runbook
+        url: https://docs.meridianfunding.com/runbooks/deals-inbox
+  - id: salesforce
+    type: system
+    label: Salesforce
+    description: "System of record for leads, contacts and the deal pipeline through
+      funding. The underwriting queue, tasks and stage automation live here."
+    links:
+      - label: Pipeline dashboard
+        url: https://meridianfunding.lightning.force.com/pipeline
+  - id: loanpro-los
+    type: system
+    label: LoanPro (LOS / servicing)
+    description: "Loan origination and servicing platform. Boards funded loans and
+      holds the amortization schedule, ledger, and ACH payment engine."
+  - id: plaid
+    type: system
+    label: Plaid
+    description: "Bank-account connectivity: instant account verification, balance
+      checks and 90-day transaction history used in bank-statement analysis and
+      funding-account verification."
+  - id: docusign
+    type: system
+    label: DocuSign
+    description: "E-signature for term sheets, loan agreements and ACH
+      authorizations. Templates are versioned; completed envelopes sync back to
+      Salesforce and LoanPro."
+  - id: slack
+    type: system
+    label: Slack
+    description: "Internal comms. #deals for hand-offs, #uw-escalations for
+      exceptions, and bot channels where the automation agents post lead and
+      funding alerts."
+  - id: data-warehouse
+    type: system
+    label: Data warehouse (BigQuery)
+    description: "Nightly ETL from Salesforce and LoanPro feeds funnel, vintage and
+      delinquency dashboards used by leadership and RevOps."
+    links:
+      - label: Metabase dashboards
+        url: https://metabase.meridianfunding.com/collection/ops
+
+  # ── Cross-cutting roles ──
+  - id: credit-committee
+    type: role
+    label: Credit Committee
+    description: "CCO plus two senior underwriters. Meets daily to clear exceptions,
+      policy overrides and any facility above $250k."
+  - id: rev-ops
+    type: role
+    label: RevOps / Automation
+    description: "Two-person team that owns the intake and dunning agents,
+      Salesforce automation, and the warehouse dashboards."
+# ── Top-level flow ──
+edges:
+  - from: lead-intake
+    to: qualification
+    label: "raw lead"
+  - from: qualification
+    to: qual-decision
+    label: "scored"
+  - from: qual-decision
+    to: underwriting
+    label: "qualified"
+  - from: qual-decision
+    to: adverse-action
+    label: "declined / not a fit"
+  - from: underwriting
+    to: credit-decision
+    label: "credit memo ready"
+  - from: credit-decision
+    to: closing-funding
+    label: "approved"
+  - from: credit-decision
+    to: underwriting
+    label: "needs docs"
+  - from: credit-decision
+    to: adverse-action
+    label: "declined"
+  - from: closing-funding
+    to: servicing
+    label: "funded"
+  - from: servicing
+    to: collections
+    label: "30+ dpd"
+  - from: collections
+    to: servicing
+    label: "cured / reinstated"
+  # shared systems
+  - from: shared-inbox
+    to: salesforce
+    label: "leads synced"
+  - from: salesforce
+    to: data-warehouse
+    label: "nightly ETL"
+  - from: loanpro-los
+    to: data-warehouse
+    label: "nightly ETL"
+  - from: credit-committee
+    to: credit-decision
+    label: "reviews exceptions > $250k"
+  - from: rev-ops
+    to: shared-inbox
+    label: "owns intake automation"

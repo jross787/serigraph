@@ -1,4 +1,4 @@
-// Opsmap server — zero npm dependencies, Node built-ins only.
+// Serigraph server — zero npm dependencies, Node built-ins only.
 // Serves the app, reads/writes map files, pushes file changes to the
 // browser over SSE, and builds standalone HTML exports.
 import { createServer } from 'node:http';
@@ -78,7 +78,7 @@ async function mapSummaries(dir) {
       const source = await fs.readFile(path.join(dir, file), 'utf8');
       const { model, errors } = parseMap(source);
       if (model) {
-        out.push({ id, file, name: model.name, description: model.description, nodeCount: model.nodeCount });
+        out.push({ id, file, name: model.name, description: model.description, nodeCount: model.nodeCount, kind: model.document.kind });
       } else {
         out.push({ id, file, name: id, description: '', nodeCount: 0, invalid: true, errorCount: errors.length });
       }
@@ -209,7 +209,7 @@ async function handleApi(req, res, url) {
       ? { available: true, provider: provider.kind, model: provider.model }
       : {
         available: false,
-        hint: 'Set ANTHROPIC_API_KEY in the server\'s environment, log in the claude CLI (run `claude` once), or point OPSMAP_LLM_CMD at a local model — then restart Opsmap.',
+        hint: 'Set ANTHROPIC_API_KEY in the server\'s environment, log in the claude CLI (run `claude` once), or point OPSMAP_LLM_CMD at a local model — then restart Serigraph.',
       });
   }
   if (parts[1] === 'import' && parts.length === 2 && req.method === 'POST') {
@@ -221,7 +221,7 @@ async function handleApi(req, res, url) {
       return json(res, 200, result);
     } catch (e) {
       const status = e instanceof ImportError ? e.status : 502;
-      console.error('[opsmap] import failed:', e.message);
+      console.error('[serigraph] import failed:', e.message);
       return json(res, status, { error: e.message });
     }
   }
@@ -297,15 +297,17 @@ const server = createServer(async (req, res) => {
       const file = await findMapFile(id);
       if (!file) { res.writeHead(404); return res.end(`no map "${id}"`); }
       const html = await buildExport(ROOT, id, await fs.readFile(file, 'utf8'));
+      const preview = url.searchParams.get('preview') === '1';
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
-        'Content-Disposition': `attachment; filename="${id}-opsmap.html"`,
+        'Content-Disposition': preview ? 'inline' : `attachment; filename="${id}-serigraph.html"`,
+        'Cache-Control': 'no-store',
       });
       return res.end(html);
     }
     return await handleStatic(req, res, url);
   } catch (e) {
-    console.error(`[opsmap] ${req.method} ${url.pathname} failed:`, e.message);
+    console.error(`[serigraph] ${req.method} ${url.pathname} failed:`, e.message);
     if (!res.headersSent) json(res, 500, { error: e.message });
     else res.end();
   }
@@ -321,10 +323,10 @@ function openBrowser(urlStr) {
 async function start(port, attempt = 0) {
   server.once('error', (e) => {
     if (e.code === 'EADDRINUSE' && attempt < 10) {
-      console.log(`[opsmap] port ${port} busy, trying ${port + 1}`);
+      console.log(`[serigraph] port ${port} busy, trying ${port + 1}`);
       start(port + 1, attempt + 1);
     } else {
-      console.error('[opsmap] failed to start:', e.message);
+      console.error('[serigraph] failed to start:', e.message);
       process.exit(1);
     }
   });
@@ -335,7 +337,7 @@ async function start(port, attempt = 0) {
     const urlStr = `http://localhost:${port}/`;
     console.log('');
     console.log('  ┌─────────────────────────────────────────┐');
-    console.log('  │   Opsmap — your business, mapped        │');
+    console.log('  │   Serigraph — your business, mapped     │');
     console.log(`  │   ${urlStr.padEnd(38)}│`);
     console.log('  └─────────────────────────────────────────┘');
     console.log('');
