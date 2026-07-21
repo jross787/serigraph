@@ -107,6 +107,55 @@ function adoptSource(source) {
   invalidateLayouts();
 }
 
+function revisionKey() {
+  return state.mapId ? `opsmap:revisions:${state.mapId}` : '';
+}
+
+function readRevisions() {
+  const key = revisionKey();
+  if (!key) return [];
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(value) ? value : [];
+  } catch { return []; }
+}
+
+function recordRevision(source, label = 'Edited map') {
+  const key = revisionKey();
+  if (!key) return;
+  const revisions = readRevisions();
+  revisions.unshift({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, source, label, savedAt: new Date().toISOString() });
+  try { localStorage.setItem(key, JSON.stringify(revisions.slice(0, 30))); } catch { /* storage is optional */ }
+}
+
+export function listRevisions() {
+  return readRevisions();
+}
+
+export async function restoreRevision(revision) {
+  if (!revision?.source || state.standalone) return false;
+  const before = state.source;
+  const { errors } = parseMap(revision.source);
+  if (errors.length) {
+    bus.emit('toast', 'That revision is no longer valid.', true);
+    return false;
+  }
+  adoptSource(revision.source);
+  try {
+    await api.saveMap(state.mapId, revision.source);
+  } catch (e) {
+    adoptSource(before);
+    refreshView();
+    bus.emit('toast', 'Restore failed: ' + e.message, true);
+    return false;
+  }
+  state.undoStack.push(before);
+  state.redoStack = [];
+  refreshView();
+  bus.emit('toast', `Restored ${revision.label || 'a revision'}`);
+  return true;
+}
+
 // ── the edit pipeline ────────────────────────────────────────────────
 // commit(() => { ...mutate state.doc via edit.js... })
 export async function commit(mutator, { select = undefined } = {}) {
@@ -146,6 +195,8 @@ export async function commit(mutator, { select = undefined } = {}) {
     return false;
   }
 
+  recordRevision(after);
+
   if (select !== undefined) state.selectedId = select;
   refreshView();
   return true;
@@ -157,6 +208,7 @@ export async function undo() {
   state.redoStack.push(state.source);
   adoptSource(prev);
   try { await api.saveMap(state.mapId, prev); } catch { /* keep local */ }
+  recordRevision(prev, 'Undo');
   refreshView();
   bus.emit('toast', 'Undone');
 }
@@ -167,6 +219,7 @@ export async function redo() {
   state.undoStack.push(state.source);
   adoptSource(next);
   try { await api.saveMap(state.mapId, next); } catch { /* keep local */ }
+  recordRevision(next, 'Redo');
   refreshView();
   bus.emit('toast', 'Redone');
 }
@@ -270,6 +323,7 @@ export function selectNode(nodeId) {
   state.selectedId = nodeId;
   state.selectedEdge = null;
   canvas.paintSelection();
+  canvas.focusOn(nodeId);
   writeHash();
   bus.emit('selection-changed');
   // the detail panel docks ~230ms after selection and shrinks the canvas —
