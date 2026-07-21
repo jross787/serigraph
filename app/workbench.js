@@ -1,0 +1,484 @@
+// The Quiet Instrument workbench: a compact tool rail, semantic path probe,
+// review notes, portable sharing, and local revision recovery. None of these
+// modes change the meaning of a map until the user explicitly saves a YAML edit.
+import { state, bus } from './state.js';
+import * as canvas from './canvas.js';
+import * as ctrl from './controller.js';
+import * as edit from './edit.js';
+import * as ui from './ui.js';
+import { ICONS } from './canvas.js';
+
+const SVG = 'http://www.w3.org/2000/svg';
+
+function h(tag, props = {}, ...children) {
+  const n = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (key === 'class') n.className = value;
+    else if (key.startsWith('on')) n.addEventListener(key.slice(2).toLowerCase(), value);
+    else if (value != null) n.setAttribute(key, value);
+  }
+  for (const child of children.flat()) {
+    if (child == null) continue;
+    n.append(child.nodeType ? child : document.createTextNode(child));
+  }
+  return n;
+}
+
+function svgIcon(path) {
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('viewBox', '0 0 20 20');
+  svg.setAttribute('width', '18');
+  svg.setAttribute('height', '18');
+  svg.setAttribute('aria-hidden', 'true');
+  const shape = document.createElementNS(SVG, 'path');
+  shape.setAttribute('d', path);
+  shape.setAttribute('fill', 'none');
+  shape.setAttribute('stroke', 'currentColor');
+  shape.setAttribute('stroke-width', '1.7');
+  shape.setAttribute('stroke-linecap', 'round');
+  shape.setAttribute('stroke-linejoin', 'round');
+  svg.append(shape);
+  return svg;
+}
+
+const TOOL_ICONS = {
+  select: 'm4 3 11 6-5 1.4L8.5 16zM10 10.4l3 5.1',
+  hand: 'M7.2 9.1V4.8a1.2 1.2 0 0 1 2.4 0v3.4M9.6 8.2V3.5a1.2 1.2 0 0 1 2.4 0v4.7m0 0V4.7a1.2 1.2 0 0 1 2.4 0v5.1m0 0V6.5a1.2 1.2 0 0 1 2.4 0v5.3c0 3-2.3 5.3-5.3 5.3H10c-1.7 0-2.9-.8-3.8-2.1L4.5 12a1.35 1.35 0 0 1 2-1.8l.7.7',
+  unit: ICONS.process,
+  connect: 'M4 4v4h4m8 8v-4h-4M8 8l4 4',
+  lane: 'M4 3h12v14H4zM4 7h12M4 11h12',
+  note: ICONS.artifact,
+  probe: 'M10 3v14M3 10h14M6.5 6.5l7 7M13.5 6.5l-7 7',
+  automate: ICONS.system,
+};
+
+const TOOL_GROUPS = [
+  [
+    { id: 'select', label: 'Select', shortcut: 'V', description: 'Select a step or drag to pan the map.' },
+    { id: 'hand', label: 'Hand', shortcut: 'H', description: 'Pan the canvas without changing the selection.' },
+  ],
+  [
+    { id: 'unit', label: 'Unit', shortcut: 'N', description: 'Add a process, decision, role, system, or artifact.', flyout: true },
+    { id: 'connect', label: 'Connect', shortcut: 'C', description: 'Join two steps with a workflow connection.', flyout: true },
+  ],
+  [
+    { id: 'lane', label: 'Owner lanes', shortcut: 'L', description: 'Group the current map by accountable owner.' },
+    { id: 'note', label: 'Review note', shortcut: 'T', description: 'Leave a durable review note on a selected step.' },
+  ],
+  [
+    { id: 'probe', label: 'Path probe', shortcut: 'P', description: 'Trace a path and reveal handoffs, systems, and automation gaps.' },
+    { id: 'automate', label: 'Automation lens', shortcut: 'A', description: 'Assess the selected step as an automation opportunity.' },
+  ],
+];
+
+const MUTATING_TOOLS = new Set(['unit', 'connect']);
+
+// A standalone export is a portable, read-only inspection surface. Keep the
+// tools that help a reviewer navigate and understand the map, but never render
+// (or keyboard-activate) controls that imply the exported model can be edited.
+function visibleToolGroups() {
+  return TOOL_GROUPS
+    .map((group) => group
+      .filter((tool) => !(state.standalone && MUTATING_TOOLS.has(tool.id)))
+      .map((tool) => state.standalone && tool.id === 'note'
+        ? { ...tool, label: 'Review trail', description: 'Inspect review notes attached to the selected step.' }
+        : tool))
+    .filter((group) => group.length);
+}
+
+function toolIsVisible(id) {
+  return visibleToolGroups().some((group) => group.some((tool) => tool.id === id));
+}
+
+let rail;
+
+function closeFlyout() {
+  document.getElementById('tool-flyout')?.replaceChildren();
+  document.getElementById('tool-flyout')?.setAttribute('hidden', '');
+}
+
+function refreshRail() {
+  if (!rail) return;
+  for (const button of rail.querySelectorAll('[data-tool]')) {
+    const id = button.dataset.tool;
+    const pressed = id === 'lane' ? state.ownerLanes : state.activeTool === id;
+    button.classList.toggle('active', pressed);
+    button.setAttribute('aria-pressed', String(pressed));
+  }
+  document.getElementById('canvas')?.setAttribute('data-tool', state.activeTool);
+}
+
+function setTool(id) {
+  state.activeTool = id;
+  if (id !== 'probe') {
+    state.probeStartId = null;
+    canvas.setProbePath(null);
+    hideProbePanel();
+  }
+  if (id !== 'connect' && state.connectFrom) {
+    state.connectFrom = null;
+    canvas.paintSelection();
+  }
+  refreshRail();
+}
+
+function showUnitFlyout(anchor) {
+  const host = document.getElementById('tool-flyout');
+  if (!host) return;
+  const rect = anchor.getBoundingClientRect();
+  host.style.top = `${rect.top}px`;
+  host.style.left = `${rect.right + 8}px`;
+  const types = [
+    ['process', 'Process'], ['decision', 'Decision'], ['role', 'Role'], ['system', 'System'], ['artifact', 'Artifact'],
+  ];
+  const items = types.map(([type, label]) => {
+    const button = h('button', {
+      class: `tool-flyout-item t-${type}`,
+      title: `Drag onto the canvas to add a ${type}; click to open the form`,
+    }, svgIcon(ICONS[type]), h('span', {}, label));
+    ui.enableNodeTypeDrag(button, type, {
+      onActivate: () => {
+        closeFlyout();
+        ui.addNodeDialog(state.scopeId, { type });
+        setTool('select');
+      },
+      onComplete: () => {
+        closeFlyout();
+        setTool('select');
+      },
+    });
+    return button;
+  });
+  host.replaceChildren(
+    h('div', { class: 'tool-flyout-title' }, 'Add a unit'),
+    ...items,
+  );
+  host.removeAttribute('hidden');
+}
+
+function showConnectFlyout(anchor) {
+  const host = document.getElementById('tool-flyout');
+  if (!host) return;
+  const rect = anchor.getBoundingClientRect();
+  host.style.top = `${rect.top}px`;
+  host.style.left = `${rect.right + 8}px`;
+  host.replaceChildren(
+    h('div', { class: 'tool-flyout-title' }, 'Connect steps'),
+    h('button', { class: 'tool-flyout-item selected', onClick: () => { closeFlyout(); startConnect(); } }, svgIcon(TOOL_ICONS.connect), h('span', {}, 'Workflow handoff'), h('kbd', {}, 'C')),
+    h('p', { class: 'tool-flyout-note' }, 'Select an origin, then the step that follows it. Edge labels can describe the handoff or outcome.'),
+  );
+  host.removeAttribute('hidden');
+}
+
+function activateTool(id, anchor) {
+  if (!toolIsVisible(id)) {
+    closeFlyout();
+    return false;
+  }
+  if (id === 'unit') {
+    setTool('unit');
+    showUnitFlyout(anchor);
+    return true;
+  }
+  if (id === 'connect') {
+    setTool('connect');
+    showConnectFlyout(anchor);
+    return true;
+  }
+  closeFlyout();
+  if (id === 'lane') {
+    state.ownerLanes = !state.ownerLanes;
+    canvas.setOwnerLanes(state.ownerLanes);
+    ui.toast(state.ownerLanes ? 'Owner lanes are on' : 'Owner lanes are off');
+    refreshRail();
+    return true;
+  }
+  if (id === 'note') {
+    setTool('note');
+    if (state.selectedId) openReview(state.selectedId);
+    else ui.toast(state.standalone ? 'Select a step to inspect its review trail' : 'Select a step before leaving a review note');
+    return true;
+  }
+  if (id === 'probe') {
+    beginProbe();
+    return true;
+  }
+  if (id === 'automate') {
+    setTool('automate');
+    if (ui.openAutomation()) setTool('select');
+    return true;
+  }
+  setTool(id);
+  return true;
+}
+
+function startConnect(nodeId = state.selectedId) {
+  if (!ui.startConnect(nodeId)) return;
+  setTool('connect');
+  closeFlyout();
+}
+
+function beginProbe() {
+  closeFlyout();
+  state.probeStartId = null;
+  canvas.setProbePath(null);
+  hideProbePanel();
+  state.activeTool = 'probe';
+  refreshRail();
+  ui.toast('Path probe: choose the first step, then its downstream outcome');
+}
+
+function scopeForCurrentView() {
+  return state.scopeId == null ? state.model?.root : state.model?.byId.get(state.scopeId)?.children;
+}
+
+function findDirectedPath(fromId, toId) {
+  const scope = scopeForCurrentView();
+  if (!scope) return null;
+  const edges = scope.edges.map((edge, index) => ({ edge, index }));
+  const next = new Map();
+  for (const item of edges) {
+    if (!next.has(item.edge.from)) next.set(item.edge.from, []);
+    next.get(item.edge.from).push(item);
+  }
+  const queue = [fromId];
+  const visited = new Set([fromId]);
+  const predecessor = new Map();
+  while (queue.length) {
+    const id = queue.shift();
+    if (id === toId) break;
+    for (const item of next.get(id) ?? []) {
+      if (visited.has(item.edge.to)) continue;
+      visited.add(item.edge.to);
+      predecessor.set(item.edge.to, { from: id, index: item.index });
+      queue.push(item.edge.to);
+    }
+  }
+  if (!visited.has(toId)) return null;
+  const nodeIds = [toId];
+  const edgeIndexes = [];
+  for (let cursor = toId; cursor !== fromId;) {
+    const prior = predecessor.get(cursor);
+    if (!prior) return null;
+    edgeIndexes.unshift(prior.index);
+    nodeIds.unshift(prior.from);
+    cursor = prior.from;
+  }
+  return { nodeIds, edgeIndexes };
+}
+
+function renderProbePanel(path) {
+  const panel = document.getElementById('probe-panel');
+  if (!panel) return;
+  const nodes = path.nodeIds.map((id) => state.model.byId.get(id)).filter(Boolean);
+  const handoffs = nodes.slice(1).reduce((total, node, index) => {
+    const prior = nodes[index];
+    return total + (prior?.owner && node?.owner && prior.owner !== node.owner ? 1 : 0);
+  }, 0);
+  const systems = nodes.filter((node) => node.type === 'system').length;
+  const manual = nodes.filter((node) => ['manual', 'at-risk'].includes(node.automation)).length;
+  panel.replaceChildren(
+    h('div', { class: 'probe-head' },
+      h('div', {}, h('span', {}, 'Path probe'), h('strong', {}, `${nodes[0]?.label} → ${nodes[nodes.length - 1]?.label}`)),
+      h('button', { title: 'Clear path probe', onClick: () => { setTool('select'); } }, 'Close')),
+    h('div', { class: 'probe-metrics' },
+      h('div', {}, h('strong', {}, String(Math.max(0, nodes.length - 1))), h('span', {}, 'handoffs')),
+      h('div', {}, h('strong', {}, String(handoffs)), h('span', {}, 'owner changes')),
+      h('div', {}, h('strong', {}, String(systems)), h('span', {}, 'systems')),
+      h('div', {}, h('strong', {}, String(manual)), h('span', {}, 'manual / at risk'))),
+    h('p', {}, manual ? 'The highlighted path has automation gaps worth reviewing.' : 'This path has no manually flagged steps.'),
+  );
+  panel.hidden = false;
+}
+
+function hideProbePanel() {
+  const panel = document.getElementById('probe-panel');
+  if (panel) panel.hidden = true;
+}
+
+function reviewKey(nodeId) {
+  return `${state.mapId || 'map'}:${nodeId}`;
+}
+
+function formatReviewDate(value) {
+  if (!value) return 'just now';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'recently';
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date);
+}
+
+function closeReview() {
+  const tray = document.getElementById('review-tray');
+  if (tray) tray.hidden = true;
+}
+
+export function openReview(nodeId = state.selectedId) {
+  const node = nodeId ? state.model?.byId.get(nodeId) : null;
+  if (!node) {
+    ui.toast(state.standalone ? 'Select a step to inspect its review trail' : 'Select a step before leaving a review note');
+    return;
+  }
+  const tray = document.getElementById('review-tray');
+  if (!tray) return;
+  const notes = [...(node.review ?? [])].sort((a, b) => Number(a.resolved) - Number(b.resolved));
+  const openCount = notes.filter((note) => !note.resolved).length;
+  const textarea = h('textarea', { placeholder: 'What should the process owner review?', 'aria-label': 'Review note' });
+  const list = h('div', { class: 'review-list' }, notes.length ? notes.map((note) =>
+    h('article', { class: `review-note${note.resolved ? ' resolved' : ''}` },
+      h('div', { class: 'review-note-meta' }, h('strong', {}, note.author), h('span', {}, formatReviewDate(note.createdAt))),
+      h('p', {}, note.body),
+      state.standalone ? null : h('button', { class: 'review-resolve', onClick: () => {
+        ctrl.commit(() => edit.setReviewResolved(node.id, note.id, !note.resolved)).then((ok) => { if (ok) openReview(node.id); });
+      } }, note.resolved ? 'Reopen' : 'Resolve')),
+    ) : h('div', { class: 'review-empty' }, 'No review notes yet. Capture a decision, question, or risk where the work happens.'));
+  tray.replaceChildren(
+    h('div', { class: 'review-head' },
+      h('div', {}, h('span', {}, 'Review trail'), h('h2', {}, node.label), h('small', {}, `${openCount} open ${openCount === 1 ? 'note' : 'notes'}`)),
+      h('button', { title: 'Close review trail', onClick: closeReview }, 'Close')),
+    list,
+    state.standalone ? null : h('div', { class: 'review-compose' }, textarea,
+      h('button', { onClick: () => {
+        ctrl.commit(() => edit.addReviewComment(node.id, { body: textarea.value })).then((ok) => { if (ok) openReview(node.id); });
+      } }, 'Add note')),
+  );
+  tray.dataset.review = reviewKey(node.id);
+  tray.hidden = false;
+  textarea.focus();
+}
+
+function makeDialog(title, body) {
+  const root = document.getElementById('dialog-root');
+  const close = () => backdrop.remove();
+  const backdrop = h('div', { class: 'dialog-backdrop workbench-backdrop', onPointerdown: (event) => { if (event.target === backdrop) close(); } },
+    h('section', { class: 'dialog workbench-dialog', role: 'dialog', 'aria-label': title },
+      h('div', { class: 'workbench-dialog-head' }, h('h2', {}, title), h('button', { onClick: close, title: 'Close' }, 'Close')),
+      body));
+  root.append(backdrop);
+  return close;
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard?.writeText(text);
+    return true;
+  } catch {
+    const area = h('textarea', { style: 'position:fixed;left:-9999px' }, text);
+    document.body.append(area);
+    area.select();
+    const ok = document.execCommand?.('copy');
+    area.remove();
+    return !!ok;
+  }
+}
+
+export function openShareDialog() {
+  const nodeId = state.selectedId;
+  const link = nodeId ? ctrl.nodeUrl(nodeId) : `${location.origin}${location.pathname}#/map/${encodeURIComponent(state.mapId || '')}`;
+  const input = h('input', { class: 'f-input', value: link, readonly: '' });
+  makeDialog('Share & own this map', h('div', { class: 'share-stack' },
+    h('p', { class: 'hint' }, 'A deep link opens the selected step in context. The map source remains portable YAML.'),
+    h('div', { class: 'share-link' }, input, h('button', { class: 'd-btn primary', onClick: async () => { if (await copyText(link)) ui.toast('Link copied'); } }, 'Copy link')),
+    h('div', { class: 'share-actions' },
+      h('button', { class: 'd-btn', onClick: downloadYaml }, 'Download YAML'),
+      h('button', { class: 'd-btn', onClick: () => { if (state.mapId) window.location.href = `/export/${encodeURIComponent(state.mapId)}.html`; } }, 'Download standalone app'))));
+}
+
+export function downloadYaml() {
+  if (!state.source) return;
+  const blob = new Blob([state.source], { type: 'text/yaml;charset=utf-8' });
+  const href = URL.createObjectURL(blob);
+  const anchor = h('a', { href, download: `${state.mapId || 'serigraph'}.yaml` });
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 0);
+  ui.toast('YAML downloaded');
+}
+
+export function openHistory() {
+  const revisions = ctrl.listRevisions();
+  const body = h('div', { class: 'history-list' }, revisions.length
+    ? revisions.slice(0, 12).map((revision, index) => h('div', { class: 'history-row' },
+      h('div', {}, h('strong', {}, revision.label || 'Edited map'), h('small', {}, formatReviewDate(revision.savedAt))),
+      state.standalone ? null : h('button', { class: 'd-btn', onClick: () => ctrl.restoreRevision(revision) }, index === 0 ? 'Restore' : 'Restore')))
+    : h('p', { class: 'hint' }, 'Your next map edit creates a local recovery point. The latest 30 are kept in this browser.'));
+  makeDialog('Revision recovery', body);
+}
+
+export function handleNodeClick(nodeId) {
+  if (!state.model) return false;
+  if (state.activeTool === 'hand') return true;
+  if (state.activeTool === 'note') { openReview(nodeId); return true; }
+  if (state.activeTool === 'automate') { ui.openAutomation(nodeId); setTool('select'); return true; }
+  if (state.activeTool !== 'probe') {
+    if (state.activeTool === 'connect' && !state.connectFrom) {
+      startConnect(nodeId);
+      return true;
+    }
+    return false;
+  }
+  if (!state.probeStartId) {
+    state.probeStartId = nodeId;
+    canvas.setProbePath(null);
+    ui.toast('Now choose a downstream outcome');
+    return true;
+  }
+  if (nodeId === state.probeStartId) {
+    ui.toast('Choose a different downstream step');
+    return true;
+  }
+  const path = findDirectedPath(state.probeStartId, nodeId);
+  if (!path) {
+    ui.toast('No downstream path connects those two steps', true);
+    return true;
+  }
+  state.probeStartId = null;
+  canvas.setProbePath(path);
+  renderProbePanel(path);
+  return true;
+}
+
+export function completeConnect() {
+  if (state.activeTool === 'connect') setTool('select');
+}
+
+// Escape should always return the canvas to its neutral, unsurprising state.
+// This is intentionally exported rather than duplicating state resets in the
+// keyboard handler so pointer and keyboard flows cannot get out of sync.
+export function cancelTool() {
+  closeFlyout();
+  closeReview();
+  setTool('select');
+}
+
+export function initWorkbench() {
+  rail = document.getElementById('tool-rail');
+  if (!rail) return;
+  if (!toolIsVisible(state.activeTool)) state.activeTool = 'select';
+  rail.replaceChildren(...visibleToolGroups().flatMap((group, groupIndex) => [
+    groupIndex ? h('div', { class: 'tool-separator' }) : null,
+    ...group.map((tool) => h('button', {
+      class: 'tool-button',
+      'data-tool': tool.id,
+      'aria-label': `${tool.label} (${tool.shortcut})`,
+      title: `${tool.label} · ${tool.shortcut}\n${tool.description}`,
+      onClick: (event) => activateTool(tool.id, event.currentTarget),
+    }, svgIcon(TOOL_ICONS[tool.id]), tool.flyout ? h('i', { class: 'tool-caret' }) : null)),
+  ].filter(Boolean)));
+
+  bus.on('selection-changed', refreshRail);
+  bus.on('view-changed', () => { closeFlyout(); closeReview(); setTool('select'); });
+  document.addEventListener('pointerdown', (event) => {
+    const flyout = document.getElementById('tool-flyout');
+    if (flyout && !flyout.hidden && !flyout.contains(event.target) && !rail?.contains(event.target)) closeFlyout();
+  });
+  refreshRail();
+}
+
+export function shortcutTool(key) {
+  const normalized = String(key || '').toLowerCase();
+  const tool = visibleToolGroups().flat().find((item) => item.shortcut.toLowerCase() === normalized);
+  if (!tool) return false;
+  const button = rail?.querySelector(`[data-tool="${tool.id}"]`);
+  return activateTool(tool.id, button);
+}

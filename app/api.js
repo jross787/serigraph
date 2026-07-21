@@ -47,7 +47,7 @@ export const api = {
     return jfetch('/api/templates');
   },
   async importStatus() {
-    if (state.standalone) return { available: false, hint: 'Imports need the local Opsmap server.' };
+    if (state.standalone) return { available: false, hint: 'Imports need the local Serigraph server.' };
     return jfetch('/api/import/status');
   },
   async importTranscript(transcript) {

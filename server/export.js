@@ -16,8 +16,12 @@ const MODULE_FILES = [
   'app/canvas.js',
   'app/edit.js',
   'app/controller.js',
+  'app/opportunity.js',
+  'app/product.js',
   'app/ui.js',
   'app/present.js',
+  'app/workbench.js',
+  'app/product-workspace.js',
   'app/main.js',
 ];
 
@@ -50,7 +54,7 @@ export async function buildExport(root, id, mapSource) {
   }
 
   const { model } = parseMap(mapSource);
-  const title = model ? `${model.name} — Opsmap` : `${id} — Opsmap`;
+  const title = model ? `${model.name} — Serigraph` : `${id} — Serigraph`;
   const payload = JSON.stringify({ id, name: model?.name ?? id, source: mapSource }).replace(/</g, '\\u003c');
 
   // replacement callbacks throughout: user content (map name, YAML source)

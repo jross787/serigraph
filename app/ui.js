@@ -1,6 +1,9 @@
 // All chrome around the canvas: detail panel, dialogs, template browser,
 // search palette, breadcrumbs, map switcher, toasts, error/empty states.
-import { parseMap, NODE_TYPES, ancestryOf } from '../shared/model.js';
+import {
+  parseMap, NODE_TYPES, AUTOMATION_STATES, PLANNING_TYPES, PLAN_STATUSES,
+  PLAN_PRIORITIES, RELATION_TYPES, ancestryOf,
+} from '../shared/model.js';
 import { nodeCost, rollupCost, formatMoney, formatPayback, formatPercent, compactMoney } from '../shared/cost.js';
 import { api } from './api.js';
 import { state, bus } from './state.js';
@@ -8,6 +11,9 @@ import * as ctrl from './controller.js';
 import * as edit from './edit.js';
 import * as canvas from './canvas.js';
 import { ICONS } from './canvas.js';
+import { opportunityDefaults, calculateOpportunity, assessOpportunity } from './opportunity.js';
+
+let fieldId = 0;
 
 // ── tiny DOM helpers ─────────────────────────────────────────────────
 function h(tag, props = {}, ...children) {
@@ -22,6 +28,16 @@ function h(tag, props = {}, ...children) {
     n.append(c.nodeType ? c : document.createTextNode(c));
   }
   return n;
+}
+
+function associateFieldLabels(root) {
+  for (const field of root.querySelectorAll('.f-field')) {
+    const label = field.querySelector('label');
+    const control = field.querySelector('input, textarea, select');
+    if (!label || !control) continue;
+    if (!control.id) control.id = `serigraph-field-${++fieldId}`;
+    label.htmlFor = control.id;
+  }
 }
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -111,6 +127,7 @@ function modal(title, body, actions) {
         class: `d-btn${a.primary ? ' primary' : ''}${a.danger ? ' danger' : ''}`,
         onClick: () => { const r = a.onClick?.(); if (r !== false) close(); },
       }, a.label))));
+  associateFieldLabels(dialog);
   const backdrop = h('div', { class: 'dialog-backdrop', onPointerdown: (ev) => { if (ev.target === backdrop) close(); } }, dialog);
   const onKey = (ev) => {
     if (ev.key === 'Escape') { ev.stopPropagation(); close(); }
@@ -145,15 +162,77 @@ function typeSegment(initial) {
   return seg;
 }
 
-export function addNodeDialog(ownerId, presetType = 'process') {
+function automationSelect(initial = '') {
+  const select = h('select', { class: 'f-select' },
+    h('option', { value: '' }, 'Not assessed'),
+    ...AUTOMATION_STATES.map((value) => h('option', { value }, value.replace('-', ' '))));
+  select.value = initial;
+  return select;
+}
+
+function enumSelect(values, initial = '', emptyLabel = '') {
+  const select = h('select', { class: 'f-select' },
+    emptyLabel ? h('option', { value: '' }, emptyLabel) : null,
+    ...values.map((value) => h('option', { value }, value.replace(/-/g, ' '))));
+  select.value = initial;
+  return select;
+}
+
+function lineValues(value) {
+  return String(value || '').split('\n').map((item) => item.replace(/^[-*]\s*/, '').trim()).filter(Boolean);
+}
+
+function relationValues(value) {
+  return lineValues(value).map((line, index) => {
+    const match = line.match(/^([a-z-]+)\s*->\s*([A-Za-z0-9._-]+)$/);
+    if (!match) throw new Error(`Relation line ${index + 1} must use "type -> node-id".`);
+    const [, type, to] = match;
+    if (!RELATION_TYPES.includes(type)) {
+      throw new Error(`Relation line ${index + 1} has unknown type "${type}".`);
+    }
+    return { type, to };
+  });
+}
+
+export function addNodeDialog(ownerId, options = {}) {
   if (state.standalone || !state.model) return;
+  // The canvas palette historically passed a type string; the workbench
+  // passes an options object. Keep both interaction paths compatible.
+  const type = typeof options === 'string' ? options : options?.type ?? 'process';
   const ownerLabel = ownerId ? state.model.byId.get(ownerId)?.label : state.model?.name;
   const label = h('input', { class: 'f-input', placeholder: 'e.g. Verify bank statements' });
-  const seg = typeSegment(presetType);
+  const seg = typeSegment(NODE_TYPES.includes(type) ? type : 'process');
   const desc = h('textarea', { class: 'f-textarea', placeholder: 'What happens here? (optional)' });
+  const owner = h('input', { class: 'f-input', placeholder: 'e.g. RevOps' });
+  const automation = automationSelect('manual');
+  const productMode = state.model.document.kind !== 'process';
+  const planningType = enumSelect(PLANNING_TYPES, 'requirement');
+  const planningStatus = enumSelect(PLAN_STATUSES, 'draft');
+  const planningPriority = enumSelect(PLAN_PRIORITIES, 'should');
+  const planningPhase = enumSelect(['now', 'next', 'later'], 'next');
+  const acceptance = h('textarea', { class: 'f-textarea compact-textarea', placeholder: 'One acceptance criterion per line' });
+  const planningEnabled = h('input', { type: 'checkbox' });
+  planningEnabled.checked = productMode;
+  const planningFields = h('div', { class: 'planning-fields' },
+    h('div', { class: 'form-row' },
+      h('div', { class: 'f-field' }, h('label', {}, 'Planning type'), planningType),
+      h('div', { class: 'f-field' }, h('label', {}, 'Status'), planningStatus)),
+    h('div', { class: 'form-row' },
+      h('div', { class: 'f-field' }, h('label', {}, 'Priority'), planningPriority),
+      h('div', { class: 'f-field' }, h('label', {}, 'Roadmap phase'), planningPhase)),
+    h('div', { class: 'f-field' }, h('label', {}, 'Acceptance criteria'), acceptance));
+  const syncPlanningFields = () => { planningFields.hidden = !planningEnabled.checked; };
+  planningEnabled.addEventListener('change', syncPlanningFields);
+  syncPlanningFields();
   const body = h('div', {},
     h('div', { class: 'f-field' }, h('label', {}, 'Label'), label),
     h('div', { class: 'f-field' }, h('label', {}, 'Type'), seg),
+    h('div', { class: 'form-row' },
+      h('div', { class: 'f-field' }, h('label', {}, 'Owner'), owner),
+      h('div', { class: 'f-field' }, h('label', {}, 'Automation'), automation)),
+    productMode ? h('div', { class: 'planning-form-block' },
+      h('label', { class: 'planning-toggle' }, planningEnabled, h('span', {}, 'Include as a product-planning item')),
+      planningFields) : null,
     h('div', { class: 'f-field' }, h('label', {}, 'Description'), desc),
     h('p', { class: 'hint' }, `Will be added ${ownerId ? `inside “${ownerLabel}”` : `at the top level of “${ownerLabel}”`}.`));
   modal('Add node', body, [
@@ -164,7 +243,14 @@ export function addNodeDialog(ownerId, presetType = 'process') {
         const text = label.value.trim();
         if (!text) { label.focus(); return false; }
         const id = edit.uniqueId(state.model, edit.slugify(text));
-        ctrl.commit(() => edit.addNode(ownerId, { id, type: seg.value(), label: text, description: desc.value }), { select: id })
+        ctrl.commit(() => edit.addNode(ownerId, {
+          id, type: seg.value(), label: text, description: desc.value,
+          owner: owner.value, automation: automation.value,
+          planning: productMode && planningEnabled.checked ? {
+            type: planningType.value, status: planningStatus.value, priority: planningPriority.value,
+            phase: planningPhase.value, acceptance: lineValues(acceptance.value),
+          } : null,
+        }), { select: id })
           .then(async (ok) => {
             if (!ok) return;
             if (ownerId && ownerId !== state.scopeId) {
@@ -210,8 +296,11 @@ export function helpDialog() {
     ['double-click / ⏎', 'Zoom into a container node'],
     ['Esc / ⌫', 'Zoom back out (Esc also closes panels)'],
     ['← ↑ ↓ →', 'Move selection between nodes'],
-    ['N', 'Add a node'],
-    ['P', 'Presentation mode'],
+    ['V / H', 'Select / pan'],
+    ['N / C', 'Add a unit / connect steps'],
+    ['L / T', 'Owner lanes / review note'],
+    ['P / A', 'Path probe / automation lens'],
+    ['⇧P', 'Presentation mode'],
     ['+ / − / 0', 'Zoom in / out / fit'],
     ['⌘Z / ⌘⇧Z', 'Undo / redo'],
     ['drag a node', 'Move it — pins its position (click the pin badge to release)'],
@@ -229,16 +318,291 @@ export function helpDialog() {
 
 // ── detail panel ─────────────────────────────────────────────────────
 let editMode = false;
+let automationMode = false;
+let contextActionsArmed = null;
+let scenarioNodeId = null;
+
+export function armContextActions(nodeId) {
+  contextActionsArmed = nodeId;
+}
 
 export function showDetail(nodeId, { edit = false } = {}) {
   editMode = edit;
+  automationMode = false;
   state.detailNodeId = nodeId;
   renderDetail();
 }
 export function hideDetail() {
+  editMode = false;
+  automationMode = false;
   state.detailNodeId = null;
   const panel = document.getElementById('detail');
   if (panel) panel.hidden = true;
+  hideContextActions();
+  clearScenarioPreview();
+}
+
+function beginConnect(node) {
+  hideContextActions();
+  state.connectFrom = node.id;
+  canvas.paintSelection();
+  toast('Choose the step this connects to · Esc cancels');
+}
+
+function confirmDelete(node) {
+  const n = node.stats.descendantCount;
+  modal(`Delete “${node.label}”?`,
+    h('p', { class: 'hint' }, n
+      ? `This also deletes the ${n} node${n === 1 ? '' : 's'} nested inside it, plus any edges touching it.`
+      : 'Any edges touching it are removed too.'),
+    [{ label: 'Cancel' }, {
+      label: 'Delete', danger: true,
+      onClick: () => {
+        hideDetail();
+        ctrl.commit(() => edit.deleteNode(node.id), { select: null })
+          .then((ok) => ok && toast(`Deleted “${node.label}”`));
+      },
+    }]);
+}
+
+function beginEdit() {
+  editMode = true;
+  automationMode = false;
+  contextActionsArmed = null;
+  renderDetail();
+}
+
+function beginAutomation(node) {
+  editMode = false;
+  automationMode = true;
+  contextActionsArmed = null;
+  state.detailNodeId = node.id;
+  hideContextActions();
+  renderDetail();
+}
+
+export function openAutomation(nodeId = state.selectedId) {
+  const node = nodeId ? state.model?.byId.get(nodeId) : null;
+  if (!node) { toast('Select a step to assess its automation opportunity'); return false; }
+  beginAutomation(node);
+  return true;
+}
+
+export function startConnect(nodeId = state.selectedId) {
+  const node = nodeId ? state.model?.byId.get(nodeId) : null;
+  if (!node || node.ownerId !== (state.scopeId ?? null)) {
+    toast('Select the step this connection should start from');
+    return false;
+  }
+  beginConnect(node);
+  return true;
+}
+
+function hideContextActions() {
+  const actions = document.getElementById('context-actions');
+  if (actions) actions.hidden = true;
+}
+
+function positionContextActions() {
+  const actions = document.getElementById('context-actions');
+  const stage = document.getElementById('stage');
+  if (!actions || !stage || actions.hidden || !state.selectedId) return;
+  const rect = canvas.nodeScreenRect(state.selectedId);
+  if (!rect) return;
+  const w = actions.offsetWidth || 286;
+  const hgt = actions.offsetHeight || 52;
+  let left = rect.x + rect.width / 2 - w / 2;
+  let top = rect.y + rect.height + 14;
+  const detail = document.getElementById('detail');
+  const stageRect = stage.getBoundingClientRect();
+  const rightEdge = detail && !detail.hidden && window.innerWidth > 700
+    ? detail.getBoundingClientRect().left - stageRect.left - 12
+    : stage.clientWidth;
+  const shelfTop = stage.clientHeight - 24;
+  if (top + hgt > shelfTop) top = rect.y - hgt - 14;
+  left = Math.max(16, Math.min(rightEdge - w - 16, left));
+  top = Math.max(92, Math.min(stage.clientHeight - hgt - 24, top));
+  actions.style.left = `${left}px`;
+  actions.style.top = `${top}px`;
+}
+
+function renderContextActions(node) {
+  const actions = document.getElementById('context-actions');
+  if (!actions || contextActionsArmed !== node.id || editMode || automationMode || state.presenting) return hideContextActions();
+  const ro = state.standalone;
+  const more = h('details', { class: 'context-more' },
+    h('summary', { class: 'context-btn' }, 'More'),
+    h('div', { class: 'context-menu' },
+      node.children ? h('button', { onClick: () => addNodeDialog(node.id) }, 'Add child') : null,
+      node.links.map((l) => {
+        const href = safeUrl(l.url);
+        return href ? h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, l.label) : null;
+      }),
+      node.links.length ? h('button', { onClick: () => navigator.clipboard?.writeText(ctrl.nodeUrl(node.id)).then(() => toast('Link copied')) }, 'Copy deep link') : null,
+      !ro ? h('button', { class: 'danger', onClick: () => confirmDelete(node) }, 'Delete step') : null));
+  actions.replaceChildren(
+    h('button', {
+      class: 'context-btn',
+      onClick: () => node.children ? ctrl.diveInto(node.id) : navigator.clipboard?.writeText(ctrl.nodeUrl(node.id)).then(() => toast('Link copied')),
+    }, node.children ? 'Open' : 'Link'),
+    ro ? null : h('button', { class: 'context-btn', onClick: beginEdit }, 'Edit'),
+    ro ? null : h('button', { class: 'context-btn', onClick: () => beginConnect(node) }, 'Connect'),
+    ro ? null : h('button', { class: 'context-btn automate', onClick: () => beginAutomation(node) }, 'Automate'),
+    more);
+  actions.hidden = false;
+  requestAnimationFrame(positionContextActions);
+}
+
+function formatOpportunityMoney(value) {
+  if (value >= 1000000) return `$${(value / 1000000).toFixed(1)}m`;
+  if (value >= 1000) return `$${Math.round(value / 1000)}k`;
+  return `$${Math.round(value)}`;
+}
+
+function clearScenarioPreview() {
+  scenarioNodeId = null;
+  canvas.paintScenario();
+  const badge = document.getElementById('scenario-preview');
+  if (badge) badge.hidden = true;
+}
+
+function positionScenarioPreview() {
+  const badge = document.getElementById('scenario-preview');
+  if (!badge || badge.hidden || !scenarioNodeId) return;
+  const rect = canvas.nodeScreenRect(scenarioNodeId);
+  if (!rect) return;
+  const width = badge.offsetWidth || 230;
+  const stage = document.getElementById('stage');
+  const detail = document.getElementById('detail');
+  const stageRect = stage.getBoundingClientRect();
+  const rightEdge = detail && !detail.hidden && window.innerWidth > 700
+    ? detail.getBoundingClientRect().left - stageRect.left - 12
+    : stage.clientWidth;
+  badge.style.left = `${Math.max(16, Math.min(rightEdge - width - 16, rect.x + rect.width / 2 - width / 2))}px`;
+  badge.style.top = `${Math.max(94, rect.y - badge.offsetHeight - 14)}px`;
+}
+
+function showScenarioPreview(node, metrics) {
+  scenarioNodeId = node.id;
+  canvas.paintScenario(node.id);
+  const badge = document.getElementById('scenario-preview');
+  badge.replaceChildren(
+    h('span', { class: 'scenario-kicker' }, 'Scenario active'),
+    h('strong', {}, `${Math.round(metrics.cycleReduction)}% faster · ${Math.round(metrics.annualHours).toLocaleString()} h/year`));
+  badge.hidden = false;
+  requestAnimationFrame(positionScenarioPreview);
+}
+
+function renderAutomationDetail(panel, node) {
+  hideContextActions();
+  const defaults = opportunityDefaults(node);
+  const assessment = assessOpportunity(node);
+  const scope = state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children;
+  const outcomes = (scope?.edges ?? [])
+    .filter((edge) => edge.from === node.id)
+    .map((edge) => edge.label || state.model.byId.get(edge.to)?.label)
+    .filter(Boolean)
+    .slice(0, 3);
+
+  panel.hidden = false;
+  panel.classList.remove('editing', 'edge-detail');
+  panel.classList.add('automation-lens');
+
+  const head = h('div', { class: 'panel-head opportunity-head' },
+    h('span', { class: 'opportunity-kicker' }, 'Automation opportunity'),
+    h('h2', {}, node.label),
+    h('div', { class: 'readiness-line' },
+      h('strong', {}, `${assessment.score}`),
+      h('div', {}, h('span', {}, assessment.label), h('small', {}, 'Readiness score'))),
+    h('progress', { max: '100', value: String(assessment.score), 'aria-label': 'Automation readiness score' }),
+    h('button', {
+      class: 'panel-close', title: 'Back to overview',
+      onClick: () => { automationMode = false; clearScenarioPreview(); renderDetail(); },
+    }, 'Overview'));
+
+  const metrics = {
+    hours: h('strong', {}),
+    value: h('strong', {}),
+    payback: h('strong', {}),
+    cycle: h('strong', {}),
+  };
+  const metric = (label, value, note) => h('div', { class: 'opp-metric' },
+    h('span', {}, label), value, h('small', {}, note));
+  const impact = h('div', { class: 'opportunity-impact' },
+    metric('Hours returned', metrics.hours, 'per year'),
+    metric('Capacity value', metrics.value, 'per year'),
+    metric('Estimated payback', metrics.payback, 'planning estimate'),
+    metric('Cycle-time reduction', metrics.cycle, 'at target coverage'));
+
+  const makeInput = (label, value, suffix) => {
+    const input = h('input', { class: 'opp-input', type: 'number', min: '0', value: String(value), 'aria-label': label });
+    return { input, el: h('label', { class: 'opp-assumption' }, h('span', {}, label), h('div', {}, input, h('small', {}, suffix))) };
+  };
+  const cases = makeInput('Cases / month', defaults.monthlyCases, 'cases');
+  const minutes = makeInput('Minutes / case', defaults.minutesPerCase, 'min');
+  const coverage = makeInput('Automation coverage', defaults.coverage, '%');
+  const hourly = makeInput('Value / hour', defaults.hourlyValue, '$');
+
+  const blueprint = h('div', { class: 'opportunity-blueprint' },
+    h('div', { class: 'opp-section-title' }, h('span', {}, 'Recommended blueprint'), h('strong', {}, assessment.pattern)),
+    h('dl', {},
+      h('div', {}, h('dt', {}, 'Trigger'), h('dd', {}, node.trigger || 'Define the starting event')),
+      h('div', {}, h('dt', {}, 'Observe'), h('dd', {}, node.systems.length ? node.systems.join(' · ') : 'Connect source systems')),
+      h('div', {}, h('dt', {}, 'Human control'), h('dd', {}, node.owner ? `${node.owner} owns approval and exceptions` : 'Assign an exception owner')),
+      h('div', {}, h('dt', {}, 'Outcome'), h('dd', {}, outcomes.length ? outcomes.join(' · ') : 'Define a measurable completion state'))));
+
+  const guardrails = h('div', { class: 'opportunity-guardrails' },
+    h('div', { class: 'opp-section-title' }, h('span', {}, 'Before you build'), h('strong', {}, `${assessment.guardrails.length} guardrails`)),
+    h('ul', {}, assessment.guardrails.map((item) => h('li', {}, item))));
+
+  const body = h('div', { class: 'panel-body opportunity-body' },
+    h('div', { class: 'opportunity-model' },
+      h('div', { class: 'opportunity-title-row' },
+        h('div', {}, h('span', {}, 'Modeled impact'), h('small', {}, 'Adjust the assumptions—results update instantly.')),
+        h('span', { class: 'estimate-pill' }, 'Planning estimate')),
+      impact,
+      h('div', { class: 'opportunity-assumptions' }, cases.el, minutes.el, coverage.el, hourly.el)),
+    h('div', { class: 'opportunity-plan' }, blueprint, guardrails));
+
+  let currentMetrics = calculateOpportunity(defaults);
+  const update = () => {
+    currentMetrics = calculateOpportunity({
+      ...defaults,
+      monthlyCases: cases.input.value,
+      minutesPerCase: minutes.input.value,
+      coverage: coverage.input.value,
+      hourlyValue: hourly.input.value,
+    });
+    metrics.hours.textContent = Math.round(currentMetrics.annualHours).toLocaleString();
+    metrics.value.textContent = formatOpportunityMoney(currentMetrics.annualValue);
+    metrics.payback.textContent = Number.isFinite(currentMetrics.paybackMonths) ? `${currentMetrics.paybackMonths.toFixed(1)} mo` : '—';
+    metrics.cycle.textContent = `−${Math.round(currentMetrics.cycleReduction)}%`;
+    if (scenarioNodeId === node.id) showScenarioPreview(node, currentMetrics);
+  };
+  [cases.input, minutes.input, coverage.input, hourly.input].forEach((input) => input.addEventListener('input', update));
+  update();
+
+  const previewButton = h('button', {
+    class: 'pa-btn',
+    onClick: () => {
+      if (scenarioNodeId === node.id) clearScenarioPreview();
+      else showScenarioPreview(node, currentMetrics);
+      previewButton.textContent = scenarioNodeId === node.id ? 'Remove preview' : 'Preview on map';
+    },
+  }, 'Preview on map');
+  const actions = h('div', { class: 'panel-actions opportunity-actions' },
+    h('div', {}, h('span', {}, 'This is a decision model'), h('small', {}, 'Validate assumptions with the process owner before funding the build.')),
+    previewButton,
+    h('button', {
+      class: 'pa-btn primary-action',
+      onClick: async () => {
+        const text = `${node.label} automation business case\n${Math.round(currentMetrics.annualHours).toLocaleString()} hours returned/year\n${formatOpportunityMoney(currentMetrics.annualValue)} annual capacity value\n${currentMetrics.paybackMonths.toFixed(1)} month estimated payback\n${assessment.pattern}`;
+        await navigator.clipboard?.writeText(text);
+        toast('Business case copied');
+      },
+    }, 'Copy business case →'));
+
+  panel.replaceChildren(head, body, actions);
 }
 
 // only allow link protocols that can't execute script
@@ -264,22 +628,56 @@ function renderDetail() {
   if (state.selectedEdge != null && !node) return renderEdgeDetail(panel);
   if (!node) { panel.hidden = true; return; }
   panel.hidden = false;
+  panel.classList.toggle('editing', editMode);
+  panel.classList.toggle('automation-lens', automationMode);
+  panel.classList.remove('edge-detail');
+  if (automationMode) return renderAutomationDetail(panel, node);
+  renderContextActions(node);
 
   const ro = state.standalone;
   const head = h('div', { class: 'panel-head' },
     h('div', { class: 'titles' },
+      h('span', { class: 'inspector-eyebrow' }, node.planning ? 'Product item' : 'Selection'),
       h('span', { class: `type-pill t-${node.type}` }, typeIcon(node.type, 12), node.type),
       h('h2', {}, node.label),
       h('button', {
         class: 'node-id', title: 'Copy deep link to this node',
         onClick: () => { navigator.clipboard?.writeText(ctrl.nodeUrl(node.id)); toast('Link copied'); },
       }, `#${node.id} ⧉`)),
-    h('button', { class: 'panel-close', title: 'Close (Esc)', onClick: () => { hideDetail(); ctrl.clearSelection(); } }, '✕'));
+    h('button', { class: 'panel-close', title: 'Close (Esc)', onClick: () => { hideDetail(); ctrl.clearSelection(); } }, 'Close'));
 
   const body = h('div', { class: 'panel-body' });
 
   if (!editMode) {
-    // provenance flag — inferred from a transcript, awaiting human confirmation
+    body.classList.add('focus-shelf-body');
+    const status = node.automation || 'not-assessed';
+    const fact = (label, value, cls = '') => h('div', { class: `focus-fact ${cls}` },
+      h('span', { class: 'focus-label' }, label),
+      h('strong', {}, value));
+    const systemChips = node.systems.length
+      ? h('div', { class: 'system-chips' }, node.systems.map((s) => h('span', {}, s)))
+      : h('span', { class: 'unassigned' }, 'Not linked');
+    body.append(
+      h('div', { class: 'focus-summary' },
+        node.description
+          ? linkifiedDesc(node.description)
+          : h('div', { class: 'desc placeholder' }, ro ? 'No description.' : 'Describe what happens in this step.')),
+      node.planning ? h('div', { class: 'focus-facts planning-facts' },
+        fact('Owner', node.owner || 'Not assigned'),
+        fact('Status', node.planning.status?.replace('-', ' ') || 'Draft'),
+        fact('Priority', node.planning.priority || 'Unprioritized'),
+        fact('Horizon', node.planning.phase?.replace(/-/g, ' ') || 'Unscheduled'),
+        fact('Target', node.planning.target || 'Not set'),
+        fact('Acceptance', `${node.planning.acceptance.length} checks`))
+        : h('div', { class: 'focus-facts' },
+          fact('Owner', node.owner || 'Not assigned'),
+          fact('Trigger', node.trigger || 'Not documented'),
+          fact('SLA', node.sla || 'No target'),
+          h('div', { class: 'focus-fact systems-fact' }, h('span', { class: 'focus-label' }, 'Systems'), systemChips),
+          h('div', { class: 'focus-fact readiness-fact' },
+            h('span', { class: 'focus-label' }, 'Automation readiness'),
+            h('strong', { class: `automation-state a-${status}` }, status.replace('-', ' ')))));
+    // Transcript-derived facts remain visibly provisional until confirmed.
     const flagNote = state.flags?.nodes?.get(node.id);
     if (flagNote) {
       body.append(h('div', { class: 'panel-section flag-section' },
@@ -291,23 +689,6 @@ function renderDetail() {
             .then((ok) => ok && toast('Confirmed — flag removed from the file')),
         }, '✓ Mark confirmed')));
     }
-
-    body.append(h('div', { class: 'panel-section' },
-      h('h3', {}, 'What happens here'),
-      node.description
-        ? linkifiedDesc(node.description)
-        : h('div', { class: 'desc placeholder' }, ro ? 'No description.' : 'No description yet — Edit to add one.')));
-
-    body.append(h('div', { class: 'panel-section' },
-      h('h3', {}, 'Links'),
-      node.links.length
-        ? node.links.map((l) => {
-            const href = safeUrl(l.url);
-            return h(href ? 'a' : 'div', { class: 'link-row', ...(href ? { href, target: '_blank', rel: 'noopener noreferrer' } : {}) },
-              typeIcon('artifact', 13),
-              h('span', {}, l.label, h('span', { class: 'url' }, l.url)));
-          })
-        : h('div', { class: 'no-links' }, ro ? 'No links.' : 'No links yet — SOPs, repos, dashboards…')));
 
     body.append(renderCostSection(node, ro));
 
@@ -323,18 +704,62 @@ function renderDetail() {
           }, 'Release to auto-layout'))));
     }
 
-    if (node.children) {
-      body.append(h('div', { class: 'panel-section' },
-        h('h3', {}, 'Sub-map'),
-        h('button', { class: 'contains-btn', onClick: () => ctrl.diveInto(node.id) },
-          '⤵ Open sub-map',
-          h('span', { class: 'n' }, `${node.stats.childCount} nodes${node.stats.maxDepth > 1 ? `, ${node.stats.maxDepth} levels` : ''}`))));
+    if (node.links.length || node.children) {
+      body.append(h('div', { class: 'focus-aux' },
+        node.children ? h('button', { class: 'focus-link', onClick: () => ctrl.diveInto(node.id) }, `Open ${node.stats.childCount}-step sub-map`) : null,
+        node.links.map((l) => {
+          const href = safeUrl(l.url);
+          return href ? h('a', { class: 'focus-link', href, target: '_blank', rel: 'noopener noreferrer' }, l.label) : null;
+        })));
     }
   } else {
+    hideContextActions();
     const label = h('input', { class: 'f-input', value: node.label });
     const seg = typeSegment(node.type);
     const desc = h('textarea', { class: 'f-textarea' });
     desc.value = node.description;
+    const owner = h('input', { class: 'f-input', value: node.owner, placeholder: 'Who owns this step?' });
+    const trigger = h('input', { class: 'f-input', value: node.trigger, placeholder: 'What starts this step?' });
+    const sla = h('input', { class: 'f-input', value: node.sla, placeholder: 'e.g. 4 business hours' });
+    const automation = automationSelect(node.automation);
+    const systems = h('input', { class: 'f-input', value: node.systems.join(', '), placeholder: 'Salesforce, Plaid' });
+    const productMode = state.model.document.kind !== 'process' || !!node.planning;
+    const planning = node.planning ?? { type: 'requirement', status: 'draft', priority: 'should', phase: 'next', target: '', acceptance: [], evidence: [], risks: [], dependsOn: [], rice: {} };
+    const planningType = enumSelect(PLANNING_TYPES, planning.type || 'requirement');
+    const planningStatus = enumSelect(PLAN_STATUSES, planning.status || 'draft');
+    const planningPriority = enumSelect(PLAN_PRIORITIES, planning.priority || 'should');
+    const phaseOptions = ['now', 'next', 'later'];
+    if (planning.phase && !phaseOptions.includes(planning.phase)) phaseOptions.push(planning.phase);
+    const planningPhase = enumSelect(phaseOptions, planning.phase || '', 'No horizon');
+    const planningTarget = h('input', { class: 'f-input', value: planning.target || '', placeholder: 'e.g. 2026-Q4' });
+    const acceptance = h('textarea', { class: 'f-textarea compact-textarea' }); acceptance.value = planning.acceptance.join('\n');
+    const evidence = h('textarea', { class: 'f-textarea compact-textarea' }); evidence.value = planning.evidence.join('\n');
+    const risks = h('textarea', { class: 'f-textarea compact-textarea' }); risks.value = planning.risks.join('\n');
+    const dependsOn = h('input', { class: 'f-input', value: planning.dependsOn.join(', '), placeholder: 'node-id, another-id' });
+    const relations = h('textarea', { class: 'f-textarea compact-textarea', placeholder: 'supports -> objective-id' });
+    relations.value = node.relations.map((relation) => `${relation.type} -> ${relation.to}`).join('\n');
+    const planningEnabled = h('input', { type: 'checkbox' });
+    planningEnabled.checked = !!node.planning;
+    const planningFields = h('div', { class: 'planning-fields' },
+      h('div', { class: 'form-row' },
+        h('div', { class: 'f-field' }, h('label', {}, 'Planning type'), planningType),
+        h('div', { class: 'f-field' }, h('label', {}, 'Status'), planningStatus)),
+      h('div', { class: 'form-row' },
+        h('div', { class: 'f-field' }, h('label', {}, 'Priority'), planningPriority),
+        h('div', { class: 'f-field' }, h('label', {}, 'Roadmap phase'), planningPhase)),
+      h('div', { class: 'f-field' }, h('label', {}, 'Target period'), planningTarget),
+      h('div', { class: 'f-field' }, h('label', {}, 'Acceptance criteria · one per line'), acceptance),
+      h('div', { class: 'form-row' },
+        h('div', { class: 'f-field' }, h('label', {}, 'Evidence · one per line'), evidence),
+        h('div', { class: 'f-field' }, h('label', {}, 'Risks · one per line'), risks)),
+      h('div', { class: 'f-field' }, h('label', {}, 'Dependencies · node ids, comma-separated'), dependsOn));
+    const syncPlanningFields = () => { planningFields.hidden = !planningEnabled.checked; };
+    planningEnabled.addEventListener('change', syncPlanningFields);
+    syncPlanningFields();
+    const planningPanel = productMode ? h('div', { class: 'planning-form-block' },
+      h('label', { class: 'planning-toggle' }, planningEnabled, h('span', {}, 'Include as a product-planning item')),
+      planningFields,
+      h('div', { class: 'f-field relation-field' }, h('label', {}, 'Traceability relations · type -> node id'), relations)) : null;
     const linksBox = h('div', {});
     const linkRows = [];
     const addLinkRow = (l = { label: '', url: '' }) => {
@@ -361,6 +786,14 @@ function renderDetail() {
     body.append(
       h('div', { class: 'f-field' }, h('label', {}, 'Label'), label),
       h('div', { class: 'f-field' }, h('label', {}, 'Type'), seg),
+      h('div', { class: 'form-row' },
+        h('div', { class: 'f-field' }, h('label', {}, 'Owner'), owner),
+        h('div', { class: 'f-field' }, h('label', {}, 'Automation'), automation)),
+      h('div', { class: 'form-row' },
+        h('div', { class: 'f-field' }, h('label', {}, 'Trigger'), trigger),
+        h('div', { class: 'f-field' }, h('label', {}, 'SLA'), sla)),
+      h('div', { class: 'f-field' }, h('label', {}, 'Systems (comma-separated)'), systems),
+      planningPanel,
       h('div', { class: 'f-field' }, h('label', {}, 'Description'), desc),
       h('div', { class: 'f-field' }, h('label', {}, 'Links'), linksBox,
         h('button', { class: 'add-inline', onClick: () => addLinkRow() }, '+ Add link')),
@@ -373,6 +806,24 @@ function renderDetail() {
               label: label.value.trim() || node.label,
               type: seg.value(),
               description: desc.value,
+              owner: owner.value,
+              trigger: trigger.value,
+              sla: sla.value,
+              automation: automation.value,
+              systems: systems.value.split(',').map((s) => s.trim()).filter(Boolean),
+              planning: productMode ? (planningEnabled.checked ? {
+                ...planning,
+                type: planningType.value,
+                status: planningStatus.value,
+                priority: planningPriority.value,
+                phase: planningPhase.value,
+                target: planningTarget.value,
+                acceptance: lineValues(acceptance.value),
+                evidence: lineValues(evidence.value),
+                risks: lineValues(risks.value),
+                dependsOn: dependsOn.value.split(',').map((value) => value.trim()).filter(Boolean),
+              } : null) : undefined,
+              relations: productMode ? relationValues(relations.value) : undefined,
               links: linkRows.map((r) => r.get()).filter((l) => l.url),
             }));
             if (ok) { editMode = false; renderDetail(); toast('Saved'); }
@@ -380,6 +831,7 @@ function renderDetail() {
         }, 'Save')));
   }
 
+  associateFieldLabels(body);
   panel.replaceChildren(head, body);
 
   if (editMode) {
@@ -390,31 +842,9 @@ function renderDetail() {
 
   if (!editMode && !ro) {
     panel.append(h('div', { class: 'panel-actions' },
-      h('button', { class: 'pa-btn', onClick: () => { editMode = true; renderDetail(); } }, '✎ Edit'),
-      h('button', { class: 'pa-btn', onClick: () => addNodeDialog(node.id) }, '+ Child'),
-      h('button', {
-        class: 'pa-btn', title: 'Draw an edge from this node — then click a sibling',
-        onClick: () => { state.connectFrom = node.id; canvas.paintSelection(); toast('Now click the node this connects to (Esc to cancel)'); },
-      }, '→ Connect'),
-      h('button', {
-        class: 'pa-btn danger',
-        onClick: () => {
-          const n = node.stats.descendantCount;
-          modal(`Delete “${node.label}”?`,
-            h('p', { class: 'hint' }, n
-              ? `This also deletes the ${n} node${n === 1 ? '' : 's'} nested inside it, plus any edges touching it.`
-              : 'Any edges touching it are removed too.'),
-            [{ label: 'Cancel' },
-              {
-                label: 'Delete', danger: true,
-                onClick: () => {
-                  hideDetail();
-                  ctrl.commit(() => edit.deleteNode(node.id), { select: null })
-                    .then((ok) => ok && toast(`Deleted “${node.label}”`));
-                },
-              }]);
-        },
-      }, '🗑 Delete')));
+      node.planning
+        ? h('button', { class: 'pa-btn primary-action', onClick: () => { editMode = true; renderDetail(); } }, 'Edit requirement →')
+        : h('button', { class: 'pa-btn primary-action', onClick: () => beginAutomation(node) }, 'Design automation →')));
   }
 }
 
@@ -590,11 +1020,14 @@ export function renderEconomics() {
 }
 
 function renderEdgeDetail(panel) {
+  hideContextActions();
   const sel = state.selectedEdge;
   const scope = state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children;
   const e = scope?.edges[sel.index];
   if (!e) { panel.hidden = true; return; }
   panel.hidden = false;
+  panel.classList.add('edge-detail');
+  panel.classList.remove('editing');
   const from = state.model.byId.get(e.from), to = state.model.byId.get(e.to);
 
   const label = h('input', { class: 'f-input', placeholder: 'e.g. approved / declined', value: e.label ?? '' });
@@ -653,7 +1086,7 @@ export async function importDialog() {
   document.addEventListener('keydown', onKey, true);
   root.append(backdrop);
 
-  const status = await api.importStatus().catch(() => ({ available: false, hint: 'Could not reach the Opsmap server.' }));
+  const status = await api.importStatus().catch(() => ({ available: false, hint: 'Could not reach the Serigraph server.' }));
 
   let transcript = '';
 
@@ -790,19 +1223,17 @@ function createNodeInside(type, containerId) {
 function initPalette() {
   const pal = document.getElementById('palette');
   if (!pal || state.standalone) return;
-  pal.hidden = false;
-  pal.setAttribute('aria-label', 'Node palette — drag a type onto the canvas');
-  for (const t of NODE_TYPES) {
-    const chip = h('button', {
-      class: `pal-chip t-${t}`,
-      title: `Drag onto the canvas to add a ${t} (click for the dialog)`,
-    }, typeIcon(t, 15), h('span', { class: 'pal-chip-label' }, TYPE_LABELS[t]));
-    chip.addEventListener('pointerdown', (ev) => startPaletteDrag(ev, t, chip));
-    pal.append(chip);
-  }
+  // Serigraph's Unit flyout owns the visible type palette. Keeping this host
+  // hidden avoids a second floating toolbar while the same drag-to-create
+  // interaction is attached to the flyout buttons by workbench.js.
+  pal.hidden = true;
 }
 
-function startPaletteDrag(ev, type, chip) {
+export function enableNodeTypeDrag(chip, type, { onActivate, onComplete } = {}) {
+  chip.addEventListener('pointerdown', (ev) => startPaletteDrag(ev, type, chip, { onActivate, onComplete }));
+}
+
+function startPaletteDrag(ev, type, chip, { onActivate, onComplete } = {}) {
   if (ev.button !== 0 || state.presenting || !state.model) return;
   ev.preventDefault();
   const pid = ev.pointerId;
@@ -833,11 +1264,16 @@ function startPaletteDrag(ev, type, chip) {
     ghost?.remove();
     canvas.setDropHighlight(null);
     if (cancelled) return;
-    if (!moved) { addNodeDialog(state.scopeId, type); return; } // plain click
+    if (!moved) {
+      if (onActivate) onActivate();
+      else addNodeDialog(state.scopeId, type);
+      return;
+    }
     const info = canvas.dropInfo(e.clientX, e.clientY);
     if (info.kind === 'canvas') createNodeAt(type, info.world);
     else if (info.kind === 'container') createNodeInside(type, info.id);
     else if (info.kind === 'node') toast('Drop on empty canvas — or on a container to nest inside it');
+    onComplete?.();
   };
   const onUp = (e) => { if (e.pointerId === pid && e.button === 0) finish(e, false); };
   const onCancel = (e) => { if (e.pointerId === pid) finish(e, true); };
@@ -951,6 +1387,7 @@ export function openSearch() {
     [...results.children].forEach((c, i) => c.classList?.toggle('active', i === active));
   }
   function pick(n) {
+    bus.emit('workspace-map-request');
     close();
     ctrl.gotoNode(n.id).then(() => showDetail(n.id));
   }
@@ -1013,11 +1450,15 @@ export function initUI() {
   initPalette();
   bus.on('map-opened', () => { econOverride = null; econExpanded = false; });
   bus.on('view-changed', () => {
+    contextActionsArmed = null;
+    hideContextActions();
+    clearScenarioPreview();
     renderBreadcrumbs();
     renderSwitcher();
     renderCanvasMessage();
     renderEconomics();
-    if (state.selectedId) showDetail(state.selectedId);
+    if (state.workspaceView !== 'map') hideDetail();
+    else if (state.selectedId) showDetail(state.selectedId);
     else if (state.selectedEdge == null) hideDetail();
     const mm = document.getElementById('minimap');
     const curScope = state.model ? (state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children) : null;
@@ -1026,6 +1467,8 @@ export function initUI() {
   let panelTimer = null;
   bus.on('selection-changed', () => {
     clearTimeout(panelTimer);
+    if (state.workspaceView !== 'map') { hideDetail(); return; }
+    if (contextActionsArmed !== state.selectedId) hideContextActions();
     if (state.selectedId) {
       // open just past the double-click window: the first click of a
       // dblclick must not reflow the canvas before the second click lands
@@ -1041,6 +1484,7 @@ export function initUI() {
     if (!document.getElementById('templates-panel').hidden) renderTemplates();
   });
   bus.on('map-opened', () => { renderBreadcrumbs(); renderSwitcher(); renderCanvasMessage(); });
+  bus.on('camera-changed', () => { positionContextActions(); positionScenarioPreview(); });
 
   document.getElementById('map-switcher').addEventListener('click', (ev) => openMapMenu(ev.currentTarget));
 

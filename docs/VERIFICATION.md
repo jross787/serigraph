@@ -1,6 +1,6 @@
-# How Opsmap was verified
+# How Serigraph was verified
 
-Every requirement was tested by **fresh-context reviewers** — agents with no memory of the build, instructed to *disprove* each claim using trusted browser input (Playwright driving installed Chrome), in fresh clones of this repo, across four rounds. Fixes landed between rounds; the loop ran until reviewers came back empty-handed. Evidence lives in [docs/evidence/](evidence/).
+Every requirement was tested by **fresh-context reviewers** — agents with no memory of the build, instructed to *disprove* each claim using trusted browser input (Playwright driving installed Chrome), in fresh clones of this repo, across four rounds. Fixes landed between rounds; the loop ran until reviewers came back empty-handed. This verification campaign predates the Serigraph rename; its technical evidence and conclusions are unchanged. Evidence lives in [docs/evidence/](evidence/).
 
 ## The done-bars, and how each was proven
 
