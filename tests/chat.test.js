@@ -98,3 +98,23 @@ test('missing input is rejected before any model call', async () => {
   await assert.rejects(chatEdit({ source: '', instruction: 'x' }, { llm }), (e) => e.status === 400);
   await assert.rejects(chatEdit({ source: CURRENT, instruction: ' ' }, { llm }), (e) => e.status === 400);
 });
+
+test('a focused node lands in the prompt with a stable-id rule', async () => {
+  const seen = [];
+  const llm = async ({ prompt }) => { seen.push(prompt); return UPDATED; };
+  await chatEdit({
+    source: CURRENT,
+    instruction: 'rename it',
+    focus: { id: 'review', summary: 'type: decision\nlabel: OK?' },
+  }, { llm });
+  assert.ok(seen[0].includes('<focus_node id="review">'), 'focus block present');
+  assert.ok(seen[0].includes('type: decision'), 'node summary included');
+  assert.ok(seen[0].includes('Keep its id "review" stable'), 'id stability instructed');
+});
+
+test('no focus means no focus block', async () => {
+  const seen = [];
+  const llm = async ({ prompt }) => { seen.push(prompt); return UPDATED; };
+  await chatEdit({ source: CURRENT, instruction: 'rename review' }, { llm });
+  assert.ok(!seen[0].includes('focus_node'));
+});
