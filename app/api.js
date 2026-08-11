@@ -57,11 +57,11 @@ export const api = {
       body: JSON.stringify({ transcript }),
     });
   },
-  async chat(instruction, history) {
+  async chat(instruction, history, focus = null) {
     return jfetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: state.source, instruction, history }),
+      body: JSON.stringify({ source: state.source, instruction, history, focus }),
     });
   },
   subscribe(onEvent) {

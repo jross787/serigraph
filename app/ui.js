@@ -763,6 +763,7 @@ function renderContextActions(node) {
     ro ? null : h('button', { class: 'context-btn', onClick: beginEdit }, 'Edit'),
     ro ? null : h('button', { class: 'context-btn', onClick: () => beginConnect(node) }, 'Connect'),
     ro || freeform || node.type !== 'decision' ? null : h('button', { class: 'context-btn', onClick: () => beginBranch(node) }, 'Branch'),
+    ro ? null : h('button', { class: 'context-btn', onClick: () => askAiAbout(node.id) }, 'AI'),
     ro || freeform ? null : h('button', { class: 'context-btn automate', onClick: () => beginAutomation(node) }, 'Automate'),
   ].filter(Boolean);
   actions.replaceChildren(...primary, more);
@@ -1509,6 +1510,53 @@ function renderEdgeDetail(panel) {
 // applies until the user clicks Apply. Review-before-save, same as Import.
 let chatMessages = []; // { role, text, proposal?: { source, summary } }
 let chatBusy = false;
+let chatFocusId = null; // node the conversation is about, if any
+
+function micIcon() {
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', '15');
+  svg.setAttribute('height', '15');
+  svg.setAttribute('aria-hidden', 'true');
+  const p = document.createElementNS(SVG, 'path');
+  p.setAttribute('d', 'M12 15a3.5 3.5 0 0 0 3.5-3.5v-5a3.5 3.5 0 0 0-7 0v5A3.5 3.5 0 0 0 12 15zM5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3.5');
+  p.setAttribute('fill', 'none');
+  p.setAttribute('stroke', 'currentColor');
+  p.setAttribute('stroke-width', '1.7');
+  p.setAttribute('stroke-linecap', 'round');
+  svg.append(p);
+  return svg;
+}
+
+// Everything the model needs about the selected node: its fields and the
+// edges that touch it, in plain text.
+function nodeFocusSummary(node) {
+  const lines = [`type: ${node.type}`, `label: ${node.label}`];
+  if (node.description) lines.push(`description: ${node.description}`);
+  if (node.owner) lines.push(`owner: ${node.owner}`);
+  if (node.trigger) lines.push(`trigger: ${node.trigger}`);
+  if (node.sla) lines.push(`sla: ${node.sla}`);
+  if (node.automation) lines.push(`automation: ${node.automation}`);
+  if (node.systems?.length) lines.push(`systems: ${node.systems.join(', ')}`);
+  if (node.children) lines.push(`contains: ${node.stats.childCount} child nodes`);
+  const scope = state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children;
+  const nameOf = (id) => state.model.byId.get(id)?.label ?? id;
+  const touching = (scope?.edges ?? []).filter((e) => e.from === node.id || e.to === node.id);
+  if (touching.length) {
+    lines.push('edges:');
+    for (const e of touching) {
+      lines.push(`  ${nameOf(e.from)} → ${nameOf(e.to)}${e.label ? ` (${e.label})` : ''}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+// Open the assistant aimed at one node — the "Ask AI" action on every node.
+export function askAiAbout(nodeId) {
+  if (!state.model?.byId.has(nodeId)) return;
+  chatFocusId = nodeId;
+  toggleChat(true);
+}
 
 function chatDiffSummary(before, after) {
   const parts = [];
@@ -1576,13 +1624,44 @@ function renderChat() {
     if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); sendChat(input.value); }
     if (ev.key === 'Escape') { ev.stopPropagation(); toggleChat(false); }
   });
+  // voice input, where the browser supports it — speech lands in the box,
+  // nothing sends until the user presses Send
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let micBtn = null;
+  if (SpeechRecognition && !state.standalone) {
+    let rec = null;
+    micBtn = h('button', {
+      class: 'chat-mic', title: 'Dictate your request', 'aria-label': 'Dictate your request',
+      onClick: () => {
+        if (rec) { rec.stop(); return; }
+        rec = new SpeechRecognition();
+        rec.lang = 'en-US';
+        rec.interimResults = true;
+        const base = input.value;
+        rec.onresult = (ev) => {
+          let text = '';
+          for (const r of ev.results) text += r[0].transcript;
+          input.value = (base ? base.replace(/\s+$/, '') + ' ' : '') + text;
+        };
+        rec.onend = () => { rec = null; micBtn.classList.remove('recording'); };
+        rec.onerror = () => { rec = null; micBtn.classList.remove('recording'); };
+        rec.start();
+        micBtn.classList.add('recording');
+      },
+    }, micIcon());
+  }
+  const focusNode = chatFocusId ? state.model?.byId.get(chatFocusId) : null;
   dock.replaceChildren(
     h('div', { class: 'chat-head' },
       h('div', {}, h('span', { class: 'chat-kicker' }, 'Map assistant'), h('strong', {}, state.model?.name ?? '')),
       h('button', { class: 'panel-close', onClick: () => toggleChat(false) }, '✕')),
+    focusNode ? h('div', { class: 'chat-focus' },
+      h('span', {}, `About: ${focusNode.label}`),
+      h('button', { title: 'Clear the focus — talk about the whole map', onClick: () => { chatFocusId = null; renderChat(); } }, '×')) : null,
     list,
     h('div', { class: 'chat-compose' },
       input,
+      micBtn,
       h('button', { class: 'd-btn primary chat-send', onClick: () => sendChat(input.value) }, 'Send')));
   list.scrollTop = list.scrollHeight;
   if (!dock.hidden && !chatBusy) input.focus();
@@ -1599,7 +1678,9 @@ async function sendChat(text) {
       role: m.role,
       content: m.role === 'user' ? m.text : (m.proposal ? `Proposed map update: ${m.proposal.summary}` : m.text),
     }));
-    const result = await api.chat(instruction, history);
+    const focusNode = chatFocusId ? state.model?.byId.get(chatFocusId) : null;
+    const focus = focusNode ? { id: focusNode.id, summary: nodeFocusSummary(focusNode) } : null;
+    const result = await api.chat(instruction, history, focus);
     const summary = chatDiffSummary(state.source, result.source);
     chatMessages.push({ role: 'assistant', text: 'Here is the proposed change.', proposal: { source: result.source, summary } });
   } catch (e) {

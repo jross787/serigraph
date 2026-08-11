@@ -48,13 +48,16 @@ function stripFences(text) {
   return out;
 }
 
-function buildPrompt({ source, instruction, history }) {
+function buildPrompt({ source, instruction, history, focus }) {
   const prior = (history ?? [])
     .filter((m) => m && typeof m.role === 'string' && typeof m.content === 'string')
     .slice(-6)
     .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.slice(0, 500)}`)
     .join('\n');
-  return `${prior ? `Earlier in this conversation:\n${prior}\n\n` : ''}<current_map>\n${source}\n</current_map>\n\nThe user's request: ${instruction}\n\nReturn the complete updated map YAML only.`;
+  const focusBlock = focus && typeof focus.id === 'string' && typeof focus.summary === 'string'
+    ? `\nThe user has this node selected and is talking about it:\n<focus_node id="${focus.id}">\n${focus.summary.slice(0, 2000)}\n</focus_node>\nMake the change primarily about this node unless the request says otherwise. Keep its id "${focus.id}" stable.\n`
+    : '';
+  return `${prior ? `Earlier in this conversation:\n${prior}\n\n` : ''}<current_map>\n${source}\n</current_map>\n${focusBlock}\nThe user's request: ${instruction}\n\nReturn the complete updated map YAML only.`;
 }
 
 function validate(yaml) {
@@ -71,7 +74,7 @@ export async function chatEdit(body, { llm }) {
   if (instruction.length > 4_000) throw new ChatError(413, 'Keep the instruction under 4,000 characters.');
 
   const system = SYSTEM_PROMPT.replace('%s', await loadFormatSpec());
-  const prompt = buildPrompt({ source, instruction, history: body?.history });
+  const prompt = buildPrompt({ source, instruction, history: body?.history, focus: body?.focus });
 
   let yaml = stripFences(await llm({ system, prompt }));
   if (/^ERROR:/i.test(yaml)) {
