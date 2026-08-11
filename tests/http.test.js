@@ -49,11 +49,30 @@ before(async () => {
 
 after(() => { proc?.kill(); });
 
-test('GET /api/maps lists the seeded maps', async () => {
+test('GET /api/maps lists each map mode', async () => {
   const res = await raw({ p: '/api/maps' });
   assert.equal(res.status, 200);
   const maps = JSON.parse(res.body);
-  assert.ok(Array.isArray(maps) && maps.some((m) => m.id === 'insurance'));
+  assert.ok(Array.isArray(maps));
+  assert.equal(maps.find((m) => m.id === 'insurance')?.mode, 'process');
+});
+
+test('GET /api/templates exposes freeform templates', async () => {
+  const res = await raw({ p: '/api/templates' });
+  assert.equal(res.status, 200);
+  const templates = JSON.parse(res.body);
+  assert.equal(templates.find((template) => template.id === 'systems-of-record')?.mode, 'freeform');
+});
+
+test('POST /api/maps rejects an unknown map mode without writing', async () => {
+  const res = await raw({
+    method: 'POST',
+    p: '/api/maps',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Invalid mode test', mode: 'diagram' }),
+  });
+  assert.equal(res.status, 400);
+  assert.match(JSON.parse(res.body).error, /process, freeform/);
 });
 
 test('requests with a non-local Host header are refused (DNS rebinding)', async () => {

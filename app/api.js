@@ -35,11 +35,11 @@ export const api = {
       body: JSON.stringify({ source }),
     });
   },
-  async createMap(name) {
+  async createMap(name, mode = 'process') {
     return jfetch('/api/maps', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, mode }),
     });
   },
   async listTemplates() {
@@ -55,6 +55,31 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ transcript }),
+    });
+  },
+  async chat(instruction, history, focus = null) {
+    return jfetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: state.source, instruction, history, focus }),
+    });
+  },
+  async getSettings() {
+    if (state.standalone) return null;
+    return jfetch('/api/settings');
+  },
+  async saveSettings(patch) {
+    return jfetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+  },
+  async transcribe(base64, mime) {
+    return jfetch('/api/transcribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audio: base64, mime }),
     });
   },
   subscribe(onEvent) {

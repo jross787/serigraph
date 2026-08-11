@@ -1,8 +1,9 @@
 // All chrome around the canvas: detail panel, dialogs, template browser,
 // search palette, breadcrumbs, map switcher, toasts, error/empty states.
 import {
-  parseMap, NODE_TYPES, AUTOMATION_STATES, PLANNING_TYPES, PLAN_STATUSES,
-  PLAN_PRIORITIES, RELATION_TYPES, ancestryOf,
+  parseMap, NODE_TYPES, PROCESS_NODE_TYPES, FREEFORM_NODE_TYPES, AUTOMATION_STATES,
+  PLANNING_TYPES, PLAN_STATUSES, PLAN_PRIORITIES, RELATION_TYPES, HIERARCHY_RELATION_TYPES,
+  OWNER_ROLES, ancestryOf, placementInScope, placementsOf,
 } from '../shared/model.js';
 import { nodeCost, rollupCost, formatMoney, formatPayback, formatPercent, compactMoney } from '../shared/cost.js';
 import { api } from './api.js';
@@ -14,6 +15,21 @@ import { ICONS } from './canvas.js';
 import { opportunityDefaults, calculateOpportunity, assessOpportunity } from './opportunity.js';
 
 let fieldId = 0;
+
+const TYPE_LABELS = {
+  process: 'Process',
+  decision: 'Decision',
+  system: 'System',
+  role: 'Role',
+  artifact: 'Artifact',
+  item: 'Item',
+  database: 'Database',
+  api: 'API',
+};
+const FREEFORM_TYPE_LABELS = { role: 'Person / team', artifact: 'Document' };
+const isFreeform = () => state.model?.mode === 'freeform';
+const activeNodeTypes = () => isFreeform() ? FREEFORM_NODE_TYPES : PROCESS_NODE_TYPES;
+const typeLabel = (type) => isFreeform() ? (FREEFORM_TYPE_LABELS[type] ?? TYPE_LABELS[type] ?? type) : (TYPE_LABELS[type] ?? type);
 
 // ── tiny DOM helpers ─────────────────────────────────────────────────
 function h(tag, props = {}, ...children) {
@@ -85,11 +101,68 @@ function renderBreadcrumbs() {
   });
 }
 
+
 function renderSwitcher() {
   const nameEl = document.getElementById('map-switcher-name');
   if (!nameEl) return;
   const current = state.maps.find((m) => m.id === state.mapId);
   nameEl.textContent = current?.name ?? state.model?.name ?? state.mapId ?? 'No map';
+}
+
+function renderMapMode() {
+  closeMenus();
+  const button = document.getElementById('map-mode');
+  const label = document.getElementById('map-mode-label');
+  const freeform = isFreeform();
+  if (button) {
+    button.hidden = !state.model;
+    button.classList.toggle('freeform', freeform);
+    button.title = freeform ? 'Freeform map. Choose another mode' : 'Process map. Choose another mode';
+  }
+  if (label) label.textContent = freeform ? 'Freeform' : 'Process';
+  const addLabel = document.getElementById('btn-add-node-label');
+  if (addLabel) addLabel.textContent = freeform ? (state.scopeId == null ? 'Add group' : 'Add item') : 'Add step';
+  const workspaces = document.getElementById('workspace-switcher');
+  if (workspaces) workspaces.hidden = freeform;
+  for (const id of ['btn-import', 'btn-economics']) {
+    const control = document.getElementById(id);
+    if (control) control.hidden = freeform;
+  }
+  if (freeform && state.workspaceView !== 'map') bus.emit('workspace-map-request');
+  const templates = document.getElementById('templates-panel');
+  if (templates && !templates.hidden) renderTemplates();
+}
+
+function openModeMenu(anchor) {
+  if (!state.model || state.standalone) return;
+  closeMenus();
+  const r = anchor.getBoundingClientRect();
+  const menu = h('div', { class: 'menu mode-menu', role: 'menu', style: `top:${r.bottom + 6}px;left:${r.left}px` });
+  const modes = [
+    ['process', 'Process', 'Steps, decisions, owners, automation, and cost.'],
+    ['freeform', 'Freeform', 'Systems, data, APIs, people, or anything else.'],
+  ];
+  for (const [mode, label, description] of modes) {
+    menu.append(h('button', {
+      class: `menu-item${state.model.mode === mode ? ' current' : ''}`,
+      role: 'menuitemradio',
+      'aria-checked': String(state.model.mode === mode),
+      onClick: () => {
+        closeMenus();
+        if (state.model.mode === mode) return;
+        ctrl.commit(() => edit.setMapMode(mode)).then((ok) => {
+          if (!ok) return;
+          ctrl.loadMapList();
+          toast(`${label} mode on`);
+        });
+      },
+    }, h('span', { class: 'mi-name' }, label), h('span', { class: 'mi-sub' }, description)));
+  }
+  document.body.append(menu);
+  setTimeout(() => {
+    const close = (ev) => { if (!menu.contains(ev.target)) closeMenus(); };
+    document.addEventListener('pointerdown', close, { once: true });
+  }, 0);
 }
 
 function openMapMenu(anchor) {
@@ -143,10 +216,11 @@ function modal(title, body, actions) {
   return close;
 }
 
-function typeSegment(initial) {
+function typeSegment(initial, types = activeNodeTypes()) {
   let value = initial;
-  const seg = h('div', { class: 'type-seg' });
-  for (const t of NODE_TYPES) {
+  const available = types.includes(initial) ? types : [initial, ...types];
+  const seg = h('div', { class: 'type-seg', style: `--type-count:${available.length}` });
+  for (const t of available) {
     const b = h('button', {
       class: `t-${t}${t === value ? ' on' : ''}`,
       onClick: (ev) => {
@@ -155,17 +229,46 @@ function typeSegment(initial) {
         seg.querySelectorAll('button').forEach((x) => x.classList.remove('on'));
         b.classList.add('on');
       },
-    }, typeIcon(t), t);
+    }, typeIcon(t), h('span', {}, typeLabel(t)));
     seg.append(b);
   }
   seg.value = () => value;
   return seg;
 }
 
+function mapModeSegment(initial = 'process') {
+  let value = initial;
+  const seg = h('div', { class: 'map-mode-seg' });
+  const options = [
+    ['process', 'Process', 'Map steps, decisions, owners, and automation.'],
+    ['freeform', 'Freeform', 'Map systems, data, APIs, people, or anything else.'],
+  ];
+  for (const [mode, label, description] of options) {
+    const button = h('button', {
+      class: mode === value ? 'on' : '',
+      onClick: (ev) => {
+        ev.preventDefault();
+        value = mode;
+        seg.querySelectorAll('button').forEach((item) => item.classList.remove('on'));
+        button.classList.add('on');
+      },
+    }, h('strong', {}, label), h('span', {}, description));
+    seg.append(button);
+  }
+  seg.value = () => value;
+  return seg;
+}
+
 function automationSelect(initial = '') {
+  const labels = {
+    manual: 'Manual — a human does it',
+    assisted: 'Assisted — human + computer',
+    automated: 'Automated — an agent does it',
+    'at-risk': 'At risk',
+  };
   const select = h('select', { class: 'f-select' },
     h('option', { value: '' }, 'Not assessed'),
-    ...AUTOMATION_STATES.map((value) => h('option', { value }, value.replace('-', ' '))));
+    ...AUTOMATION_STATES.map((value) => h('option', { value }, labels[value] ?? value)));
   select.value = initial;
   return select;
 }
@@ -182,30 +285,174 @@ function lineValues(value) {
   return String(value || '').split('\n').map((item) => item.replace(/^[-*]\s*/, '').trim()).filter(Boolean);
 }
 
-function relationValues(value) {
+function relationValues(value, allowed = RELATION_TYPES) {
   return lineValues(value).map((line, index) => {
-    const match = line.match(/^([a-z-]+)\s*->\s*([A-Za-z0-9._-]+)$/);
-    if (!match) throw new Error(`Relation line ${index + 1} must use "type -> node-id".`);
+    const match = line.match(/^([a-z-]+)\s*->\s*([^\s]+)$/);
+    if (!match) throw new Error(`Relation line ${index + 1} must use "type -> element-id".`);
     const [, type, to] = match;
-    if (!RELATION_TYPES.includes(type)) {
+    if (!allowed.includes(type)) {
       throw new Error(`Relation line ${index + 1} has unknown type "${type}".`);
     }
     return { type, to };
   });
 }
 
+function ownerValues(value) {
+  return lineValues(value).map((line, index) => {
+    const match = line.match(/^([a-z-]+)\s*->\s*([^\s]+)$/);
+    if (!match) throw new Error(`Owner line ${index + 1} must use "role -> element-id".`);
+    const [, role, to] = match;
+    if (!OWNER_ROLES.includes(role)) {
+      throw new Error(`Owner line ${index + 1} has unknown role "${role}".`);
+    }
+    return { role, to };
+  });
+}
+
+function addElementDialog(ownerId, options = {}) {
+  const ownerLabel = state.model.byId.get(ownerId)?.label ?? ownerId;
+  const position = options?.position ?? null;
+  const initialType = FREEFORM_NODE_TYPES.includes(options?.type) ? options.type : 'item';
+  const search = h('input', {
+    class: 'f-input element-search',
+    type: 'search',
+    placeholder: 'Search shared elements',
+  });
+  const list = h('div', { class: 'element-picker-list' });
+  const createPanel = h('div', { class: 'element-create-panel' });
+  createPanel.hidden = true;
+  const createButton = h('button', { class: 'element-create-toggle' }, '+ Create a new element');
+  const body = h('div', { class: 'element-picker' },
+    h('p', { class: 'hint element-picker-hint' }, `Add an existing element to “${ownerLabel}”, or create one shared definition.`),
+    search,
+    list,
+    createButton,
+    createPanel);
+  let close = null;
+
+  const placed = (elementId, label) => {
+    close?.();
+    ctrl.commit(
+      () => edit.addPlacement(ownerId, elementId, { position }),
+      { select: elementId },
+    ).then(async (ok) => {
+      if (!ok) return;
+      if (ownerId !== state.scopeId) await ctrl.gotoScope(ownerId, { focusId: elementId });
+      else canvas.centerOn(elementId);
+      showDetail(elementId);
+      toast(`Added “${label}” to “${ownerLabel}”`);
+    });
+  };
+
+  const renderList = () => {
+    const query = search.value.trim().toLowerCase();
+    const available = state.model.elements
+      .filter((element) => !placementInScope(state.model, ownerId, element.id))
+      .filter((element) => !query
+        || element.label.toLowerCase().includes(query)
+        || element.id.toLowerCase().includes(query)
+        || typeLabel(element.type).toLowerCase().includes(query));
+    list.replaceChildren();
+    if (!available.length) {
+      list.append(h('p', { class: 'element-picker-empty' },
+        query ? 'No matching shared elements.' : 'Every shared element is already in this group.'));
+      return;
+    }
+    for (const element of available) {
+      const count = placementsOf(state.model, element.id).length;
+      list.append(h('button', {
+        class: 'element-picker-row',
+        onClick: () => placed(element.id, element.label),
+      },
+      h('span', { class: `element-picker-icon t-${element.type}` }, typeIcon(element.type, 15)),
+      h('span', { class: 'element-picker-name' }, element.label),
+      h('span', { class: 'element-picker-meta' }, `${typeLabel(element.type)} · ${count} placement${count === 1 ? '' : 's'}`)));
+    }
+  };
+  search.addEventListener('input', renderList);
+  renderList();
+
+  createButton.addEventListener('click', () => {
+    createButton.hidden = true;
+    search.hidden = true;
+    list.hidden = true;
+    createPanel.hidden = false;
+    const label = h('input', { class: 'f-input', placeholder: 'e.g. Looker API' });
+    const type = typeSegment(initialType, FREEFORM_NODE_TYPES);
+    const description = h('textarea', { class: 'f-textarea', placeholder: 'What is this shared element?' });
+    const note = h('textarea', { class: 'f-textarea compact-textarea', placeholder: `Optional note about its use in ${ownerLabel}` });
+    createPanel.replaceChildren(
+      h('button', {
+        class: 'element-create-back',
+        onClick: () => {
+          createPanel.hidden = true;
+          createButton.hidden = false;
+          search.hidden = false;
+          list.hidden = false;
+          search.focus();
+        },
+      }, '← Existing elements'),
+      h('div', { class: 'f-field' }, h('label', {}, 'Name'), label),
+      h('div', { class: 'f-field' }, h('label', {}, 'Type'), type),
+      h('div', { class: 'f-field' }, h('label', {}, 'Shared description'), description),
+      h('div', { class: 'f-field' }, h('label', {}, `Note for ${ownerLabel}`), note),
+      h('button', {
+        class: 'd-btn primary element-create-save',
+        onClick: () => {
+          const text = label.value.trim();
+          if (!text) { label.focus(); return; }
+          const id = edit.uniqueId(state.model, edit.slugify(text));
+          close?.();
+          ctrl.commit(() => {
+            edit.addElement({ id, type: type.value(), label: text, description: description.value });
+            edit.addPlacement(ownerId, id, { note: note.value, position });
+          }, { select: id }).then(async (ok) => {
+            if (!ok) return;
+            if (ownerId !== state.scopeId) await ctrl.gotoScope(ownerId, { focusId: id });
+            else canvas.centerOn(id);
+            showDetail(id, { edit: true });
+            toast(`Created “${text}” and added it to “${ownerLabel}”`);
+          });
+        },
+      }, 'Create and add'));
+    associateFieldLabels(createPanel);
+    label.focus();
+  });
+
+  close = modal('Add element', body, [{ label: 'Cancel' }]);
+}
+
+export function addElementToGroup(ownerId = state.scopeId, options = {}) {
+  if (!isFreeform() || ownerId == null) return false;
+  addElementDialog(ownerId, options);
+  return true;
+}
+
+
 export function addNodeDialog(ownerId, options = {}) {
   if (state.standalone || !state.model) return;
-  // The canvas palette historically passed a type string; the workbench
-  // passes an options object. Keep both interaction paths compatible.
-  const type = typeof options === 'string' ? options : options?.type ?? 'process';
+  const freeform = isFreeform();
+  if (freeform && ownerId != null) {
+    addElementDialog(ownerId, typeof options === 'string' ? { type: options } : options);
+    return;
+  }
+
+  const addingGroup = freeform && ownerId == null;
+  const defaultType = addingGroup ? 'item' : 'process';
+  const type = typeof options === 'string' ? options : options?.type ?? defaultType;
   const ownerLabel = ownerId ? state.model.byId.get(ownerId)?.label : state.model?.name;
-  const label = h('input', { class: 'f-input', placeholder: 'e.g. Verify bank statements' });
-  const seg = typeSegment(NODE_TYPES.includes(type) ? type : 'process');
-  const desc = h('textarea', { class: 'f-textarea', placeholder: 'What happens here? (optional)' });
+  const label = h('input', {
+    class: 'f-input',
+    placeholder: addingGroup ? 'e.g. Revenue systems' : 'e.g. Verify bank statements',
+  });
+  const seg = typeSegment(NODE_TYPES.includes(type) ? type : defaultType);
+  const desc = h('textarea', {
+    class: 'f-textarea',
+    placeholder: addingGroup ? 'What belongs in this group?' : 'What happens here? (optional)',
+  });
   const owner = h('input', { class: 'f-input', placeholder: 'e.g. RevOps' });
-  const automation = automationSelect('manual');
-  const productMode = state.model.document.kind !== 'process';
+  const automation = addingGroup ? null : automationSelect('manual');
+  const productMode = !freeform && state.model.document.kind !== 'process';
   const planningType = enumSelect(PLANNING_TYPES, 'requirement');
   const planningStatus = enumSelect(PLAN_STATUSES, 'draft');
   const planningPriority = enumSelect(PLAN_PRIORITIES, 'should');
@@ -224,52 +471,64 @@ export function addNodeDialog(ownerId, options = {}) {
   const syncPlanningFields = () => { planningFields.hidden = !planningEnabled.checked; };
   planningEnabled.addEventListener('change', syncPlanningFields);
   syncPlanningFields();
+
   const body = h('div', {},
-    h('div', { class: 'f-field' }, h('label', {}, 'Label'), label),
+    h('div', { class: 'f-field' }, h('label', {}, addingGroup ? 'Group name' : 'Label'), label),
     h('div', { class: 'f-field' }, h('label', {}, 'Type'), seg),
-    h('div', { class: 'form-row' },
+    addingGroup ? null : h('div', { class: 'form-row' },
       h('div', { class: 'f-field' }, h('label', {}, 'Owner'), owner),
       h('div', { class: 'f-field' }, h('label', {}, 'Automation'), automation)),
     productMode ? h('div', { class: 'planning-form-block' },
       h('label', { class: 'planning-toggle' }, planningEnabled, h('span', {}, 'Include as a product-planning item')),
       planningFields) : null,
     h('div', { class: 'f-field' }, h('label', {}, 'Description'), desc),
-    h('p', { class: 'hint' }, `Will be added ${ownerId ? `inside “${ownerLabel}”` : `at the top level of “${ownerLabel}”`}.`));
-  modal('Add node', body, [
+    h('p', { class: 'hint' }, addingGroup
+      ? `Creates a top-level group in “${ownerLabel}”.`
+      : `Will be added ${ownerId ? `inside “${ownerLabel}”` : `at the top level of “${ownerLabel}”`}.`));
+
+  modal(addingGroup ? 'Add group' : 'Add node', body, [
     { label: 'Cancel' },
     {
-      label: 'Add node', primary: true,
+      label: addingGroup ? 'Add group' : 'Add node',
+      primary: true,
       onClick: () => {
         const text = label.value.trim();
         if (!text) { label.focus(); return false; }
         const id = edit.uniqueId(state.model, edit.slugify(text));
         ctrl.commit(() => edit.addNode(ownerId, {
-          id, type: seg.value(), label: text, description: desc.value,
-          owner: owner.value, automation: automation.value,
+          id,
+          type: seg.value(),
+          label: text,
+          description: desc.value,
+          owner: addingGroup ? undefined : owner.value,
+          automation: automation?.value,
           planning: productMode && planningEnabled.checked ? {
-            type: planningType.value, status: planningStatus.value, priority: planningPriority.value,
-            phase: planningPhase.value, acceptance: lineValues(acceptance.value),
+            type: planningType.value,
+            status: planningStatus.value,
+            priority: planningPriority.value,
+            phase: planningPhase.value,
+            acceptance: lineValues(acceptance.value),
           } : null,
-        }), { select: id })
-          .then(async (ok) => {
-            if (!ok) return;
-            if (ownerId && ownerId !== state.scopeId) {
-              // added inside a container we're not looking at — go show it
-              await ctrl.gotoScope(ownerId, { focusId: id });
-            } else {
-              canvas.centerOn(id);
-            }
-            showDetail(id);
-            toast(`Added “${text}”`);
-          });
+          children: addingGroup ? { nodes: [], edges: [] } : undefined,
+          position: addingGroup ? options?.position : undefined,
+        }), { select: id }).then(async (ok) => {
+          if (!ok) return;
+          if (ownerId && ownerId !== state.scopeId) await ctrl.gotoScope(ownerId, { focusId: id });
+          else canvas.centerOn(id);
+          showDetail(id);
+          toast(`${addingGroup ? 'Added group' : 'Added node'} “${text}”`);
+        });
       },
     },
   ]);
 }
 
 function newMapDialog() {
-  const name = h('input', { class: 'f-input', placeholder: 'e.g. Acme Dental — Operations' });
-  modal('New map', h('div', { class: 'f-field' }, h('label', {}, 'Map name'), name,
+  const name = h('input', { class: 'f-input', placeholder: 'e.g. Customer systems' });
+  const mode = mapModeSegment('process');
+  modal('New map', h('div', {},
+    h('div', { class: 'f-field' }, h('label', {}, 'Map name'), name),
+    h('div', { class: 'f-field' }, h('label', {}, 'Mode'), mode),
     h('p', { class: 'hint' }, 'Creates a new YAML file in the maps/ folder.')), [
     { label: 'Cancel' },
     {
@@ -279,7 +538,7 @@ function newMapDialog() {
         if (!v) { name.focus(); return false; }
         import('./api.js').then(async ({ api }) => {
           try {
-            const { id } = await api.createMap(v);
+            const { id } = await api.createMap(v, mode.value());
             await ctrl.loadMapList();
             await ctrl.openMap(id);
             toast(`Created maps/${id}.yaml`);
@@ -291,23 +550,24 @@ function newMapDialog() {
 }
 
 export function helpDialog() {
+  const freeform = isFreeform();
   const rows = [
     ['⌘K / Ctrl+K', 'Search all nodes'],
-    ['double-click / ⏎', 'Zoom into a container node'],
-    ['Esc / ⌫', 'Zoom back out (Esc also closes panels)'],
+    ['double-click / ⏎', freeform ? 'Open a group' : 'Zoom into a container node'],
+    ...(freeform ? [['pan to another group', 'Follow its connections without zooming out']] : []),
+    ['Esc / ⌫', 'Zoom back out or close a panel'],
     ['← ↑ ↓ →', 'Move selection between nodes'],
     ['V / H', 'Select / pan'],
-    ['N / C', 'Add a unit / connect steps'],
-    ['L / T', 'Owner lanes / review note'],
-    ['P / A', 'Path probe / automation lens'],
+    ['N / C', freeform ? 'Add an item / connect items' : 'Add a unit / connect steps'],
+    ...(freeform ? [['T', 'Review note']] : [['L / T', 'Owner lanes / review note'], ['P / A', 'Path probe / automation lens']]),
     ['⇧P', 'Presentation mode'],
     ['+ / − / 0', 'Zoom in / out / fit'],
     ['⌘Z / ⌘⇧Z', 'Undo / redo'],
-    ['drag a node', 'Move it — pins its position (click the pin badge to release)'],
-    ['drag a node onto a container', 'Move it into that sub-map (drop bar at top moves it out)'],
-    ['drag from a node\'s ○ port', 'Draw an edge to another node'],
-    ['drag from the palette', 'Drop a new node of that type where you release'],
-    ['double-click empty canvas', 'New node at that spot'],
+    ['drag a node', 'Move it and pin its position'],
+    ['drag a node onto a container', freeform ? 'Move it into that group' : 'Move it into that sub-map'],
+    ['drag from a node\'s ○ port', freeform ? 'Connect it to another item' : 'Draw an edge to another node'],
+    ['drag from the palette', 'Drop a new node where you release it'],
+    ['double-click empty canvas', 'Create a node at that spot'],
     ['drag the background', 'Pan the canvas'],
     ['scroll · pinch', 'Pan · zoom'],
   ];
@@ -331,6 +591,9 @@ export function showDetail(nodeId, { edit = false } = {}) {
   automationMode = false;
   state.detailNodeId = nodeId;
   renderDetail();
+  requestAnimationFrame(() => {
+    if (!state.presenting && state.detailNodeId === nodeId) canvas.ensureVisible(nodeId);
+  });
 }
 export function hideDetail() {
   editMode = false;
@@ -346,10 +609,56 @@ function beginConnect(node) {
   hideContextActions();
   state.connectFrom = node.id;
   canvas.paintSelection();
-  toast('Choose the step this connects to · Esc cancels');
+  toast(`Choose the ${isFreeform() ? 'item' : 'step'} this connects to · Esc cancels`);
+}
+
+// One click from a decision: start a connection with the branch label filled
+// in — "no" by default, "yes" if a "no" branch already exists.
+function beginBranch(node) {
+  hideContextActions();
+  const scope = state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children;
+  const labels = (scope?.edges ?? [])
+    .filter((e) => e.from === node.id)
+    .map((e) => (e.label || '').trim().toLowerCase());
+  const hasNo = labels.some((l) => l === 'no' || l.startsWith('no ') || l.startsWith('no—') || l.startsWith('no-'));
+  const label = hasNo ? 'yes' : 'no';
+  state.pendingEdgeLabel = label;
+  state.connectFrom = node.id;
+  canvas.paintSelection();
+  toast(`Choose where the “${label}” branch goes · Esc cancels`);
 }
 
 function confirmDelete(node) {
+  if (isFreeform() && node.isElement) {
+    const useCount = placementsOf(state.model, node.id).length;
+    const groupLabel = state.model.byId.get(state.scopeId)?.label ?? 'this group';
+    modal(`Remove “${node.label}”?`,
+      h('div', {},
+        h('p', { class: 'hint' }, `Remove this placement from “${groupLabel}”, or delete the shared element from all ${useCount} group${useCount === 1 ? '' : 's'}.`),
+        h('p', { class: 'hint' }, 'Removing this placement also removes its connections in this group.')),
+      [
+        { label: 'Cancel' },
+        {
+          label: 'Remove from group',
+          onClick: () => {
+            hideDetail();
+            ctrl.commit(() => edit.removePlacement(state.scopeId, node.id), { select: null })
+              .then((ok) => ok && toast(`Removed “${node.label}” from “${groupLabel}”`));
+          },
+        },
+        {
+          label: 'Delete everywhere',
+          danger: true,
+          onClick: () => {
+            hideDetail();
+            ctrl.commit(() => edit.deleteElement(node.id), { select: null })
+              .then((ok) => ok && toast(`Deleted shared element “${node.label}”`));
+          },
+        },
+      ]);
+    return;
+  }
+
   const n = node.stats.descendantCount;
   modal(`Delete “${node.label}”?`,
     h('p', { class: 'hint' }, n
@@ -382,6 +691,7 @@ function beginAutomation(node) {
 }
 
 export function openAutomation(nodeId = state.selectedId) {
+  if (isFreeform()) return false;
   const node = nodeId ? state.model?.byId.get(nodeId) : null;
   if (!node) { toast('Select a step to assess its automation opportunity'); return false; }
   beginAutomation(node);
@@ -390,8 +700,11 @@ export function openAutomation(nodeId = state.selectedId) {
 
 export function startConnect(nodeId = state.selectedId) {
   const node = nodeId ? state.model?.byId.get(nodeId) : null;
-  if (!node || node.ownerId !== (state.scopeId ?? null)) {
-    toast('Select the step this connection should start from');
+  const visible = isFreeform()
+    ? !!placementInScope(state.model, state.scopeId, nodeId)
+    : node?.ownerId === (state.scopeId ?? null);
+  if (!node || !visible) {
+    toast(`Select the ${isFreeform() ? 'item' : 'step'} this connection should start from`);
     return false;
   }
   beginConnect(node);
@@ -430,25 +743,30 @@ function renderContextActions(node) {
   const actions = document.getElementById('context-actions');
   if (!actions || contextActionsArmed !== node.id || editMode || automationMode || state.presenting) return hideContextActions();
   const ro = state.standalone;
+  const freeform = isFreeform();
   const more = h('details', { class: 'context-more' },
     h('summary', { class: 'context-btn' }, 'More'),
     h('div', { class: 'context-menu' },
-      node.children ? h('button', { onClick: () => addNodeDialog(node.id) }, 'Add child') : null,
+      node.children ? h('button', { onClick: () => addNodeDialog(node.id) }, freeform ? 'Add item' : 'Add child') : null,
       node.links.map((l) => {
         const href = safeUrl(l.url);
         return href ? h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, l.label) : null;
       }),
       node.links.length ? h('button', { onClick: () => navigator.clipboard?.writeText(ctrl.nodeUrl(node.id)).then(() => toast('Link copied')) }, 'Copy deep link') : null,
-      !ro ? h('button', { class: 'danger', onClick: () => confirmDelete(node) }, 'Delete step') : null));
-  actions.replaceChildren(
+      !ro ? h('button', { class: 'danger', onClick: () => confirmDelete(node) },
+        freeform ? (node.isElement ? 'Remove or delete' : 'Delete group') : 'Delete step') : null));
+  const primary = [
     h('button', {
       class: 'context-btn',
       onClick: () => node.children ? ctrl.diveInto(node.id) : navigator.clipboard?.writeText(ctrl.nodeUrl(node.id)).then(() => toast('Link copied')),
     }, node.children ? 'Open' : 'Link'),
     ro ? null : h('button', { class: 'context-btn', onClick: beginEdit }, 'Edit'),
     ro ? null : h('button', { class: 'context-btn', onClick: () => beginConnect(node) }, 'Connect'),
-    ro ? null : h('button', { class: 'context-btn automate', onClick: () => beginAutomation(node) }, 'Automate'),
-    more);
+    ro || freeform || node.type !== 'decision' ? null : h('button', { class: 'context-btn', onClick: () => beginBranch(node) }, 'Branch'),
+    ro ? null : h('button', { class: 'context-btn', onClick: () => askAiAbout(node.id) }, 'AI'),
+    ro || freeform ? null : h('button', { class: 'context-btn automate', onClick: () => beginAutomation(node) }, 'Automate'),
+  ].filter(Boolean);
+  actions.replaceChildren(...primary, more);
   actions.hidden = false;
   requestAnimationFrame(positionContextActions);
 }
@@ -635,10 +953,22 @@ function renderDetail() {
   renderContextActions(node);
 
   const ro = state.standalone;
+  const freeform = isFreeform();
+  const placement = freeform && node.isElement
+    ? placementInScope(state.model, state.scopeId, node.id)
+    : null;
+  const placementPosition = placement?.position ?? node.position;
+  const groupLabel = placement
+    ? state.model.byId.get(placement.ownerId)?.label ?? placement.ownerId
+    : null;
+  const usageLabels = freeform && node.isElement
+    ? placementsOf(state.model, node.id).map((item) => state.model.byId.get(item.ownerId)?.label ?? item.ownerId)
+    : [];
   const head = h('div', { class: 'panel-head' },
     h('div', { class: 'titles' },
-      h('span', { class: 'inspector-eyebrow' }, node.planning ? 'Product item' : 'Selection'),
-      h('span', { class: `type-pill t-${node.type}` }, typeIcon(node.type, 12), node.type),
+      h('span', { class: 'inspector-eyebrow' },
+        node.planning ? 'Product item' : node.isElement ? 'Shared element' : freeform && node.children ? 'Group' : 'Selection'),
+      h('span', { class: `type-pill t-${node.type}` }, typeIcon(node.type, 12), typeLabel(node.type)),
       h('h2', {}, node.label),
       h('button', {
         class: 'node-id', title: 'Copy deep link to this node',
@@ -657,27 +987,62 @@ function renderDetail() {
     const systemChips = node.systems.length
       ? h('div', { class: 'system-chips' }, node.systems.map((s) => h('span', {}, s)))
       : h('span', { class: 'unassigned' }, 'Not linked');
+    const scope = placement
+      ? state.model.byId.get(placement.ownerId)?.children
+      : node.ownerId == null ? state.model.root : state.model.byId.get(node.ownerId)?.children;
+    const connectionCount = (scope?.edges ?? []).filter((edge) => edge.from === node.id || edge.to === node.id).length;
+    const ownerSummary = node.owners?.length
+      ? node.owners.map((ownerRef) => {
+        const ownerNode = state.model.elementById?.get(ownerRef.to);
+        return `${ownerNode?.label ?? ownerRef.to} · ${ownerRef.role.replace('-', ' ')}`;
+      }).join(', ')
+      : 'Not assigned';
     body.append(
       h('div', { class: 'focus-summary' },
         node.description
           ? linkifiedDesc(node.description)
-          : h('div', { class: 'desc placeholder' }, ro ? 'No description.' : 'Describe what happens in this step.')),
-      node.planning ? h('div', { class: 'focus-facts planning-facts' },
-        fact('Owner', node.owner || 'Not assigned'),
-        fact('Status', node.planning.status?.replace('-', ' ') || 'Draft'),
-        fact('Priority', node.planning.priority || 'Unprioritized'),
-        fact('Horizon', node.planning.phase?.replace(/-/g, ' ') || 'Unscheduled'),
-        fact('Target', node.planning.target || 'Not set'),
-        fact('Acceptance', `${node.planning.acceptance.length} checks`))
-        : h('div', { class: 'focus-facts' },
+          : h('div', { class: 'desc placeholder' }, ro ? 'No description.' : freeform ? 'Describe this element.' : 'Describe what happens in this step.')),
+      freeform
+        ? h('div', { class: 'focus-facts' },
+          fact('Owners', ownerSummary),
+          fact('Connections', connectionCount ? `${connectionCount} connected` : 'None'),
+          node.isElement
+            ? fact('Used in', usageLabels.length
+              ? `${usageLabels.length} group${usageLabels.length === 1 ? '' : 's'}: ${usageLabels.join(', ')}`
+              : 'No groups')
+            : null)
+        : node.planning ? h('div', { class: 'focus-facts planning-facts' },
           fact('Owner', node.owner || 'Not assigned'),
-          fact('Trigger', node.trigger || 'Not documented'),
-          fact('SLA', node.sla || 'No target'),
-          h('div', { class: 'focus-fact systems-fact' }, h('span', { class: 'focus-label' }, 'Systems'), systemChips),
-          h('div', { class: 'focus-fact readiness-fact' },
-            h('span', { class: 'focus-label' }, 'Automation readiness'),
-            h('strong', { class: `automation-state a-${status}` }, status.replace('-', ' ')))));
-    // Transcript-derived facts remain visibly provisional until confirmed.
+          fact('Status', node.planning.status?.replace('-', ' ') || 'Draft'),
+          fact('Priority', node.planning.priority || 'Unprioritized'),
+          fact('Horizon', node.planning.phase?.replace(/-/g, ' ') || 'Unscheduled'),
+          fact('Target', node.planning.target || 'Not set'),
+          fact('Acceptance', `${node.planning.acceptance.length} checks`))
+          : h('div', { class: 'focus-facts' },
+            fact('Owner', node.owner || 'Not assigned'),
+            fact('Trigger', node.trigger || 'Not documented'),
+            fact('SLA', node.sla || 'No target'),
+            h('div', { class: 'focus-fact systems-fact' }, h('span', { class: 'focus-label' }, 'Systems'), systemChips),
+            h('div', { class: 'focus-fact readiness-fact' },
+              h('span', { class: 'focus-label' }, 'Automation readiness'),
+              h('strong', { class: `automation-state a-${status}` }, status.replace('-', ' ')))));
+    if (placement) {
+      body.append(h('div', { class: 'panel-section placement-note' },
+        h('h3', {}, 'Note for this group', h('span', { class: 'local-marker' }, 'Local')),
+        h('div', { class: placement.note ? 'desc' : 'desc placeholder' },
+          placement.note || `No note for ${groupLabel}.`)));
+    }
+    if (node.isElement && node.relations.length) {
+      body.append(h('div', { class: 'panel-section hierarchy-section' },
+        h('h3', {}, 'Element hierarchy'),
+        h('div', { class: 'hierarchy-links' }, node.relations.map((relation) => {
+          const target = state.model.elementById.get(relation.to);
+          return h('button', {
+            class: 'hierarchy-link',
+            onClick: () => ctrl.gotoNode(relation.to),
+          }, h('span', {}, relation.type.replace('-', ' ')), h('strong', {}, target?.label ?? relation.to));
+        }))));
+    }
     const flagNote = state.flags?.nodes?.get(node.id);
     if (flagNote) {
       body.append(h('div', { class: 'panel-section flag-section' },
@@ -690,23 +1055,24 @@ function renderDetail() {
         }, '✓ Mark confirmed')));
     }
 
-    body.append(renderCostSection(node, ro));
+    if (!freeform) body.append(renderCostSection(node, ro));
 
-    if (node.position) {
+    if (placementPosition) {
       body.append(h('div', { class: 'panel-section' },
         h('h3', {}, 'Layout'),
         h('div', { class: 'pin-row' },
-          h('span', { class: 'pin-info' }, `Pinned at ${node.position.x}, ${node.position.y}`),
+          h('span', { class: 'pin-info' }, `Pinned at ${placementPosition.x}, ${placementPosition.y}`),
           ro ? null : h('button', {
-            class: 'pa-btn', title: 'Remove the pinned position — the node returns to automatic layout',
-            onClick: () => ctrl.commit(() => edit.clearNodePosition(node.id))
-              .then((ok) => ok && toast('Released — back to auto-layout')),
+            class: 'pa-btn', title: 'Remove the pinned position and return to automatic layout',
+            onClick: () => ctrl.commit(() => edit.clearNodePosition(node.id, placement?.ownerId ?? node.ownerId))
+              .then((ok) => ok && toast('Released to auto-layout')),
           }, 'Release to auto-layout'))));
     }
 
     if (node.links.length || node.children) {
       body.append(h('div', { class: 'focus-aux' },
-        node.children ? h('button', { class: 'focus-link', onClick: () => ctrl.diveInto(node.id) }, `Open ${node.stats.childCount}-step sub-map`) : null,
+        node.children ? h('button', { class: 'focus-link', onClick: () => ctrl.diveInto(node.id) },
+          freeform ? `Open group with ${node.stats.childCount} items` : `Open ${node.stats.childCount}-step sub-map`) : null,
         node.links.map((l) => {
           const href = safeUrl(l.url);
           return href ? h('a', { class: 'focus-link', href, target: '_blank', rel: 'noopener noreferrer' }, l.label) : null;
@@ -718,12 +1084,25 @@ function renderDetail() {
     const seg = typeSegment(node.type);
     const desc = h('textarea', { class: 'f-textarea' });
     desc.value = node.description;
-    const owner = h('input', { class: 'f-input', value: node.owner, placeholder: 'Who owns this step?' });
-    const trigger = h('input', { class: 'f-input', value: node.trigger, placeholder: 'What starts this step?' });
-    const sla = h('input', { class: 'f-input', value: node.sla, placeholder: 'e.g. 4 business hours' });
+    const owner = h('input', { class: 'f-input', value: node.owner, placeholder: freeform ? 'Who owns this item?' : 'Who owns it?' });
+    const owners = h('textarea', {
+      class: 'f-textarea compact-textarea',
+      placeholder: 'business -> revenue-operations',
+    });
+    owners.value = (node.owners ?? []).map((ownerRef) => `${ownerRef.role} -> ${ownerRef.to}`).join('\n');
+    const placementNote = h('textarea', {
+      class: 'f-textarea compact-textarea',
+      placeholder: groupLabel ? `How is this used in ${groupLabel}?` : 'Optional note for this group',
+    });
+    placementNote.value = placement?.note ?? '';
+    const roleIds = state.model.elements
+      .filter((element) => element.type === 'role')
+      .map((element) => element.id);
+    const trigger = h('input', { class: 'f-input', value: node.trigger, placeholder: 'What starts it?' });
+    const sla = h('input', { class: 'f-input', value: node.sla, placeholder: 'e.g. 4 hours' });
     const automation = automationSelect(node.automation);
     const systems = h('input', { class: 'f-input', value: node.systems.join(', '), placeholder: 'Salesforce, Plaid' });
-    const productMode = state.model.document.kind !== 'process' || !!node.planning;
+    const productMode = !freeform && (state.model.document.kind !== 'process' || !!node.planning);
     const planning = node.planning ?? { type: 'requirement', status: 'draft', priority: 'should', phase: 'next', target: '', acceptance: [], evidence: [], risks: [], dependsOn: [], rice: {} };
     const planningType = enumSelect(PLANNING_TYPES, planning.type || 'requirement');
     const planningStatus = enumSelect(PLAN_STATUSES, planning.status || 'draft');
@@ -736,7 +1115,10 @@ function renderDetail() {
     const evidence = h('textarea', { class: 'f-textarea compact-textarea' }); evidence.value = planning.evidence.join('\n');
     const risks = h('textarea', { class: 'f-textarea compact-textarea' }); risks.value = planning.risks.join('\n');
     const dependsOn = h('input', { class: 'f-input', value: planning.dependsOn.join(', '), placeholder: 'node-id, another-id' });
-    const relations = h('textarea', { class: 'f-textarea compact-textarea', placeholder: 'supports -> objective-id' });
+    const relations = h('textarea', {
+      class: 'f-textarea compact-textarea',
+      placeholder: freeform ? 'part-of -> parent-element-id' : 'supports -> objective-id',
+    });
     relations.value = node.relations.map((relation) => `${relation.type} -> ${relation.to}`).join('\n');
     const planningEnabled = h('input', { type: 'checkbox' });
     planningEnabled.checked = !!node.planning;
@@ -786,15 +1168,30 @@ function renderDetail() {
     body.append(
       h('div', { class: 'f-field' }, h('label', {}, 'Label'), label),
       h('div', { class: 'f-field' }, h('label', {}, 'Type'), seg),
-      h('div', { class: 'form-row' },
-        h('div', { class: 'f-field' }, h('label', {}, 'Owner'), owner),
-        h('div', { class: 'f-field' }, h('label', {}, 'Automation'), automation)),
-      h('div', { class: 'form-row' },
+      freeform
+        ? h('div', { class: 'freeform-shared-fields' },
+          h('div', { class: 'f-field' },
+            h('label', {}, 'Owners · role -> person or team id'),
+            owners,
+            h('p', { class: 'field-help' }, roleIds.length
+              ? `Person / team ids: ${roleIds.join(', ')}`
+              : 'Create a Person / team element first, then link it here.')),
+          node.isElement ? h('div', { class: 'f-field' },
+            h('label', {}, 'Hierarchy · relation -> element id'),
+            relations,
+            h('p', { class: 'field-help' }, `${HIERARCHY_RELATION_TYPES.join(', ')}`)) : null,
+          placement ? h('div', { class: 'f-field placement-note-field' },
+            h('label', {}, `Note for ${groupLabel}`, h('span', { class: 'local-marker' }, 'Local')),
+            placementNote) : null)
+        : h('div', { class: 'form-row' },
+          h('div', { class: 'f-field' }, h('label', {}, 'Owner'), owner),
+          h('div', { class: 'f-field' }, h('label', {}, 'Automation'), automation)),
+      freeform ? null : h('div', { class: 'form-row' },
         h('div', { class: 'f-field' }, h('label', {}, 'Trigger'), trigger),
         h('div', { class: 'f-field' }, h('label', {}, 'SLA'), sla)),
-      h('div', { class: 'f-field' }, h('label', {}, 'Systems (comma-separated)'), systems),
-      planningPanel,
-      h('div', { class: 'f-field' }, h('label', {}, 'Description'), desc),
+      freeform ? null : h('div', { class: 'f-field' }, h('label', {}, 'Systems (comma-separated)'), systems),
+      ...(planningPanel ? [planningPanel] : []),
+      h('div', { class: 'f-field' }, h('label', {}, node.isElement ? 'Shared description' : 'Description'), desc),
       h('div', { class: 'f-field' }, h('label', {}, 'Links'), linksBox,
         h('button', { class: 'add-inline', onClick: () => addLinkRow() }, '+ Add link')),
       h('div', { class: 'dialog-actions' },
@@ -802,30 +1199,36 @@ function renderDetail() {
         h('button', {
           class: 'd-btn primary',
           onClick: async () => {
-            const ok = await ctrl.commit(() => edit.updateNode(node.id, {
-              label: label.value.trim() || node.label,
-              type: seg.value(),
-              description: desc.value,
-              owner: owner.value,
-              trigger: trigger.value,
-              sla: sla.value,
-              automation: automation.value,
-              systems: systems.value.split(',').map((s) => s.trim()).filter(Boolean),
-              planning: productMode ? (planningEnabled.checked ? {
-                ...planning,
-                type: planningType.value,
-                status: planningStatus.value,
-                priority: planningPriority.value,
-                phase: planningPhase.value,
-                target: planningTarget.value,
-                acceptance: lineValues(acceptance.value),
-                evidence: lineValues(evidence.value),
-                risks: lineValues(risks.value),
-                dependsOn: dependsOn.value.split(',').map((value) => value.trim()).filter(Boolean),
-              } : null) : undefined,
-              relations: productMode ? relationValues(relations.value) : undefined,
-              links: linkRows.map((r) => r.get()).filter((l) => l.url),
-            }));
+            const ok = await ctrl.commit(() => {
+              edit.updateNode(node.id, {
+                label: label.value.trim() || node.label,
+                type: seg.value(),
+                description: desc.value,
+                owner: freeform ? undefined : owner.value,
+                owners: freeform ? ownerValues(owners.value) : undefined,
+                trigger: freeform ? undefined : trigger.value,
+                sla: freeform ? undefined : sla.value,
+                automation: freeform ? undefined : automation.value,
+                systems: freeform ? undefined : systems.value.split(',').map((s) => s.trim()).filter(Boolean),
+                planning: productMode ? (planningEnabled.checked ? {
+                  ...planning,
+                  type: planningType.value,
+                  status: planningStatus.value,
+                  priority: planningPriority.value,
+                  phase: planningPhase.value,
+                  target: planningTarget.value,
+                  acceptance: lineValues(acceptance.value),
+                  evidence: lineValues(evidence.value),
+                  risks: lineValues(risks.value),
+                  dependsOn: dependsOn.value.split(',').map((value) => value.trim()).filter(Boolean),
+                } : null) : undefined,
+                relations: freeform && node.isElement
+                  ? relationValues(relations.value, HIERARCHY_RELATION_TYPES)
+                  : productMode ? relationValues(relations.value) : undefined,
+                links: linkRows.map((row) => row.get()).filter((link) => link.url),
+              });
+              if (placement) edit.updatePlacement(placement.ownerId, node.id, { note: placementNote.value });
+            });
             if (ok) { editMode = false; renderDetail(); toast('Saved'); }
           },
         }, 'Save')));
@@ -842,9 +1245,12 @@ function renderDetail() {
 
   if (!editMode && !ro) {
     panel.append(h('div', { class: 'panel-actions' },
-      node.planning
-        ? h('button', { class: 'pa-btn primary-action', onClick: () => { editMode = true; renderDetail(); } }, 'Edit requirement →')
-        : h('button', { class: 'pa-btn primary-action', onClick: () => beginAutomation(node) }, 'Design automation →')));
+      freeform
+        ? h('button', { class: 'pa-btn primary-action', onClick: () => { editMode = true; renderDetail(); } },
+          node.isElement ? 'Edit shared element' : 'Edit group')
+        : node.planning
+          ? h('button', { class: 'pa-btn primary-action', onClick: () => { editMode = true; renderDetail(); } }, 'Edit requirement →')
+          : h('button', { class: 'pa-btn primary-action', onClick: () => beginAutomation(node) }, 'Design automation →')));
   }
 }
 
@@ -1030,14 +1436,48 @@ function renderEdgeDetail(panel) {
   panel.classList.remove('editing');
   const from = state.model.byId.get(e.from), to = state.model.byId.get(e.to);
 
-  const label = h('input', { class: 'f-input', placeholder: 'e.g. approved / declined', value: e.label ?? '' });
+  const freeform = isFreeform();
+  const label = h('input', { class: 'f-input', placeholder: freeform ? 'e.g. reads customer data' : 'e.g. approved / declined', value: e.label ?? '' });
   const head = h('div', { class: 'panel-head' },
     h('div', { class: 'titles' },
-      h('span', { class: 'type-pill t-artifact' }, '→ edge'),
+      h('span', { class: 'type-pill t-artifact' }, freeform ? '→ connection' : '→ edge'),
       h('h2', {}, `${from?.label ?? e.from} → ${to?.label ?? e.to}`)),
     h('button', { class: 'panel-close', onClick: () => { ctrl.selectEdge(null); panel.hidden = true; } }, '✕'));
   const body = h('div', { class: 'panel-body' },
-    h('div', { class: 'f-field' }, h('label', {}, 'Label (what flows / the outcome)'), label));
+    h('div', { class: 'f-field' }, h('label', {}, freeform ? 'Connection label' : 'Label (what flows / the outcome)'), label));
+
+  // route style: automatic, or a pinned shape the user drags around on the canvas
+  const currentRoute = e.route ?? (e.via ? 'curved' : 'auto');
+  const pickRoute = (style) => {
+    if (state.standalone) return;
+    ctrl.commit(() => {
+      if (style === 'auto') {
+        edit.setEdgeRoute(state.scopeId, sel.index, null);
+        edit.clearEdgeVia(state.scopeId, sel.index);
+      } else {
+        edit.setEdgeRoute(state.scopeId, sel.index, style);
+        if (style !== 'straight' && !e.via) {
+          const seed = canvas.edgeRouteSeed(sel.index);
+          if (seed) edit.setEdgeVia(state.scopeId, sel.index, seed);
+        }
+      }
+    }).then((ok) => { if (ok) renderEdgeDetail(panel); });
+  };
+  const ROUTE_OPTIONS = [
+    ['auto', 'Auto'], ['curved', 'Curved'], ['straight', 'Straight'], ['angled', 'Angled'], ['stepped', 'Stepped'],
+  ];
+  body.append(h('div', { class: 'panel-section' },
+    h('h3', {}, 'Route'),
+    h('div', { class: 'route-seg', role: 'group', 'aria-label': 'Route style' },
+      ...ROUTE_OPTIONS.map(([id, text]) => h('button', {
+        class: `route-seg-btn${currentRoute === id ? ' on' : ''}`,
+        'aria-pressed': currentRoute === id ? 'true' : 'false',
+        disabled: state.standalone ? '' : null,
+        onClick: () => pickRoute(id),
+      }, text))),
+    currentRoute === 'curved' || currentRoute === 'angled' || currentRoute === 'stepped'
+      ? h('p', { class: 'field-help' }, 'Drag the line on the canvas to move the bend. The × on the line releases it back to Auto.')
+      : null));
 
   // provenance flag on this edge (matched by endpoints within this scope)
   const edgeFlag = state.flags?.edges?.find((f) =>
@@ -1063,6 +1503,241 @@ function renderEdgeDetail(panel) {
         onClick: () => { panel.hidden = true; ctrl.commit(() => edit.deleteEdge(state.scopeId, sel.index)).then((ok) => { if (ok) { ctrl.selectEdge(null); toast('Edge deleted'); } }); },
       }, '🗑 Delete edge')));
   }
+}
+
+// ── AI map assistant ───────────────────────────────────────────────
+// Chat with the map: the server validates every proposal, and nothing
+// applies until the user clicks Apply. Review-before-save, same as Import.
+let chatMessages = []; // { role, text, proposal?: { source, summary } }
+let chatBusy = false;
+let chatFocusId = null; // node the conversation is about, if any
+
+function micIcon() {
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', '15');
+  svg.setAttribute('height', '15');
+  svg.setAttribute('aria-hidden', 'true');
+  const p = document.createElementNS(SVG, 'path');
+  p.setAttribute('d', 'M12 15a3.5 3.5 0 0 0 3.5-3.5v-5a3.5 3.5 0 0 0-7 0v5A3.5 3.5 0 0 0 12 15zM5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3.5');
+  p.setAttribute('fill', 'none');
+  p.setAttribute('stroke', 'currentColor');
+  p.setAttribute('stroke-width', '1.7');
+  p.setAttribute('stroke-linecap', 'round');
+  svg.append(p);
+  return svg;
+}
+
+// Everything the model needs about the selected node: its fields and the
+// edges that touch it, in plain text.
+function nodeFocusSummary(node) {
+  const lines = [`type: ${node.type}`, `label: ${node.label}`];
+  if (node.description) lines.push(`description: ${node.description}`);
+  if (node.owner) lines.push(`owner: ${node.owner}`);
+  if (node.trigger) lines.push(`trigger: ${node.trigger}`);
+  if (node.sla) lines.push(`sla: ${node.sla}`);
+  if (node.automation) lines.push(`automation: ${node.automation}`);
+  if (node.systems?.length) lines.push(`systems: ${node.systems.join(', ')}`);
+  if (node.children) lines.push(`contains: ${node.stats.childCount} child nodes`);
+  const scope = state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children;
+  const nameOf = (id) => state.model.byId.get(id)?.label ?? id;
+  const touching = (scope?.edges ?? []).filter((e) => e.from === node.id || e.to === node.id);
+  if (touching.length) {
+    lines.push('edges:');
+    for (const e of touching) {
+      lines.push(`  ${nameOf(e.from)} → ${nameOf(e.to)}${e.label ? ` (${e.label})` : ''}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+// Open the assistant aimed at one node — the "Ask AI" action on every node.
+export function askAiAbout(nodeId) {
+  if (!state.model?.byId.has(nodeId)) return;
+  chatFocusId = nodeId;
+  toggleChat(true);
+}
+
+function chatDiffSummary(before, after) {
+  const parts = [];
+  try {
+    const a = parseMap(before).model;
+    const b = parseMap(after).model;
+    const added = [...b.byId.keys()].filter((k) => !a.byId.has(k));
+    const removed = [...a.byId.keys()].filter((k) => !b.byId.has(k));
+    const edgeCount = (m) => [...m.byId.values()].reduce((t, n) => t + (n.children?.edges.length ?? 0), m.root.edges.length);
+    const edgeDelta = edgeCount(b) - edgeCount(a);
+    if (added.length) parts.push(`+${added.length} ${added.length === 1 ? 'node' : 'nodes'} (${added.slice(0, 3).join(', ')}${added.length > 3 ? '…' : ''})`);
+    if (removed.length) parts.push(`−${removed.length} ${removed.length === 1 ? 'node' : 'nodes'} (${removed.slice(0, 3).join(', ')}${removed.length > 3 ? '…' : ''})`);
+    if (edgeDelta) parts.push(`${edgeDelta > 0 ? '+' : ''}${edgeDelta} ${Math.abs(edgeDelta) === 1 ? 'edge' : 'edges'}`);
+    if (!parts.length) parts.push('Content edits, no structural change');
+  } catch { parts.push('Map update'); }
+  return parts.join(' · ');
+}
+
+function renderChat() {
+  const dock = document.getElementById('chat-dock');
+  if (!dock) return;
+  const list = h('div', { class: 'chat-list' });
+  if (!chatMessages.length) {
+    list.append(h('div', { class: 'chat-empty' },
+      'Describe a change and I will propose it as a reviewed edit — nothing applies until you click Apply.',
+      h('small', {}, 'Try: “add a decision after triage for whether the bug is a duplicate”')));
+  }
+  for (const msg of chatMessages) {
+    if (msg.role === 'user') {
+      list.append(h('div', { class: 'chat-msg user' }, msg.text));
+    } else {
+      const bubble = h('div', { class: 'chat-msg ai' }, msg.text);
+      if (msg.proposal && !msg.proposal.settled) {
+        bubble.append(h('div', { class: 'chat-proposal' },
+          h('span', { class: 'chat-proposal-summary' }, msg.proposal.summary),
+          h('div', { class: 'chat-proposal-actions' },
+            h('button', {
+              class: 'd-btn primary',
+              onClick: async () => {
+                const ok = await ctrl.applySource(msg.proposal.source, 'AI edit');
+                msg.proposal.settled = ok ? 'applied' : 'rejected';
+                if (ok) toast('Applied — the map file is updated');
+                renderChat();
+              },
+            }, 'Apply'),
+            h('button', {
+              class: 'd-btn',
+              onClick: () => { msg.proposal.settled = 'dismissed'; renderChat(); },
+            }, 'Dismiss'))));
+      } else if (msg.proposal?.settled === 'applied') {
+        bubble.append(h('div', { class: 'chat-settled' }, `✓ Applied · ${msg.proposal.summary}`));
+      } else if (msg.proposal?.settled === 'dismissed') {
+        bubble.append(h('div', { class: 'chat-settled dismissed' }, `Dismissed · ${msg.proposal.summary}`));
+      }
+      list.append(bubble);
+    }
+  }
+  if (chatBusy) list.append(h('div', { class: 'chat-msg ai thinking' }, 'Working on it…'));
+  const input = h('textarea', {
+    class: 'chat-input', rows: '2',
+    placeholder: state.standalone ? 'The assistant needs the local Serigraph server.' : 'Tell the map what to change…',
+    disabled: state.standalone ? '' : null,
+  });
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); sendChat(input.value); }
+    if (ev.key === 'Escape') { ev.stopPropagation(); toggleChat(false); }
+  });
+  // voice input: browser recognizer by default, or API transcription when AI
+  // settings say so — either way, speech lands in the box and nothing sends
+  // until the user presses Send
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const apiVoice = state.aiSettings?.voiceProvider === 'api';
+  let micBtn = null;
+  if ((SpeechRecognition || apiVoice) && !state.standalone) {
+    let rec = null;
+    let mediaRec = null;
+    micBtn = h('button', {
+      class: 'chat-mic', title: 'Dictate your request', 'aria-label': 'Dictate your request',
+      onClick: async () => {
+        if (apiVoice) {
+          if (mediaRec) { mediaRec.stop(); return; }
+          let stream;
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          } catch (e) {
+            toast(`Microphone unavailable: ${e.message}`, true);
+            return;
+          }
+          const chunks = [];
+          mediaRec = new MediaRecorder(stream);
+          const mime = mediaRec.mimeType || 'audio/webm';
+          mediaRec.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+          mediaRec.onstop = async () => {
+            stream.getTracks().forEach((t) => t.stop());
+            mediaRec = null;
+            micBtn.classList.remove('recording');
+            try {
+              const base64 = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(String(reader.result).split(',')[1] ?? '');
+                reader.readAsDataURL(new Blob(chunks, { type: mime }));
+              });
+              micBtn.classList.add('thinking');
+              const { text } = await api.transcribe(base64, mime);
+              input.value = (input.value ? input.value.replace(/\s+$/, '') + ' ' : '') + text;
+            } catch (e) {
+              toast(e.message, true);
+            } finally {
+              micBtn.classList.remove('thinking');
+            }
+          };
+          mediaRec.start();
+          micBtn.classList.add('recording');
+          return;
+        }
+        if (rec) { rec.stop(); return; }
+        rec = new SpeechRecognition();
+        rec.lang = 'en-US';
+        rec.interimResults = true;
+        const base = input.value;
+        rec.onresult = (ev) => {
+          let text = '';
+          for (const r of ev.results) text += r[0].transcript;
+          input.value = (base ? base.replace(/\s+$/, '') + ' ' : '') + text;
+        };
+        rec.onend = () => { rec = null; micBtn.classList.remove('recording'); };
+        rec.onerror = () => { rec = null; micBtn.classList.remove('recording'); };
+        rec.start();
+        micBtn.classList.add('recording');
+      },
+    }, micIcon());
+  }
+  const focusNode = chatFocusId ? state.model?.byId.get(chatFocusId) : null;
+  dock.replaceChildren(
+    h('div', { class: 'chat-head' },
+      h('div', {}, h('span', { class: 'chat-kicker' }, 'Map assistant'), h('strong', {}, state.model?.name ?? '')),
+      h('div', { class: 'chat-head-actions' },
+        state.standalone ? null : h('button', { class: 'panel-close', title: 'AI settings', onClick: () => bus.emit('ai-settings-request') }, '⚙'),
+        h('button', { class: 'panel-close', onClick: () => toggleChat(false) }, '✕'))),
+    focusNode ? h('div', { class: 'chat-focus' },
+      h('span', {}, `About: ${focusNode.label}`),
+      h('button', { title: 'Clear the focus — talk about the whole map', onClick: () => { chatFocusId = null; renderChat(); } }, '×')) : null,
+    list,
+    h('div', { class: 'chat-compose' },
+      input,
+      micBtn,
+      h('button', { class: 'd-btn primary chat-send', onClick: () => sendChat(input.value) }, 'Send')));
+  list.scrollTop = list.scrollHeight;
+  if (!dock.hidden && !chatBusy) input.focus();
+}
+
+async function sendChat(text) {
+  const instruction = String(text || '').trim();
+  if (!instruction || chatBusy || state.standalone) return;
+  chatMessages.push({ role: 'user', text: instruction });
+  chatBusy = true;
+  renderChat();
+  try {
+    const history = chatMessages.slice(0, -1).map((m) => ({
+      role: m.role,
+      content: m.role === 'user' ? m.text : (m.proposal ? `Proposed map update: ${m.proposal.summary}` : m.text),
+    }));
+    const focusNode = chatFocusId ? state.model?.byId.get(chatFocusId) : null;
+    const focus = focusNode ? { id: focusNode.id, summary: nodeFocusSummary(focusNode) } : null;
+    const result = await api.chat(instruction, history, focus);
+    const summary = chatDiffSummary(state.source, result.source);
+    chatMessages.push({ role: 'assistant', text: 'Here is the proposed change.', proposal: { source: result.source, summary } });
+  } catch (e) {
+    chatMessages.push({ role: 'assistant', text: e.message });
+  }
+  chatBusy = false;
+  renderChat();
+}
+
+export function toggleChat(force) {
+  const dock = document.getElementById('chat-dock');
+  if (!dock) return;
+  const show = force ?? dock.hidden;
+  dock.hidden = !show;
+  if (show) { ctrl.loadAiSettings().then(() => { if (!dock.hidden) renderChat(); }); renderChat(); }
+  else document.getElementById('canvas')?.focus();
 }
 
 // ── transcript importer (✨ Import) ──────────────────────────────────
@@ -1192,32 +1867,38 @@ export async function importDialog() {
 }
 
 // ── node palette (drag a type onto the canvas) ───────────────────────
-const TYPE_LABELS = { process: 'Process', decision: 'Decision', system: 'System', role: 'Role', artifact: 'Artifact' };
 
 // create a node pinned at a world point in the current scope (palette drop /
 // canvas double-click), then open it for naming
 export function createNodeAt(type, world) {
-  const label = `New ${type}`;
+  const position = { x: Math.round(world.x), y: Math.round(world.y) };
+  if (isFreeform()) {
+    if (state.scopeId == null) addNodeDialog(null, { type: 'item', position });
+    else addElementDialog(state.scopeId, { type, position });
+    return;
+  }
+  const label = `New ${typeLabel(type)}`;
   const id = edit.uniqueId(state.model, edit.slugify(label));
   ctrl.commit(
-    () => edit.addNode(state.scopeId, {
-      id, type, label,
-      position: { x: Math.round(world.x), y: Math.round(world.y) },
-    }),
+    () => edit.addNode(state.scopeId, { id, type, label, position }),
     { select: id },
   ).then((ok) => {
     if (!ok) return;
     showDetail(id, { edit: true });
-    toast(`Added ${type} — name it in the panel`);
+    toast(`Added ${typeLabel(type)}. Name it in the panel.`);
   });
 }
 
 function createNodeInside(type, containerId) {
-  const label = `New ${type}`;
+  if (isFreeform()) {
+    addElementDialog(containerId, { type });
+    return;
+  }
+  const label = `New ${typeLabel(type)}`;
   const id = edit.uniqueId(state.model, edit.slugify(label));
   const contLabel = state.model.byId.get(containerId)?.label ?? containerId;
   ctrl.commit(() => edit.addNode(containerId, { id, type, label }))
-    .then((ok) => ok && toast(`Added ${type} inside “${contLabel}” — double-click it to open`));
+    .then((ok) => ok && toast(`Added ${typeLabel(type)} inside “${contLabel}”. Double-click it to open.`));
 }
 
 function initPalette() {
@@ -1246,7 +1927,7 @@ function startPaletteDrag(ev, type, chip, { onActivate, onComplete } = {}) {
     if (!moved && Math.hypot(e.clientX - ev.clientX, e.clientY - ev.clientY) <= 4) return;
     if (!moved) {
       moved = true;
-      ghost = h('div', { class: 'pal-ghost' }, typeIcon(type, 14), TYPE_LABELS[type]);
+      ghost = h('div', { class: 'pal-ghost' }, typeIcon(type, 14), typeLabel(type));
       document.body.append(ghost);
     }
     ghost.style.left = `${e.clientX}px`;
@@ -1295,17 +1976,19 @@ export function toggleTemplates(force) {
 
 function renderTemplates() {
   const panel = document.getElementById('templates-panel');
+  const freeform = isFreeform();
+  const templates = state.templates.filter((template) => (template.mode ?? 'process') === (freeform ? 'freeform' : 'process'));
   const head = h('div', { class: 'panel-head' },
     h('div', { class: 'titles' },
       h('h2', {}, 'Template library'),
-      h('span', { class: 'node-id' }, 'reusable process blocks — insert, then customize')),
+      h('span', { class: 'node-id' }, freeform ? 'reusable map blocks. Insert, then customize' : 'reusable process blocks. Insert, then customize')),
     h('button', { class: 'panel-close', onClick: () => toggleTemplates(false) }, '✕'));
   const list = h('div', { class: 'tpl-list' });
-  if (!state.templates.length) {
+  if (!templates.length) {
     list.append(h('p', { class: 'hint', style: 'padding:8px 6px' },
-      'No templates found. Add YAML files to the templates/ folder — same format as maps.'));
+      freeform ? 'No freeform templates found.' : 'No process templates found.'));
   }
-  for (const t of state.templates) {
+  for (const t of templates) {
     list.append(h('div', { class: 'tpl-card' },
       h('h4', {}, t.name),
       h('p', {}, t.description || ''),
@@ -1321,7 +2004,7 @@ function renderTemplates() {
               if (ok) {
                 toggleTemplates(false);
                 if (inserted?.[0]) { ctrl.selectNode(inserted[0]); canvas.centerOn(inserted[0]); showDetail(inserted[0]); }
-                toast(`Inserted “${t.name}” — ${inserted.length} nodes added`);
+                toast(`Inserted “${t.name}”. ${inserted.length} ${inserted.length === 1 ? 'node' : 'nodes'} added.`);
               }
             });
         },
@@ -1338,7 +2021,11 @@ export function openSearch() {
 
   const input = h('input', { placeholder: 'Search nodes by name, id, or description…', 'aria-label': 'Search nodes' });
   const results = h('div', { class: 'palette-results' });
-  const pal = h('div', { class: 'palette' }, input, results);
+  const foot = h('div', { class: 'palette-foot' },
+    h('span', {}, h('kbd', {}, '↑'), h('kbd', {}, '↓'), ' navigate'),
+    h('span', {}, h('kbd', {}, '↵'), ' open'),
+    h('span', {}, h('kbd', {}, 'esc'), ' close'));
+  const pal = h('div', { class: 'palette' }, input, results, foot);
   overlay.replaceChildren(pal);
 
   const all = [...state.model.byId.values()];
@@ -1416,9 +2103,10 @@ function renderCanvasMessage() {
     box.hidden = false;
     box.replaceChildren(h('div', { class: 'map-card' },
       h('h2', {}, 'No maps yet'),
-      h('p', {}, 'Create your first operations map, or drop a YAML file into the maps/ folder.'),
+      h('p', {}, 'Create your first map, or drop a YAML file into the maps/ folder.'),
       state.standalone ? null : h('div', { class: 'empty-actions' },
-        h('button', { class: 'd-btn primary', onClick: () => newMapDialog() }, '+ New map'))));
+        h('button', { class: 'd-btn primary', onClick: () => newMapDialog() }, '+ New map'),
+        h('button', { class: 'd-btn', onClick: () => document.getElementById('btn-import-file')?.click() }, 'Import file…'))));
     return;
   }
   if (state.mapId && !state.model) {
@@ -1436,9 +2124,9 @@ function renderCanvasMessage() {
     box.hidden = false;
     box.replaceChildren(h('div', { class: 'map-card' },
       h('h2', {}, state.scopeId == null ? 'This map is empty' : 'Nothing in here yet'),
-      h('p', {}, 'Add your first node, or start from a template block.'),
+      h('p', {}, isFreeform() ? 'Add your first item, or start from a template.' : 'Add your first node, or start from a template block.'),
       state.standalone ? null : h('div', { class: 'empty-actions' },
-        h('button', { class: 'd-btn primary', onClick: () => addNodeDialog(state.scopeId) }, '+ Add a node'),
+        h('button', { class: 'd-btn primary', onClick: () => addNodeDialog(state.scopeId) }, isFreeform() ? '+ Add an item' : '+ Add a node'),
         h('button', { class: 'd-btn', onClick: () => toggleTemplates(true) }, 'Browse templates'))));
     return;
   }
@@ -1455,6 +2143,7 @@ export function initUI() {
     clearScenarioPreview();
     renderBreadcrumbs();
     renderSwitcher();
+    renderMapMode();
     renderCanvasMessage();
     renderEconomics();
     if (state.workspaceView !== 'map') hideDetail();
@@ -1483,10 +2172,11 @@ export function initUI() {
   bus.on('templates-loaded', () => {
     if (!document.getElementById('templates-panel').hidden) renderTemplates();
   });
-  bus.on('map-opened', () => { renderBreadcrumbs(); renderSwitcher(); renderCanvasMessage(); });
+  bus.on('map-opened', () => { renderBreadcrumbs(); renderSwitcher(); renderMapMode(); renderCanvasMessage(); });
   bus.on('camera-changed', () => { positionContextActions(); positionScenarioPreview(); });
 
   document.getElementById('map-switcher').addEventListener('click', (ev) => openMapMenu(ev.currentTarget));
+  document.getElementById('map-mode')?.addEventListener('click', (ev) => openModeMenu(ev.currentTarget));
 
   if (state.standalone) {
     for (const id of ['btn-add-node', 'btn-templates', 'btn-export', 'btn-import']) {
