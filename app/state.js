@@ -16,6 +16,7 @@ export const state = {
   selectedEdge: null,  // {scopeId, index} when an edge is selected
 
   connectFrom: null,   // node id while in connect mode
+  pendingEdgeLabel: null, // branch label to apply when a connect completes
   presenting: false,
   workspaceView: 'map', // map | brief | roadmap | audit
 

@@ -3,3 +3,10 @@ node_modules/
 *.tmp-*
 # generated stress-test maps (recreate: node tools/generate-map.mjs --nodes 120 --depth 3 --seed 7 --out maps/stress-120.yaml)
 maps/stress-*.yaml
+# local-only: client maps, recordings, build output, machine config
+maps/vip*.yaml
+*.mp4
+dist/
+.agents/
+.claude/skills/
+.env

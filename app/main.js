@@ -23,22 +23,44 @@ function toggleTheme() {
 
 // ── canvas event wiring ──────────────────────────────────────────────
 function wireCanvasEvents() {
+  let pendingContainerClick = 0;
+  const cancelPendingContainerClick = () => {
+    clearTimeout(pendingContainerClick);
+    pendingContainerClick = 0;
+  };
   bus.on('node-click', (id) => {
     if (state.presenting) return;
+    cancelPendingContainerClick();
     if (workbench.handleNodeClick(id)) return;
     if (state.connectFrom) {
       const from = state.connectFrom;
+      const label = state.pendingEdgeLabel ?? null;
       state.connectFrom = null;
+      state.pendingEdgeLabel = null;
       canvas.paintSelection();
       if (from === id) { ui.toast('Connect cancelled'); return; }
-      ctrl.commit(() => edit.addEdge(state.scopeId, { from, to: id }))
+      ctrl.commit(() => edit.addEdge(state.scopeId, { from, to: id, label }))
         .then((ok) => {
           if (!ok) return;
           const scope = state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children;
           ctrl.selectEdge(scope.edges.length - 1);
           workbench.completeConnect();
-          ui.toast('Edge added — set its label in the panel');
+          ui.toast(label ? `“${label}” branch added — drag the line to route it` : 'Edge added — set its label in the panel');
         });
+      return;
+    }
+    const node = state.model?.byId.get(id);
+    if (node?.children) {
+      // A native double-click emits click events first. Delay the single-click
+      // focus so a dive preserves the overview camera instead of a partial
+      // focus animation.
+      pendingContainerClick = setTimeout(() => {
+        pendingContainerClick = 0;
+        const current = state.model?.byId.get(id);
+        if (!current || current.ownerId !== (state.scopeId ?? null)) return;
+        ui.armContextActions(id);
+        ctrl.selectNode(id);
+      }, 220);
       return;
     }
     ui.armContextActions(id);
@@ -46,13 +68,17 @@ function wireCanvasEvents() {
   });
 
   bus.on('node-dblclick', (id) => {
+    cancelPendingContainerClick();
     if (state.presenting) return;
     const node = state.model?.byId.get(id);
     if (node?.children) ctrl.diveInto(id);
     else ctrl.selectNode(id);
   });
 
-  bus.on('dive-request', (id) => { if (!state.presenting) ctrl.diveInto(id); });
+  bus.on('dive-request', (id) => {
+    cancelPendingContainerClick();
+    if (!state.presenting) ctrl.diveInto(id);
+  });
 
   // a finished node drag pins the node where it was dropped
   bus.on('node-moved', (id, pos) => {
@@ -65,6 +91,24 @@ function wireCanvasEvents() {
     if (state.presenting || state.standalone) return;
     ctrl.commit(() => edit.clearNodePosition(id))
       .then((ok) => { if (ok) ui.toast('Released — back to auto-layout'); });
+  });
+
+  // a finished edge drag pins the route through the drop point; a dragged
+  // straight edge becomes curved (the via only makes sense on a bend)
+  bus.on('edge-routed', (index, via, style) => {
+    if (state.presenting || state.standalone) return;
+    ctrl.commit(() => {
+      edit.setEdgeVia(state.scopeId, index, via);
+      if (style) edit.setEdgeRoute(state.scopeId, index, style);
+    }).then((ok) => { if (!ok) canvas.refreshScope(state.model); });
+  });
+
+  bus.on('unroute-request', (index) => {
+    if (state.presenting || state.standalone) return;
+    ctrl.commit(() => {
+      edit.clearEdgeVia(state.scopeId, index);
+      edit.setEdgeRoute(state.scopeId, index, null);
+    }).then((ok) => { if (ok) ui.toast('Released — back to automatic routing'); });
   });
 
   // re-nesting suffix: "· 2 edges re-linked · 1 edge removed"
@@ -80,8 +124,14 @@ function wireCanvasEvents() {
     if (state.presenting || state.standalone) return;
     const nodeLabel = state.model?.byId.get(id)?.label ?? id;
     const contLabel = state.model?.byId.get(containerId)?.label ?? containerId;
+    const isPlacement = state.model?.mode === 'freeform' && state.model.elementById?.has(id);
+    const fromOwnerId = state.scopeId;
     let res;
-    ctrl.commit(() => { res = edit.moveNode(id, containerId); }, { select: null })
+    ctrl.commit(() => {
+      res = isPlacement
+        ? edit.movePlacement(id, fromOwnerId, containerId)
+        : edit.moveNode(id, containerId);
+    }, { select: null })
       .then((ok) => {
         if (!ok) { canvas.refreshScope(state.model); return; }
         ui.toast(`Moved “${nodeLabel}” into “${contLabel}”${edgeFate(res)}`);
@@ -98,41 +148,65 @@ function wireCanvasEvents() {
     const targetLabel = targetOwnerId
       ? state.model.byId.get(targetOwnerId)?.label ?? targetOwnerId
       : state.model.name;
+    const isPlacement = state.model.mode === 'freeform' && state.model.elementById?.has(id);
+    if (isPlacement && targetOwnerId == null) {
+      ui.toast('Items must stay inside a group');
+      canvas.refreshScope(state.model);
+      return;
+    }
+    const fromOwnerId = state.scopeId;
     let res;
-    ctrl.commit(() => { res = edit.moveNode(id, targetOwnerId); }, { select: null })
+    ctrl.commit(() => {
+      res = isPlacement
+        ? edit.movePlacement(id, fromOwnerId, targetOwnerId)
+        : edit.moveNode(id, targetOwnerId);
+    }, { select: null })
       .then((ok) => {
         if (!ok) { canvas.refreshScope(state.model); return; }
         ui.toast(`Moved “${nodeLabel}” out to “${targetLabel}”${edgeFate(res)}`);
       });
   });
 
+  bus.on('peer-scope-request', (ownerId, focusId = null) => {
+    if (state.presenting || state.scopeId == null) return;
+    ctrl.gotoPeerScope(ownerId, { focusId });
+  });
+
   // drag released over a sibling after starting on a port → new edge
   bus.on('connect-drag', (from, to) => {
     if (state.presenting || state.standalone) return;
-    ctrl.commit(() => edit.addEdge(state.scopeId, { from, to }))
+    const label = state.pendingEdgeLabel ?? null;
+    state.pendingEdgeLabel = null;
+    ctrl.commit(() => edit.addEdge(state.scopeId, { from, to, label }))
       .then((ok) => {
         if (!ok) return;
         const scope = state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children;
         ctrl.selectEdge(scope.edges.length - 1);
-        ui.toast('Edge added — set its label in the panel');
+        ui.toast(label
+          ? `“${label}” branch added — drag the line to route it`
+          : `${state.model.mode === 'freeform' ? 'Connection' : 'Edge'} added. Set its label in the panel.`);
       });
   });
 
-  // double-click on empty canvas → new process node pinned right there
+  // double-click on empty canvas creates the default node for this map mode
   bus.on('bg-dblclick', (world) => {
+    cancelPendingContainerClick();
     if (state.presenting || state.standalone || !state.model) return;
-    ui.createNodeAt('process', world);
+    ui.createNodeAt(state.model.mode === 'freeform' ? 'item' : 'process', world);
   });
 
   bus.on('edge-click', (index) => {
+    cancelPendingContainerClick();
     if (state.presenting || state.connectFrom) return;
     ctrl.selectEdge(index);
   });
 
   bus.on('bg-click', () => {
+    cancelPendingContainerClick();
     if (state.presenting) return;
     if (state.connectFrom) {
       state.connectFrom = null;
+      state.pendingEdgeLabel = null;
       canvas.paintSelection();
       ui.toast('Connect cancelled');
       return;
@@ -200,7 +274,7 @@ function wireKeyboard() {
 
     switch (ev.key) {
       case 'Escape':
-        if (state.connectFrom) { state.connectFrom = null; canvas.paintSelection(); ui.toast('Connect cancelled'); }
+        if (state.connectFrom) { state.connectFrom = null; state.pendingEdgeLabel = null; canvas.paintSelection(); ui.toast('Connect cancelled'); }
         else if (state.activeTool !== 'select') workbench.cancelTool();
         else if (!document.getElementById('templates-panel').hidden) ui.toggleTemplates(false);
         else if (state.scopeId != null) ctrl.riseUp(); // one level per press, always
@@ -242,6 +316,11 @@ function wireToolbar() {
   on('btn-add-node', () => { productWorkspace.setWorkspaceView('map'); ui.addNodeDialog(state.scopeId); });
   on('btn-economics', () => { productWorkspace.setWorkspaceView('map'); ui.toggleEconomics(); });
   on('btn-import', () => { productWorkspace.setWorkspaceView('map'); ui.importDialog(); });
+  on('btn-import-file', () => { productWorkspace.setWorkspaceView('map'); workbench.importMapFile(); });
+  on('btn-export-file', workbench.downloadYaml);
+  on('btn-ai', () => { productWorkspace.setWorkspaceView('map'); ui.toggleChat(); });
+  on('btn-ai-settings', workbench.aiSettingsDialog);
+  bus.on('ai-settings-request', workbench.aiSettingsDialog);
   on('btn-present', () => { productWorkspace.setWorkspaceView('map'); togglePresent(); });
   on('btn-theme', toggleTheme);
   on('btn-help', ui.helpDialog);

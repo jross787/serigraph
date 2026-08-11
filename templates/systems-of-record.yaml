@@ -1,0 +1,151 @@
+name: Systems of Record
+description: Map each system of record, the database and APIs behind it, and the team that owns it.
+mode: freeform
+elements:
+  - id: customer-owner
+    type: role
+    label: Revenue Operations
+    description: Owns customer data quality, access rules, field definitions, and changes to the customer record.
+  - id: customer-crm
+    type: system
+    label: Customer CRM
+    description: The source of truth for accounts, contacts, opportunities, and customer status.
+    owners:
+      - to: customer-owner
+        role: owner
+  - id: customer-db
+    type: database
+    label: Customer Database
+    description: The database that stores the canonical customer records used by the CRM.
+    owners:
+      - to: customer-owner
+        role: owner
+  - id: customer-api
+    type: api
+    label: Customer API
+    description: The supported interface for reading and updating customer records without direct database access.
+    owners:
+      - to: customer-owner
+        role: owner
+  - id: billing-owner
+    type: role
+    label: Finance Systems
+    description: Owns billing rules, payment data, access, and changes to the financial record.
+  - id: billing-platform
+    type: system
+    label: Billing Platform
+    description: The source of truth for subscriptions, invoices, payments, credits, and account balances.
+    owners:
+      - to: billing-owner
+        role: owner
+  - id: billing-db
+    type: database
+    label: Billing Database
+    description: The database that stores the canonical billing and payment records.
+    owners:
+      - to: billing-owner
+        role: owner
+  - id: billing-api
+    type: api
+    label: Billing API
+    description: The supported interface for creating invoices and reading payment or subscription status.
+    owners:
+      - to: billing-owner
+        role: owner
+  - id: product-owner
+    type: role
+    label: Product Engineering
+    description: Owns application data, service behavior, access, and changes to the product record.
+  - id: product-app
+    type: system
+    label: Product Application
+    description: The source of truth for product accounts, configuration, activity, and service state.
+    owners:
+      - to: product-owner
+        role: owner
+  - id: product-db
+    type: database
+    label: Product Database
+    description: The database that stores canonical application and product records.
+    owners:
+      - to: product-owner
+        role: owner
+  - id: product-api
+    type: api
+    label: Product API
+    description: The supported interface for product services and approved external integrations.
+    owners:
+      - to: product-owner
+        role: owner
+  - id: data-owner
+    type: role
+    label: Data Team
+    description: Owns shared definitions, data movement, lineage, quality checks, and warehouse access.
+  - id: warehouse
+    type: database
+    label: Data Warehouse
+    description: The reporting store that combines copies of customer, billing, and product data. It is not the source of truth.
+    owners:
+      - to: data-owner
+        role: owner
+nodes:
+  - id: systems-landscape
+    type: item
+    label: Systems Landscape
+    children:
+      nodes:
+        - use: customer-owner
+        - use: customer-crm
+        - use: customer-db
+        - use: customer-api
+        - use: billing-owner
+        - use: billing-platform
+        - use: billing-db
+        - use: billing-api
+        - use: product-owner
+        - use: product-app
+        - use: product-db
+        - use: product-api
+        - use: data-owner
+        - use: warehouse
+      edges:
+        - from: customer-owner
+          to: customer-crm
+          label: "owns"
+        - from: customer-crm
+          to: customer-db
+          label: "stores records"
+        - from: customer-api
+          to: customer-crm
+          label: "reads and writes"
+        - from: billing-owner
+          to: billing-platform
+          label: "owns"
+        - from: billing-platform
+          to: billing-db
+          label: "stores records"
+        - from: billing-api
+          to: billing-platform
+          label: "reads and writes"
+        - from: product-owner
+          to: product-app
+          label: "owns"
+        - from: product-app
+          to: product-db
+          label: "stores records"
+        - from: product-api
+          to: product-app
+          label: "reads and writes"
+        - from: data-owner
+          to: warehouse
+          label: "owns"
+        - from: customer-crm
+          to: warehouse
+          label: "syncs customer data"
+        - from: billing-platform
+          to: warehouse
+          label: "syncs billing data"
+        - from: product-app
+          to: warehouse
+          label: "syncs product data"
+edges: []

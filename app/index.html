@@ -25,6 +25,10 @@
         <span id="map-switcher-name">…</span>
         <svg viewBox="0 0 16 16" width="12" height="12"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
+      <button id="map-mode" class="tb-btn map-mode" title="Choose how this map works" aria-haspopup="menu">
+        <span id="map-mode-label">Process</span>
+        <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
       <nav id="breadcrumbs" aria-label="Map hierarchy"></nav>
       <nav id="workspace-switcher" aria-label="Document views">
         <button data-view="map" class="active" aria-pressed="true">Map</button>
@@ -42,12 +46,19 @@
         <svg viewBox="0 0 24 24" width="17" height="17"><path d="M7 5v14l12-7z" fill="currentColor"/></svg>
         <span>Present</span>
       </button>
-      <button id="btn-add-node" class="tb-btn primary" title="Add a node (N)"><span aria-hidden="true">＋</span> Add step</button>
+      <button id="btn-ai" class="tb-btn ai-btn" title="Ask AI to edit this map">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M18.5 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z" fill="currentColor"/></svg>
+        <span>AI</span>
+      </button>
+      <button id="btn-add-node" class="tb-btn primary" title="Add a node (N)"><span aria-hidden="true">＋</span> <span id="btn-add-node-label">Add step</span></button>
       <details class="utility-menu">
         <summary class="tb-btn icon-btn" title="More actions" aria-label="More actions">•••</summary>
         <div class="utility-popover">
           <button id="btn-templates" class="menu-item" title="Template library">Templates</button>
           <button id="btn-import" class="menu-item" title="New map from a meeting transcript">Import transcript</button>
+          <button id="btn-import-file" class="menu-item" title="Open a Serigraph YAML file from disk">Import file…</button>
+          <button id="btn-export-file" class="menu-item" title="Download this map as a YAML file">Export file</button>
+          <button id="btn-ai-settings" class="menu-item" title="Provider, key, and models for the AI assistant">AI settings</button>
           <button id="btn-economics" class="menu-item" title="Compare human and agent cost">Economics</button>
           <button id="btn-share" class="menu-item" title="Copy a deep link or download the map">Share & export</button>
           <button id="btn-history" class="menu-item" title="Restore a local revision">Revision recovery</button>
@@ -62,10 +73,10 @@
     <aside id="templates-panel" hidden></aside>
     <main id="stage">
       <section id="product-workspace" hidden aria-label="Product document"></section>
-      <svg id="canvas" tabindex="0" role="application" aria-label="Operations map canvas"></svg>
-      <nav id="tool-rail" aria-label="Process design tools"></nav>
+      <svg id="canvas" tabindex="0" role="application" aria-label="Map canvas"></svg>
+      <nav id="tool-rail" aria-label="Map tools"></nav>
       <div id="tool-flyout" hidden></div>
-      <div id="context-actions" hidden aria-label="Selected step actions"></div>
+      <div id="context-actions" hidden aria-label="Selected item actions"></div>
       <div id="scenario-preview" hidden aria-live="polite"></div>
       <aside id="probe-panel" hidden aria-live="polite"></aside>
       <aside id="review-tray" hidden aria-label="Review trail"></aside>
@@ -81,6 +92,7 @@
       <div id="canvas-msg" hidden></div>
     </main>
     <aside id="detail" hidden></aside>
+    <aside id="chat-dock" hidden aria-label="Map assistant"></aside>
   </div>
   <div id="search-overlay" hidden></div>
   <div id="dialog-root"></div>

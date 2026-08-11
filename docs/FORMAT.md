@@ -1,15 +1,15 @@
 # The Serigraph file format
 
-A Serigraph file is one YAML document describing an operating process, a product requirement document, or a roadmap as a graph of typed nodes that can nest. It is the single source of truth: the app, humans, and software agents all read and write this same file.
+A Serigraph file is one YAML document describing a freeform map, an operating process, a product requirement document, or a roadmap as a graph of typed nodes that can nest. It is the single source of truth: the app, humans, and software agents all read and write this same file.
 
-Product-document fields are optional. A legacy `opsmap` file remains valid without modification and is treated as `document.kind: process`.
+The top-level `mode` chooses the editing surface. Files without `mode` remain valid and use process mode. Product-document fields are optional.
 
 ## Top level
 
 ```yaml
-name: Acme Lending                  # required — document title
-description: Direct lender.         # optional — short description
-
+name: Acme Lending                  # required, document title
+description: Direct lender.         # optional, short description
+mode: process                       # optional: process | freeform; default: process
 document:                           # optional — product-document metadata
   kind: prd                         # process | prd | roadmap; default: process
   version: "1.1"                    # optional text
@@ -27,13 +27,112 @@ document:                           # optional — product-document metadata
   successMetrics:
     - 80% of eligible cases complete without manual re-entry.
 
-nodes:                              # required — list of nodes
+elements:                           # Freeform only: shared element definitions
   - ...
-edges:                              # optional — arrows between top-level siblings
+nodes:                              # process nodes, or Freeform groups
+  - ...
+edges:                              # optional arrows between top-level siblings
   - from: intake
     to: qualify
     label: qualified lead           # optional arrow label
 ```
+
+`mode` controls the map editor:
+
+| mode | Meaning |
+|---|---|
+| `process` | The operations editor with process node types, owner lanes, path tracing, automation, cost, and product views. |
+| `freeform` | A generic map for systems, databases, APIs, people, documents, and other items. |
+
+Choose the mode when you create a map. A map with content cannot switch modes in the app because the two modes use different storage rules. Files without `mode` use Process mode.
+
+## Freeform shared elements and placements
+
+A Freeform map separates the facts about an element from the places where it appears:
+
+- `elements` holds each shared definition once.
+- Top-level `nodes` are groups that organize the canvas.
+- A `use` entry places one shared element inside a group.
+- `note` and `position` belong to that one placement.
+- A group's `edges` connect placements inside that group.
+
+```yaml
+name: Data landscape
+mode: freeform
+
+elements:
+  - id: data-team
+    type: role
+    label: Data Team
+  - id: looker
+    type: system
+    label: Looker
+    description: Shared reporting and semantic layer.
+    owners:
+      - to: data-team
+        role: technical
+  - id: looker-api
+    type: api
+    label: Looker API
+    relations:
+      - to: looker
+        type: part-of
+
+nodes:
+  - id: analytics
+    type: item
+    label: Analytics
+    children:
+      nodes:
+        - use: looker
+          note: Business dashboards
+          position: { x: 120, y: 80 }
+        - use: looker-api
+      edges:
+        - from: looker
+          to: looker-api
+          label: exposes
+  - id: controls
+    type: item
+    label: Controls
+    children:
+      nodes:
+        - use: looker
+          note: Approved control views
+      edges: []
+
+edges:
+  - from: analytics
+    to: controls
+    label: supplies reports
+```
+
+`looker` has one identity in this file. Both cards use its type, label, description, owners, links, and hierarchy relations. Editing those fields from either card changes the shared definition. Each card keeps its own note and position.
+
+Freeform rules:
+
+1. Every shared element needs a unique `id`, `type`, and `label` in `elements`.
+2. A top-level node is a group. It needs `children` even when the group is empty.
+3. A placement must be inside a group and must use `use: <element-id>`.
+4. The same element can appear in many groups, but only once in each group.
+5. A placement can contain only `use`, `note`, and `position`. Edit shared facts in `elements`.
+6. An element cannot contain `children`, `note`, or `position`.
+7. A group edge can connect only placements in that group. A top-level edge can connect only groups.
+8. Removing a placement leaves the shared element and its other placements intact.
+9. Deleting a shared element removes every placement and every connection that names it.
+10. Use a separate shared element when identity facts differ. Link a real variant with `variant-of`.
+
+`owners` links a shared element or a group to shared `role` elements:
+
+```yaml
+owners:
+  - to: data-team
+    role: data-steward
+```
+
+The owner role must be `owner`, `business`, `technical`, or `data-steward`. The `to` target must be a shared element with `type: role`.
+
+Freeform hierarchy uses `relations` on shared elements. The supported types are `part-of`, `member-of`, and `variant-of`. Each target must be another shared element. Groups stay separate from item hierarchy.
 
 `document.kind` controls the document context:
 
@@ -45,7 +144,7 @@ edges:                              # optional — arrows between top-level sibl
 
 `document.status` uses the same status enum as planning nodes: `draft`, `discovery`, `planned`, `in-progress`, `blocked`, `validated`, `shipped`, or `archived`.
 
-## Nodes
+## Process map nodes
 
 ```yaml
 - id: underwrite                    # required — unique across the entire file
@@ -100,28 +199,33 @@ edges:                              # optional — arrows between top-level sibl
     edges: []
 ```
 
-All node fields except `id`, `type`, and `label` are optional. `planning` does not replace the node's visual `type`: a requirement can be drawn as a `process`, `artifact`, `system`, or whichever visual form best explains it.
+All process-node fields except `id`, `type`, and `label` are optional. `planning` does not replace the node's visual `type`: a requirement can be drawn as a `process`, `artifact`, `system`, or whichever visual form best explains it.
 
-## The five visual node types
+## Visual node types
 
-| type | Use for | Example |
-|---|---|---|
-| `process` | A step or stage where work happens | Underwriting |
-| `decision` | A branch point whose outgoing labels are outcomes | Qualified? |
-| `system` | Software, a tool, or a platform | Salesforce |
-| `role` | A person, team, or job function | Loan officer |
-| `artifact` | A document or data object produced or consumed | Credit file |
+| type | Shown in | Use for | Example |
+|---|---|---|---|
+| `process` | Process | A step or stage where work happens | Underwriting |
+| `decision` | Process | A branch point whose outgoing labels are outcomes | Qualified? |
+| `system` | Both | Software, a tool, or a platform | Salesforce |
+| `role` | Both | A person, team, or job function | Loan officer |
+| `artifact` | Both | A document or data object | Credit file |
+| `item` | Freeform | Any neutral thing or concept | Customer domain |
+| `database` | Freeform | A database, warehouse, or data store | Customer database |
+| `api` | Freeform | An API or service interface | Customer API |
 
-Use these exact lowercase strings. There are no other visual node types.
+Use these exact lowercase strings. The app shows the process or freeform subset in its add controls.
 
 ## Edges and nesting
 
-- An edge connects two **siblings**: both `from` and `to` must be ids of nodes in the **same** `nodes:` list (top level, or the same node's `children`). To show a handoff between things that live in different branches, draw the edge one level up, between their parents.
-- Edges are directional (from → to). For a `decision` node, put the outcome on each outgoing edge's `label` (e.g. `label: "yes"` / `label: "no"`).
-- Node IDs are document-wide. Never reuse an ID at another depth.
-- Use a typed relation instead of a canvas edge when you need semantic traceability between nodes in different scopes.
-- Layout is automatic — you never need to write positions. A node can optionally be **pinned** to a fixed spot with a `position` field (see below); everything else keeps flowing automatically around it.
-- **When the app re-nests a node** (dragging it into or out of a container), any edge that would stop connecting siblings is not deleted wholesale and never left invalid — it is **re-homed**: the edge moves to the nearest scope that contains both endpoints, and each endpoint is rewritten to its ancestor-or-self in that scope (so a handoff into a sub-map becomes a handoff to the sub-map's container, keeping its label and direction). An edge that would become a self-loop this way, or an exact duplicate of an edge already there, is removed instead. Edges wholly inside the moved node's own sub-map move with it unchanged.
+- A Process edge connects two siblings. Both `from` and `to` must name nodes in the same `nodes` list.
+- A Freeform group edge connects two placements in that group's `children.nodes` list. It names the shared element IDs from their `use` fields.
+- A top-level Freeform edge connects two groups.
+- Edges are directional. Put optional text in `label`.
+- Process node IDs, Freeform element IDs, and Freeform group IDs are unique across the file. A Freeform `use` can repeat in different groups because it is a placement, not a new definition.
+- Use a typed relation when the relationship crosses Process scopes or describes Freeform item hierarchy.
+- Layout is automatic. A Process node or Freeform placement can have a fixed `position`.
+- When the app moves a Process node between scopes, it moves each affected edge to the nearest valid scope. It rewrites each endpoint to the node that represents that branch in the new scope. Self-loops and exact duplicates are removed.
 
 ## Pinned positions (optional)
 
@@ -136,14 +240,36 @@ By default the app lays every scope out automatically, and dragging a node in th
 
 The rules:
 
-- `x`/`y` place the node's **center**, in the layout coordinates of the scope (the `nodes:` list) the node belongs to. Each scope — the top level, and every `children` sub-map — has its own independent coordinate plane.
-- Units are canvas pixels at 100% zoom: `x` grows to the right, `y` grows **downward**. Negative values are allowed. Auto-laid nodes start near `(0, 0)` and flow right/down, so a pin at `{ x: 0, y: -300 }` sits above the auto-laid content, and `{ x: 900, y: 400 }` sits right-and-below of a small map's flow.
-- Node boxes are roughly 120–290 units wide and 48–130 tall (sized to their label). Keep pinned centers at least ~200 units apart horizontally and ~100 vertically so they don't crowd.
-- To place something relative to the auto-laid content, estimate its footprint: flows run mostly left-to-right, each sequential step adding ~250–300 units of width and each parallel branch ~90–130 units of height. A 10-node flat map typically spans ~1500–2500 wide × ~200–600 tall from `(0,0)`. When in doubt, overshoot — the camera always zooms to fit everything, so a pin well clear of the flow is safer than one that lands on top of it.
-- A parent's own `position` never shifts its children: every `children` sub-map keeps its own plane starting near `(0, 0)` regardless of where any ancestor is pinned.
-- A pinned node holds its exact spot. Unpinned nodes keep flowing automatically and are pushed clear of pinned ones; edges route automatically in both cases. Pinning or unpinning one node never changes what's written for any other node.
-- **Remove the field to un-pin** — the node returns to automatic layout. (In the app: drag a node to pin it; click its pin badge, or "Release to auto-layout" in the detail panel, to remove it.)
-- Write it exactly as a map of two numbers — `position: { x: 340, y: 120 }`. Anything else (a list, a string, a missing coordinate) is a validation error.
+- `x` and `y` place the card's center in its current scope. Each scope has its own coordinate plane.
+- Units are canvas pixels at 100% zoom. `x` grows right and `y` grows down. Negative values are allowed.
+- Node boxes are roughly 120 to 290 units wide and 48 to 130 units tall. Keep pinned centers at least 200 units apart horizontally and 100 units apart vertically.
+- A Process node stores `position` on that node. A Freeform card stores `position` on its `use` placement. A shared Freeform element cannot have a position.
+- A parent's position never shifts its children. Every `children` map has its own plane.
+- A pinned card holds its exact spot. Unpinned cards stay in automatic layout.
+- Remove `position` to return the card to automatic layout. In the app, click its pin badge or select **Release to auto-layout**.
+- Write the field as `position: { x: 340, y: 120 }`. Any other shape is a validation error.
+
+## Pinned edge routes (optional)
+
+Edges route automatically, and dragging an edge line in the app pins its route by writing a `via` point on that edge. An optional `route` field picks the shape of the line. You can also author both by hand:
+
+```yaml
+edges:
+  - from: quote
+    to: bind
+    label: approved
+    route: stepped              # curved | straight | angled | stepped
+    via: { x: 700, y: 40 }      # bend through these coordinates
+```
+
+The rules:
+
+- `route` is one of four shapes. `curved` draws a smooth cable through the via. `angled` draws two straight runs with a rounded corner at the via. `stepped` draws stairs whose middle riser passes through the via. `straight` draws a direct line and ignores the via.
+- A `via` with no `route` renders as `curved`. A `route` with no `via` seeds its bend at the midpoint of the direct route.
+- `via` lives in the same coordinate plane as the scope's node `position` values.
+- Parallel edges between the same two nodes render as one cable bundle that fans out on hover; an edge with a `via` or `route` always renders on its own.
+- In the app, pick the shape under **Route** in the edge panel. Choose **Auto**, or click the badge on the line, to return to automatic routing.
+- Write `via` as `via: { x: 700, y: 40 }`. Any other shape is a validation error, and so is an unknown `route`.
 
 ## The cost model (optional) — human vs. agent economics
 
@@ -246,12 +372,12 @@ rice:
 
 All four values must be present and valid for Serigraph to calculate a score. Incomplete input is displayed as unscored, never as zero. The interface rounds for readability; ranking always uses the full-precision result.
 
-## Typed relations
+## Process and product relations
 
-Canvas `edges` and typed `relations` solve different problems:
+In Process maps, canvas `edges` and typed `relations` solve different problems:
 
-- An **edge** is a visible arrow between sibling nodes in the same `nodes:` list.
-- A **relation** is semantic traceability between any two stable node IDs in the document, including nodes in different nested scopes. It appears in product-reading surfaces without adding every relationship to the canvas.
+- An `edge` is a visible arrow between sibling nodes in the same `nodes` list.
+- A `relation` records meaning between any two stable node IDs in the document. The nodes can be in different nested scopes. Product views show these relations without drawing every one on the canvas.
 
 ```yaml
 relations:
@@ -375,14 +501,13 @@ edges:
 
 ## Backwards compatibility
 
-- `document`, `planning`, and `relations` are optional.
-- Without `document`, the parser supplies normalized empty metadata and `kind: process`; it does not rewrite the source merely by opening it.
-- Without `planning`, a node remains an ordinary process-map node.
-- Without `relations`, edges and nesting behave exactly as before.
-- Existing node types, automation metadata, links, review notes, children, and edges keep their original meaning.
-- The product and interface are named Serigraph. The internal npm package, repository directory, import namespace, and browser storage keys retain the historical `opsmap` identifier for compatibility.
-
-No migration is required for an existing valid map.
+- Process maps keep their existing schema and behavior.
+- Files without `mode` use Process mode.
+- `document`, `planning`, and Process `relations` remain optional.
+- Without `document`, the parser supplies empty metadata with `kind: process`. Opening the file does not rewrite its source.
+- Existing Process node types, automation metadata, links, review notes, children, and edges keep their meaning.
+- Freeform maps now use the `elements` and `use` model described above. An older Freeform file that stores a separate node definition inside each group must be migrated.
+- The product and interface are named Serigraph. The internal npm package, repository directory, import namespace, and browser storage keys retain the historical `opsmap` name.
 
 ## Validation and generated-file checklist
 
@@ -400,14 +525,16 @@ npm run validate
 
 Before saving generated YAML, check that:
 
-1. The file has a non-empty `name` and a `nodes` list.
-2. Every node has `id`, `type`, and `label`; IDs are unique document-wide and contain no spaces, `/`, `#`, or `?`.
-3. Every visual `type`, automation state, document kind, planning type, status, priority, and relation type uses the exact enum above.
-4. Every edge connects sibling IDs in the same scope.
-5. Every relation target and planning dependency names an existing node anywhere in the document.
-6. RICE values are finite numbers; confidence is 0–100 and effort is greater than zero.
-7. Product requirements include an owner, acceptance criteria, evidence, priority, status, target or phase, and a relation to an objective when those facts are known.
-8. Omit `position` unless a node genuinely needs a fixed spot; when used, write exactly `position: { x: <number>, y: <number> }` for the node's center.
-9. Cost fields are optional and additive: use numbers greater than or equal to zero, and omit an unknown rather than guessing. Unknowns stay out of totals; they never become zero.
-10. Rich process maps mix steps with the roles, systems, decisions, and artifacts that make the operating reality understandable.
-11. Descriptions and evidence contain real substance. Mark inferred facts as provenance comments until a human confirms them. Audit checks structural completeness; it never proves a factual claim for you.
+1. The file has a non-empty `name` and a valid `mode`.
+2. A Process node has a unique `id`, `type`, and `label`.
+3. A Freeform map stores shared definitions in `elements`. Its top-level `nodes` are groups, and each child placement uses `use`.
+4. A Freeform placement appears inside a group and contains only `use`, `note`, and `position`.
+5. Every enum uses an exact supported value.
+6. Every edge connects entries in one scope. A Freeform group edge names elements placed in that group.
+7. Every Process relation and planning dependency names an existing node.
+8. Every Freeform hierarchy relation names a shared element. Every owner link names a shared role element.
+9. RICE values are finite numbers. Confidence is 0 through 100 and effort is greater than zero.
+10. Product requirements include the known owner, acceptance checks, evidence, priority, status, schedule, and objective relation.
+11. Omit `position` unless a card needs a fixed spot. Use `position: { x: <number>, y: <number> }`.
+12. Cost values must be zero or greater. Omit an unknown instead of guessing.
+13. Descriptions and evidence must contain useful facts. Mark inferred facts as provenance comments until a person confirms them.

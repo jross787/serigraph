@@ -7,12 +7,28 @@ import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseMap } from '../shared/model.js';
+import { parseMap, MAP_MODES } from '../shared/model.js';
 import { buildExport } from './export.js';
-import { callLLM, resolveProvider } from './llm.js';
+import { callLLM, resolveProvider, callTranscription } from './llm.js';
 import { importTranscript, ImportError } from './importer.js';
+import { chatEdit, ChatError } from './chat.js';
+import { readSettings, writeSettings } from './settings.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+
+// .env next to the repo root carries secrets like ANTHROPIC_API_KEY — this is
+// how the double-clicked Mac app picks them up, since it launches without a
+// shell. Real environment variables always win; the file only fills gaps.
+try {
+  const envFile = await fs.readFile(path.join(ROOT, '.env'), 'utf8');
+  for (const line of envFile.split('\n')) {
+    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+    if (!m) continue;
+    const value = m[2].replace(/^["']|["']$/g, '');
+    if (process.env[m[1]] === undefined) process.env[m[1]] = value;
+  }
+} catch { /* no .env — fine */ }
+
 const MAPS_DIR = path.join(ROOT, 'maps');
 const TEMPLATES_DIR = path.join(ROOT, 'templates');
 const DEFAULT_PORT = Number(process.env.PORT) || 4700;
@@ -78,7 +94,7 @@ async function mapSummaries(dir) {
       const source = await fs.readFile(path.join(dir, file), 'utf8');
       const { model, errors } = parseMap(source);
       if (model) {
-        out.push({ id, file, name: model.name, description: model.description, nodeCount: model.nodeCount, kind: model.document.kind });
+        out.push({ id, file, name: model.name, description: model.description, nodeCount: model.nodeCount, kind: model.document.kind, mode: model.mode });
       } else {
         out.push({ id, file, name: id, description: '', nodeCount: 0, invalid: true, errorCount: errors.length });
       }
@@ -120,11 +136,18 @@ async function primeHashes() {
 
 function watchDir(dir, onChange) {
   if (!existsSync(dir)) return;
+  let watcher;
   try {
-    watch(dir, (eventType, filename) => {
+    watcher = watch(dir, (eventType, filename) => {
       if (filename && /\.ya?ml$/.test(filename)) onChange(filename);
     });
-  } catch { /* fs.watch unsupported — SSE degrades gracefully */ }
+  } catch { return; } // fs.watch unsupported — SSE degrades gracefully
+  // watcher errors arrive asynchronously (e.g. EMFILE under fd pressure) and
+  // must never take the server down — live reload just stops
+  watcher.on('error', (e) => {
+    console.warn(`[serigraph] file watcher for ${path.basename(dir)} stopped (${e.code ?? e.message}); live reload off, server unaffected`);
+    try { watcher.close(); } catch { /* already closed */ }
+  });
 }
 
 function scheduleMapChange(filename) {
@@ -161,10 +184,15 @@ async function handleApi(req, res, url) {
     if (req.method === 'POST') {
       const body = JSON.parse(await readBody(req) || '{}');
       const name = String(body.name || '').trim();
+      const mode = body.mode == null ? 'process' : String(body.mode);
       if (!name) return json(res, 400, { error: 'name is required' });
+      if (!MAP_MODES.includes(mode)) return json(res, 400, { error: `mode must be one of: ${MAP_MODES.join(', ')}` });
       const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'untitled';
       if (await findMapFile(slug)) return json(res, 409, { error: `a map named "${slug}" already exists` });
-      const source = `# ${name} — operations map\nname: ${JSON.stringify(name)}\ndescription: ""\n\nnodes: []\n\nedges: []\n`;
+      const modeLine = mode === 'freeform' ? 'mode: freeform\n' : '';
+      const elements = mode === 'freeform' ? '\nelements: []\n' : '';
+      const purpose = mode === 'freeform' ? 'map' : 'operations map';
+      const source = `# ${name} - ${purpose}\nname: ${JSON.stringify(name)}\n${modeLine}description: ""\n${elements}\nnodes: []\n\nedges: []\n`;
       await fs.mkdir(MAPS_DIR, { recursive: true });
       await fs.writeFile(path.join(MAPS_DIR, slug + '.yaml'), source, 'utf8');
       // fileHashes deliberately NOT updated here: the watcher must see the
@@ -209,7 +237,7 @@ async function handleApi(req, res, url) {
       ? { available: true, provider: provider.kind, model: provider.model }
       : {
         available: false,
-        hint: 'Set ANTHROPIC_API_KEY in the server\'s environment, log in the claude CLI (run `claude` once), or point OPSMAP_LLM_CMD at a local model — then restart Serigraph.',
+        hint: 'Add ANTHROPIC_API_KEY or OPENAI_API_KEY to a .env file in the Serigraph folder (see .env.example), or log in the claude CLI (run `claude` once) — then restart Serigraph.',
       });
   }
   if (parts[1] === 'import' && parts.length === 2 && req.method === 'POST') {
@@ -226,6 +254,50 @@ async function handleApi(req, res, url) {
     }
   }
 
+  // map assistant — same server-side LLM discipline as the importer: the
+  // proposal is validated here, and the browser reviews before applying
+  if (parts[1] === 'chat' && req.method === 'POST') {
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON body' }); }
+    try {
+      const result = await chatEdit(body, { llm: callLLM });
+      return json(res, 200, result);
+    } catch (e) {
+      const status = e instanceof ChatError ? e.status : 502;
+      console.error('[serigraph] chat failed:', e.message);
+      return json(res, status, { error: e.message });
+    }
+  }
+
+  // AI settings — masked on read; keys are stored server-side in .env
+  if (parts[1] === 'settings' && req.method === 'GET') {
+    return json(res, 200, await readSettings());
+  }
+  if (parts[1] === 'settings' && req.method === 'POST') {
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON body' }); }
+    try {
+      return json(res, 200, await writeSettings(body ?? {}));
+    } catch (e) {
+      return json(res, 400, { error: e.message });
+    }
+  }
+
+  // voice transcription — audio goes to the configured provider, never to the browser
+  if (parts[1] === 'transcribe' && req.method === 'POST') {
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON body' }); }
+    if (typeof body?.audio !== 'string' || !body.audio) return json(res, 400, { error: 'body must be { audio: base64, mime? }' });
+    if (body.audio.length > 20_000_000) return json(res, 413, { error: 'Keep the clip under about 2 minutes.' });
+    try {
+      const text = await callTranscription({ audio: Buffer.from(body.audio, 'base64'), mime: body.mime });
+      return json(res, 200, { text });
+    } catch (e) {
+      console.error('[serigraph] transcribe failed:', e.message);
+      return json(res, 502, { error: e.message });
+    }
+  }
+
   if (parts[1] === 'templates' && req.method === 'GET') {
     const out = [];
     for (const file of await listDir(TEMPLATES_DIR)) {
@@ -233,7 +305,7 @@ async function handleApi(req, res, url) {
       try {
         const source = await fs.readFile(path.join(TEMPLATES_DIR, file), 'utf8');
         const { model } = parseMap(source);
-        if (model) out.push({ id, name: model.name, description: model.description, nodeCount: model.nodeCount, source });
+        if (model) out.push({ id, name: model.name, description: model.description, nodeCount: model.nodeCount, mode: model.mode, source });
       } catch { /* skip unreadable */ }
     }
     return json(res, 200, out);
