@@ -2,6 +2,8 @@
 // review notes, portable sharing, and local revision recovery. None of these
 // modes change the meaning of a map until the user explicitly saves a YAML edit.
 import { state, bus } from './state.js';
+import { api } from './api.js';
+import { parseMap } from '../shared/model.js';
 import * as canvas from './canvas.js';
 import * as ctrl from './controller.js';
 import * as edit from './edit.js';
@@ -50,6 +52,8 @@ const TOOL_ICONS = {
   note: ICONS.artifact,
   probe: 'M10 3v14M3 10h14M6.5 6.5l7 7M13.5 6.5l-7 7',
   automate: ICONS.system,
+  undo: 'M8 5 4 9l4 4M4 9h8a4 4 0 0 1 0 8H9',
+  redo: 'M12 5l4 4-4 4M16 9H8a4 4 0 0 0 0 8h3',
 };
 
 const TOOL_GROUPS = [
@@ -77,12 +81,23 @@ const MUTATING_TOOLS = new Set(['unit', 'connect']);
 // tools that help a reviewer navigate and understand the map, but never render
 // (or keyboard-activate) controls that imply the exported model can be edited.
 function visibleToolGroups() {
+  const freeform = state.model?.mode === 'freeform';
+  const hiddenInFreeform = new Set(['lane', 'probe', 'automate']);
   return TOOL_GROUPS
     .map((group) => group
+      .filter((tool) => !(freeform && hiddenInFreeform.has(tool.id)))
       .filter((tool) => !(state.standalone && MUTATING_TOOLS.has(tool.id)))
-      .map((tool) => state.standalone && tool.id === 'note'
-        ? { ...tool, label: 'Review trail', description: 'Inspect review notes attached to the selected step.' }
-        : tool))
+      .map((tool) => {
+        if (state.standalone && tool.id === 'note') {
+          return { ...tool, label: 'Review trail', description: `Inspect review notes attached to the selected ${freeform ? 'item' : 'step'}.` };
+        }
+        if (!freeform) return tool;
+        if (tool.id === 'select') return { ...tool, description: 'Select an item or drag to pan the map.' };
+        if (tool.id === 'unit') return { ...tool, label: 'Item', description: 'Add an item, system, database, API, person, or document.' };
+        if (tool.id === 'connect') return { ...tool, description: 'Connect any two items.' };
+        if (tool.id === 'note') return { ...tool, description: 'Leave a review note on the selected item.' };
+        return tool;
+      }))
     .filter((group) => group.length);
 }
 
@@ -117,6 +132,7 @@ function setTool(id) {
   }
   if (id !== 'connect' && state.connectFrom) {
     state.connectFrom = null;
+    state.pendingEdgeLabel = null;
     canvas.paintSelection();
   }
   refreshRail();
@@ -125,16 +141,17 @@ function setTool(id) {
 function showUnitFlyout(anchor) {
   const host = document.getElementById('tool-flyout');
   if (!host) return;
+  const freeform = state.model?.mode === 'freeform';
   const rect = anchor.getBoundingClientRect();
   host.style.top = `${rect.top}px`;
   host.style.left = `${rect.right + 8}px`;
-  const types = [
-    ['process', 'Process'], ['decision', 'Decision'], ['role', 'Role'], ['system', 'System'], ['artifact', 'Artifact'],
-  ];
+  const types = freeform
+    ? [['item', 'Item'], ['system', 'System'], ['database', 'Database'], ['api', 'API'], ['role', 'Person / team'], ['artifact', 'Document']]
+    : [['process', 'Process'], ['decision', 'Decision'], ['role', 'Role'], ['system', 'System'], ['artifact', 'Artifact']];
   const items = types.map(([type, label]) => {
     const button = h('button', {
       class: `tool-flyout-item t-${type}`,
-      title: `Drag onto the canvas to add a ${type}; click to open the form`,
+      title: `Drag onto the canvas to add a ${label.toLowerCase()}; click to open the form`,
     }, svgIcon(ICONS[type]), h('span', {}, label));
     ui.enableNodeTypeDrag(button, type, {
       onActivate: () => {
@@ -150,7 +167,7 @@ function showUnitFlyout(anchor) {
     return button;
   });
   host.replaceChildren(
-    h('div', { class: 'tool-flyout-title' }, 'Add a unit'),
+    h('div', { class: 'tool-flyout-title' }, freeform ? 'Add an item' : 'Add a unit'),
     ...items,
   );
   host.removeAttribute('hidden');
@@ -159,13 +176,17 @@ function showUnitFlyout(anchor) {
 function showConnectFlyout(anchor) {
   const host = document.getElementById('tool-flyout');
   if (!host) return;
+  const freeform = state.model?.mode === 'freeform';
   const rect = anchor.getBoundingClientRect();
   host.style.top = `${rect.top}px`;
   host.style.left = `${rect.right + 8}px`;
   host.replaceChildren(
-    h('div', { class: 'tool-flyout-title' }, 'Connect steps'),
-    h('button', { class: 'tool-flyout-item selected', onClick: () => { closeFlyout(); startConnect(); } }, svgIcon(TOOL_ICONS.connect), h('span', {}, 'Workflow handoff'), h('kbd', {}, 'C')),
-    h('p', { class: 'tool-flyout-note' }, 'Select an origin, then the step that follows it. Edge labels can describe the handoff or outcome.'),
+    h('div', { class: 'tool-flyout-title' }, freeform ? 'Connect items' : 'Connect steps'),
+    h('button', { class: 'tool-flyout-item selected', onClick: () => { closeFlyout(); startConnect(); } },
+      svgIcon(TOOL_ICONS.connect), h('span', {}, freeform ? 'Connection' : 'Workflow handoff'), h('kbd', {}, 'C')),
+    h('p', { class: 'tool-flyout-note' }, freeform
+      ? 'Select one item, then the item it connects to. Use the label to explain the relationship.'
+      : 'Select an origin, then the step that follows it. Edge labels can describe the handoff or outcome.'),
   );
   host.removeAttribute('hidden');
 }
@@ -196,7 +217,10 @@ function activateTool(id, anchor) {
   if (id === 'note') {
     setTool('note');
     if (state.selectedId) openReview(state.selectedId);
-    else ui.toast(state.standalone ? 'Select a step to inspect its review trail' : 'Select a step before leaving a review note');
+    else {
+      const selection = state.model?.mode === 'freeform' ? 'an item' : 'a step';
+      ui.toast(state.standalone ? `Select ${selection} to inspect its review trail` : `Select ${selection} before leaving a review note`);
+    }
     return true;
   }
   if (id === 'probe') {
@@ -314,15 +338,16 @@ function closeReview() {
 
 export function openReview(nodeId = state.selectedId) {
   const node = nodeId ? state.model?.byId.get(nodeId) : null;
+  const selection = state.model?.mode === 'freeform' ? 'an item' : 'a step';
   if (!node) {
-    ui.toast(state.standalone ? 'Select a step to inspect its review trail' : 'Select a step before leaving a review note');
+    ui.toast(state.standalone ? `Select ${selection} to inspect its review trail` : `Select ${selection} before leaving a review note`);
     return;
   }
   const tray = document.getElementById('review-tray');
   if (!tray) return;
   const notes = [...(node.review ?? [])].sort((a, b) => Number(a.resolved) - Number(b.resolved));
   const openCount = notes.filter((note) => !note.resolved).length;
-  const textarea = h('textarea', { placeholder: 'What should the process owner review?', 'aria-label': 'Review note' });
+  const textarea = h('textarea', { placeholder: state.model?.mode === 'freeform' ? 'What should the owner review?' : 'What should the process owner review?', 'aria-label': 'Review note' });
   const list = h('div', { class: 'review-list' }, notes.length ? notes.map((note) =>
     h('article', { class: `review-note${note.resolved ? ' resolved' : ''}` },
       h('div', { class: 'review-note-meta' }, h('strong', {}, note.author), h('span', {}, formatReviewDate(note.createdAt))),
@@ -330,7 +355,7 @@ export function openReview(nodeId = state.selectedId) {
       state.standalone ? null : h('button', { class: 'review-resolve', onClick: () => {
         ctrl.commit(() => edit.setReviewResolved(node.id, note.id, !note.resolved)).then((ok) => { if (ok) openReview(node.id); });
       } }, note.resolved ? 'Reopen' : 'Resolve')),
-    ) : h('div', { class: 'review-empty' }, 'No review notes yet. Capture a decision, question, or risk where the work happens.'));
+    ) : h('div', { class: 'review-empty' }, 'No review notes yet. Capture a decision, question, or risk here.'));
   tray.replaceChildren(
     h('div', { class: 'review-head' },
       h('div', {}, h('span', {}, 'Review trail'), h('h2', {}, node.label), h('small', {}, `${openCount} open ${openCount === 1 ? 'note' : 'notes'}`)),
@@ -375,8 +400,9 @@ export function openShareDialog() {
   const nodeId = state.selectedId;
   const link = nodeId ? ctrl.nodeUrl(nodeId) : `${location.origin}${location.pathname}#/map/${encodeURIComponent(state.mapId || '')}`;
   const input = h('input', { class: 'f-input', value: link, readonly: '' });
+  const item = state.model?.mode === 'freeform' ? 'item' : 'step';
   makeDialog('Share & own this map', h('div', { class: 'share-stack' },
-    h('p', { class: 'hint' }, 'A deep link opens the selected step in context. The map source remains portable YAML.'),
+    h('p', { class: 'hint' }, `A deep link opens the selected ${item} in context. The map source remains portable YAML.`),
     h('div', { class: 'share-link' }, input, h('button', { class: 'd-btn primary', onClick: async () => { if (await copyText(link)) ui.toast('Link copied'); } }, 'Copy link')),
     h('div', { class: 'share-actions' },
       h('button', { class: 'd-btn', onClick: downloadYaml }, 'Download YAML'),
@@ -393,6 +419,44 @@ export function downloadYaml() {
   anchor.remove();
   setTimeout(() => URL.revokeObjectURL(href), 0);
   ui.toast('YAML downloaded');
+}
+
+// Import a Serigraph YAML source as a new map. The source is validated
+// before anything is written; a name collision gets a numeric suffix.
+export async function importMapSource(filename, source) {
+  const { model, errors } = parseMap(source);
+  if (errors.length) {
+    makeDialog('That file is not a valid map', h('div', {},
+      h('p', { class: 'hint' }, `${filename} needs these fixes before it can open:`),
+      h('ul', { class: 'err-list' }, errors.slice(0, 12).map((e) => h('li', {},
+        e.line ? h('span', { class: 'ln' }, `line ${e.line}`) : null, e.message)))));
+    return false;
+  }
+  const taken = new Set((await api.listMaps().catch(() => [])).map((m) => m.id));
+  const base = edit.slugify(filename.replace(/\.ya?ml$/i, '')) || edit.slugify(model.name) || 'imported-map';
+  let id = base;
+  for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
+  try {
+    await api.saveMap(id, source);
+  } catch (e) {
+    ui.toast(`Import failed: ${e.message}`, true);
+    return false;
+  }
+  await ctrl.loadMapList();
+  await ctrl.openMap(id);
+  ui.toast(`Imported ${filename}`);
+  return true;
+}
+
+// Open a Serigraph YAML file from disk.
+export function importMapFile() {
+  if (state.standalone) { ui.toast('Imports need the local Serigraph server.', true); return; }
+  const input = h('input', { type: 'file', accept: '.yaml,.yml' });
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (file) await importMapSource(file.name, await file.text());
+  });
+  input.click();
 }
 
 export function openHistory() {
@@ -451,10 +515,10 @@ export function cancelTool() {
   setTool('select');
 }
 
-export function initWorkbench() {
-  rail = document.getElementById('tool-rail');
+function renderRail() {
   if (!rail) return;
   if (!toolIsVisible(state.activeTool)) state.activeTool = 'select';
+  const freeform = state.model?.mode === 'freeform';
   rail.replaceChildren(...visibleToolGroups().flatMap((group, groupIndex) => [
     groupIndex ? h('div', { class: 'tool-separator' }) : null,
     ...group.map((tool) => h('button', {
@@ -463,16 +527,31 @@ export function initWorkbench() {
       'aria-label': `${tool.label} (${tool.shortcut})`,
       title: `${tool.label} · ${tool.shortcut}\n${tool.description}`,
       onClick: (event) => activateTool(tool.id, event.currentTarget),
-    }, svgIcon(TOOL_ICONS[tool.id]), tool.flyout ? h('i', { class: 'tool-caret' }) : null)),
-  ].filter(Boolean)));
+    }, svgIcon(tool.id === 'unit' && freeform ? ICONS.item : TOOL_ICONS[tool.id]), tool.flyout ? h('i', { class: 'tool-caret' }) : null)),
+  ].filter(Boolean)),
+  // history actions, not tools: they never change the active tool
+  h('div', { class: 'tool-separator' }),
+  ...[['undo', 'Undo', '⌘Z'], ['redo', 'Redo', '⌘⇧Z']].map(([id, label, keys]) => h('button', {
+    class: 'tool-button tool-action',
+    'data-action': id,
+    'aria-label': `${label} (${keys})`,
+    title: `${label} · ${keys}`,
+    disabled: state.standalone || !(id === 'undo' ? state.undoStack.length : state.redoStack.length) ? '' : null,
+    onClick: () => (id === 'undo' ? ctrl.undo() : ctrl.redo()),
+  }, svgIcon(TOOL_ICONS[id]))));
+  refreshRail();
+}
 
+export function initWorkbench() {
+  rail = document.getElementById('tool-rail');
+  if (!rail) return;
+  renderRail();
   bus.on('selection-changed', refreshRail);
-  bus.on('view-changed', () => { closeFlyout(); closeReview(); setTool('select'); });
+  bus.on('view-changed', () => { closeFlyout(); closeReview(); setTool('select'); renderRail(); });
   document.addEventListener('pointerdown', (event) => {
     const flyout = document.getElementById('tool-flyout');
     if (flyout && !flyout.hidden && !flyout.contains(event.target) && !rail?.contains(event.target)) closeFlyout();
   });
-  refreshRail();
 }
 
 export function shortcutTool(key) {

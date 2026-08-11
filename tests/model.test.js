@@ -4,12 +4,17 @@ import {
   parseMap,
   ancestryOf,
   scopeOf,
+  placementInScope,
+  placementsOf,
   NODE_TYPES,
+  MAP_MODES,
   DOCUMENT_KINDS,
   PLANNING_TYPES,
   PLAN_STATUSES,
   PLAN_PRIORITIES,
   RELATION_TYPES,
+  HIERARCHY_RELATION_TYPES,
+  OWNER_ROLES,
 } from '../shared/model.js';
 
 const MINI = `
@@ -48,6 +53,7 @@ test('parses the FORMAT.md example', () => {
   const { model, errors } = parseMap(MINI);
   assert.equal(errors.length, 0);
   assert.equal(model.name, 'Espresso Cart');
+  assert.equal(model.mode, 'process');
   assert.equal(model.nodeCount, 5);
   assert.equal(model.root.nodes.length, 3);
   assert.equal(model.root.edges.length, 2);
@@ -73,7 +79,7 @@ nodes:
   assert.equal(model.byId.get('a').stats.childCount, 1);
 });
 
-test('all five node types are accepted, others rejected with hint', () => {
+test('all node types are accepted, others rejected with a hint', () => {
   for (const t of NODE_TYPES) {
     const { errors } = parseMap(`name: X\nnodes:\n  - id: n\n    type: ${t}\n    label: L`);
     assert.equal(errors.length, 0, t);
@@ -81,6 +87,101 @@ test('all five node types are accepted, others rejected with hint', () => {
   const { errors } = parseMap(`name: X\nnodes:\n  - id: n\n    type: tool\n    label: L`);
   assert.match(errors[0].message, /did you mean "system"/);
   assert.ok(errors[0].line, 'error carries a line number');
+});
+
+test('freeform mode uses shared elements with group-specific placements', () => {
+  const { model, errors } = parseMap(`
+name: Shared systems
+mode: freeform
+elements:
+  - id: data-team
+    type: role
+    label: Data Team
+  - id: looker
+    type: system
+    label: Looker
+    owners:
+      - to: data-team
+        role: technical
+  - id: looker-api
+    type: api
+    label: Looker API
+    relations:
+      - to: looker
+        type: part-of
+nodes:
+  - id: analytics
+    type: item
+    label: Analytics
+    children:
+      nodes:
+        - use: looker
+          note: Shared semantic layer
+          position: { x: 120, y: 80 }
+        - use: looker-api
+      edges:
+        - from: looker
+          to: looker-api
+  - id: controls
+    type: item
+    label: Controls
+    children:
+      nodes:
+        - use: looker
+          note: Approved control views
+      edges: []
+edges: []
+`);
+  assert.equal(errors.length, 0);
+  assert.equal(model.mode, 'freeform');
+  assert.deepEqual(MAP_MODES, ['process', 'freeform']);
+  assert.deepEqual(HIERARCHY_RELATION_TYPES, ['part-of', 'member-of', 'variant-of']);
+  assert.deepEqual(OWNER_ROLES, ['owner', 'business', 'technical', 'data-steward']);
+  assert.equal(model.nodeCount, 5);
+  assert.equal(model.placementCount, 3);
+  assert.equal(model.elementById.get('looker'), model.byId.get('looker'));
+  assert.equal(placementsOf(model, 'looker').length, 2);
+  assert.equal(placementInScope(model, 'analytics', 'looker').note, 'Shared semantic layer');
+  assert.equal(placementInScope(model, 'controls', 'looker').note, 'Approved control views');
+  assert.deepEqual(placementInScope(model, 'analytics', 'looker').position, { x: 120, y: 80 });
+  assert.deepEqual(model.byId.get('looker').owners, [{ to: 'data-team', role: 'technical' }]);
+  assert.deepEqual(model.byId.get('looker-api').relations, [{ to: 'looker', type: 'part-of' }]);
+
+  const invalid = parseMap('name: X\nmode: diagram\nnodes: []\n');
+  assert.equal(invalid.model, null);
+  assert.match(invalid.errors[0].message, /must be one of: process, freeform/);
+});
+
+test('freeform placements reject root use, overrides, and duplicate use in one group', () => {
+  const { errors } = parseMap(`
+name: Invalid placements
+mode: freeform
+elements:
+  - id: db
+    type: database
+    label: Database
+    note: Shared note
+    position: { x: 10, y: 20 }
+    children: { nodes: [], edges: [] }
+nodes:
+  - use: db
+  - id: group
+    type: item
+    label: Group
+    children:
+      nodes:
+        - use: db
+          label: Local override
+        - use: db
+      edges: []
+edges: []
+`);
+  assert.ok(errors.some((error) => /must be inside a group/.test(error.message)));
+  assert.ok(errors.some((error) => /cannot override "label"/.test(error.message)));
+  assert.ok(errors.some((error) => /already placed in this group/.test(error.message)));
+  assert.ok(errors.some((error) => /cannot have a shared note/.test(error.message)));
+  assert.ok(errors.some((error) => /cannot have a shared position/.test(error.message)));
+  assert.ok(errors.some((error) => /cannot contain a group/.test(error.message)));
 });
 
 test('duplicate ids across nesting levels are caught', () => {

@@ -1,6 +1,6 @@
 // Orchestrates everything: loading maps, the edit→serialize→save pipeline,
 // navigation (scopes, selection, deep links, history), and remote changes.
-import { parseMap, ancestryOf } from '../shared/model.js';
+import { parseMap, ancestryOf, scopeOf, placementInScope, placementsOf } from '../shared/model.js';
 import { collectProvenance } from '../shared/provenance.js';
 import { state, bus } from './state.js';
 import { invalidateLayouts } from './layout.js';
@@ -15,7 +15,9 @@ export function readHash() {
   let h;
   try { h = decodeURIComponent(location.hash || ''); }
   catch { h = location.hash || ''; } // malformed %-sequence: use it verbatim
-  let m = h.match(/^#\/map\/([^/]+)\/node\/(.+)$/);
+  let m = h.match(/^#\/map\/([^/]+)\/in\/([^/]+)\/node\/(.+)$/);
+  if (m) return { mapId: m[1], inId: m[2], nodeId: m[3] };
+  m = h.match(/^#\/map\/([^/]+)\/node\/(.+)$/);
   if (m) return { mapId: m[1], nodeId: m[2] };
   m = h.match(/^#\/map\/([^/]+)\/in\/(.+)$/);
   if (m) return { mapId: m[1], inId: m[2] };
@@ -29,8 +31,16 @@ export function writeHash({ push = false } = {}) {
   if (!state.mapId) return;
   const base = `#/map/${encodeURIComponent(state.mapId)}`;
   let hash = base;
-  if (state.selectedId) hash = `${base}/node/${encodeURIComponent(state.selectedId)}`;
-  else if (state.scopeId) hash = `${base}/in/${encodeURIComponent(state.scopeId)}`;
+  if (state.selectedId) {
+    const placed = state.model?.mode === 'freeform'
+      && state.model.elementById?.has(state.selectedId)
+      && state.scopeId != null;
+    hash = placed
+      ? `${base}/in/${encodeURIComponent(state.scopeId)}/node/${encodeURIComponent(state.selectedId)}`
+      : `${base}/node/${encodeURIComponent(state.selectedId)}`;
+  } else if (state.scopeId) {
+    hash = `${base}/in/${encodeURIComponent(state.scopeId)}`;
+  }
   if (location.hash === hash) return;
   squelchHash = true;
   if (push) location.hash = hash;
@@ -39,8 +49,22 @@ export function writeHash({ push = false } = {}) {
   setTimeout(() => { squelchHash = false; }, 0);
 }
 
+function scopeForNode(nodeId, preferredScopeId = state.scopeId) {
+  const model = state.model;
+  if (!model) return null;
+  if (model.mode === 'freeform' && model.elementById?.has(nodeId)) {
+    if (preferredScopeId != null && placementInScope(model, preferredScopeId, nodeId)) return preferredScopeId;
+    return placementsOf(model, nodeId)[0]?.ownerId ?? null;
+  }
+  return model.byId.get(nodeId)?.ownerId ?? null;
+}
+
 export function nodeUrl(nodeId) {
-  return `${location.origin}${location.pathname}#/map/${encodeURIComponent(state.mapId)}/node/${encodeURIComponent(nodeId)}`;
+  const base = `${location.origin}${location.pathname}#/map/${encodeURIComponent(state.mapId)}`;
+  const ownerId = scopeForNode(nodeId);
+  return state.model?.mode === 'freeform' && state.model.elementById?.has(nodeId) && ownerId != null
+    ? `${base}/in/${encodeURIComponent(ownerId)}/node/${encodeURIComponent(nodeId)}`
+    : `${base}/node/${encodeURIComponent(nodeId)}`;
 }
 
 // ── loading ──────────────────────────────────────────────────────────
@@ -73,10 +97,10 @@ export async function openMap(mapId, { nodeId = null, inId = null } = {}) {
   }
   // resolve requested position
   if (nodeId && state.model.byId.has(nodeId)) {
-    const node = state.model.byId.get(nodeId);
-    state.scopeId = node.ownerId;
-    state.selectedId = nodeId;
-    await canvas.showScope(state.model, state.scopeId, { focusId: nodeId });
+    const scopeId = scopeForNode(nodeId, inId);
+    state.scopeId = scopeId;
+    state.selectedId = scopeOf(state.model, scopeId)?.nodes.some((node) => node.id === nodeId) ? nodeId : null;
+    await canvas.showScope(state.model, scopeId, { focusId: state.selectedId });
     canvas.paintSelection();
   } else if (inId && state.model.byId.get(inId)?.children) {
     state.scopeId = inId;
@@ -153,6 +177,34 @@ export async function restoreRevision(revision) {
   state.redoStack = [];
   refreshView();
   bus.emit('toast', `Restored ${revision.label || 'a revision'}`);
+  return true;
+}
+
+// Apply a wholesale map replacement (the AI assistant's reviewed proposal).
+// Same safety as a normal commit: validate, keep an undo point, record a
+// local revision, and roll back if the save fails.
+export async function applySource(after, label = 'AI edit') {
+  if (state.standalone || typeof after !== 'string' || !after.trim()) return false;
+  const before = state.source;
+  const { errors } = parseMap(after);
+  if (errors.length) {
+    bus.emit('toast', 'The proposed map is invalid — not applied. ' + errors[0].message, true);
+    return false;
+  }
+  if (after === before) return true;
+  adoptSource(after);
+  try {
+    await api.saveMap(state.mapId, after);
+  } catch (e) {
+    adoptSource(before);
+    refreshView();
+    bus.emit('toast', 'Save failed: ' + e.message, true);
+    return false;
+  }
+  state.undoStack.push(before);
+  state.redoStack = [];
+  recordRevision(after, label);
+  refreshView();
   return true;
 }
 
@@ -304,33 +356,37 @@ export async function gotoScope(ownerId, { focusId = null } = {}) {
   canvas.paintSelection();
 }
 
+export async function gotoPeerScope(ownerId, { focusId = null } = {}) {
+  const current = state.model?.byId.get(state.scopeId);
+  const target = state.model?.byId.get(ownerId);
+  if (!current || !target?.children || target.ownerId !== current.ownerId || target.id === current.id) return false;
+  await gotoScope(target.id, { focusId });
+  return true;
+}
+
 export async function gotoNode(nodeId) {
   const node = state.model?.byId.get(nodeId);
   if (!node) return;
-  if (node.ownerId === state.scopeId) {
+  const ownerId = scopeForNode(nodeId);
+  if (ownerId === state.scopeId && scopeOf(state.model, ownerId)?.nodes.some((item) => item.id === nodeId)) {
     selectNode(nodeId);
     canvas.centerOn(nodeId);
     return;
   }
-  await gotoScope(node.ownerId, { focusId: nodeId });
+  await gotoScope(ownerId, { focusId: nodeId });
 }
 
 export function selectNode(nodeId) {
-  // stale input (a click on a fading transition layer, an arrow move on an
-  // outgoing layout) must never select a node outside the current scope
-  const node = state.model?.byId.get(nodeId);
-  if (!node || node.ownerId !== (state.scopeId ?? null)) return;
+  // Stale input from a fading layer must never select a node outside the
+  // current scope. Shared Freeform elements use their placement's scope.
+  const visible = scopeOf(state.model, state.scopeId)?.nodes.some((node) => node.id === nodeId);
+  if (!visible) return;
   state.selectedId = nodeId;
   state.selectedEdge = null;
   canvas.paintSelection();
   canvas.focusOn(nodeId);
   writeHash();
   bus.emit('selection-changed');
-  // the detail panel docks ~230ms after selection and shrinks the canvas —
-  // keep the selected node on screen once that resize settles
-  setTimeout(() => {
-    if (!state.presenting && state.selectedId === nodeId) canvas.ensureVisible(nodeId);
-  }, 360);
 }
 
 export function selectEdge(index) {
@@ -361,8 +417,11 @@ export function wireHistory() {
       return;
     }
     if (!state.model) return;
-    const targetScope = r.inId ?? (r.nodeId ? state.model.byId.get(r.nodeId)?.ownerId ?? null : null);
-    const targetSel = r.nodeId && state.model.byId.has(r.nodeId) ? r.nodeId : null;
+    const targetScope = r.nodeId ? scopeForNode(r.nodeId, r.inId) : (r.inId ?? null);
+    const targetSel = r.nodeId
+      && scopeOf(state.model, targetScope)?.nodes.some((node) => node.id === r.nodeId)
+      ? r.nodeId
+      : null;
     if (targetScope === state.scopeId) {
       state.selectedId = targetSel;
       canvas.paintSelection();

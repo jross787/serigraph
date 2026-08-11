@@ -6,14 +6,16 @@
 //   2. OPSMAP_LLM_CMD=<cmd>     — any local model: shell command, prompt on
 //                                 stdin, completion on stdout (ollama, llama.cpp…)
 //   3. ANTHROPIC_API_KEY        — direct Claude API call (Node's global fetch)
-//   4. `claude` CLI on PATH     — zero-config local provider; uses the user's
+//   4. OPENAI_API_KEY           — direct OpenAI API call (Node's global fetch)
+//   5. `claude` CLI on PATH     — zero-config local provider; uses the user's
 //                                 existing Claude Code login, spawned server-side
-//   5. none                     — importer disabled; UI shows a setup hint
+//   6. none                     — importer disabled; UI shows a setup hint
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 
 const API_MODEL = process.env.OPSMAP_MODEL || 'claude-opus-4-8';
 const CLI_MODEL = process.env.OPSMAP_MODEL || 'opus';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 const API_TIMEOUT_MS = 240_000;
 const CLI_TIMEOUT_MS = 300_000;
 
@@ -37,6 +39,7 @@ export async function resolveProvider() {
   if (process.env.OPSMAP_MOCK_LLM) return { kind: 'mock', model: 'mock' };
   if (process.env.OPSMAP_LLM_CMD) return { kind: 'cmd', model: process.env.OPSMAP_LLM_CMD.split(/\s+/)[0] };
   if (process.env.ANTHROPIC_API_KEY) return { kind: 'api', model: API_MODEL };
+  if (process.env.OPENAI_API_KEY) return { kind: 'openai', model: OPENAI_MODEL };
   if (await hasClaudeCli()) return { kind: 'cli', model: CLI_MODEL };
   return null;
 }
@@ -45,10 +48,11 @@ export async function resolveProvider() {
 export async function callLLM({ system, prompt }) {
   const provider = await resolveProvider();
   if (!provider) {
-    throw new Error('No LLM provider configured. Set ANTHROPIC_API_KEY, log in the claude CLI, or set OPSMAP_LLM_CMD.');
+    throw new Error('No LLM provider configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY, log in the claude CLI, or set OPSMAP_LLM_CMD.');
   }
   if (provider.kind === 'mock') return callMock();
   if (provider.kind === 'cmd') return callCmd({ system, prompt });
+  if (provider.kind === 'openai') return callOpenAI({ system, prompt });
   if (provider.kind === 'api') return callApi({ system, prompt });
   return callCli({ system, prompt });
 }
@@ -134,6 +138,51 @@ async function callApi({ system, prompt }) {
   if (!text.trim()) throw new Error('The model returned an empty response — retry.');
   if (data.stop_reason === 'max_tokens') {
     throw new Error('The transcript produced a map too large to emit — split the transcript and import in parts.');
+  }
+  return text;
+}
+
+// Direct OpenAI API via fetch — same zero-dependency approach as callApi.
+async function callOpenAI({ system, prompt }) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), API_TIMEOUT_MS);
+  let res;
+  try {
+    res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: {
+        authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        max_completion_tokens: 16000,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: prompt },
+        ],
+      }),
+    });
+  } catch (e) {
+    throw new Error(e.name === 'AbortError'
+      ? 'The model took too long (>4 min) — try a shorter request.'
+      : `Could not reach the OpenAI API: ${e.message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.json())?.error?.message ?? ''; } catch { /* opaque */ }
+    if (res.status === 401) throw new Error('The OPENAI_API_KEY was rejected (401). Check the key.');
+    if (res.status === 429) throw new Error('Rate limited by the OpenAI API — wait a minute and retry.');
+    throw new Error(`OpenAI API error ${res.status}${detail ? `: ${detail}` : ''}`);
+  }
+  const data = await res.json();
+  const text = data.choices?.[0]?.message?.content ?? '';
+  if (!text.trim()) throw new Error('The model returned an empty response — retry.');
+  if (data.choices?.[0]?.finish_reason === 'length') {
+    throw new Error('The response was too large to emit — split the request and retry.');
   }
   return text;
 }

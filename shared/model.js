@@ -2,17 +2,26 @@
 // Runs in the browser, in Node, and inside standalone HTML exports.
 import * as YAML from '../vendor/yaml.js';
 
-export const NODE_TYPES = ['process', 'decision', 'system', 'role', 'artifact'];
+export const MAP_MODES = ['process', 'freeform'];
+export const ROUTE_STYLES = ['curved', 'straight', 'angled', 'stepped'];
+export const PROCESS_NODE_TYPES = ['process', 'decision', 'system', 'role', 'artifact'];
+export const FREEFORM_NODE_TYPES = ['item', 'system', 'database', 'api', 'role', 'artifact'];
+export const NODE_TYPES = [...new Set([...PROCESS_NODE_TYPES, ...FREEFORM_NODE_TYPES])];
 export const AUTOMATION_STATES = ['manual', 'assisted', 'automated', 'at-risk'];
 export const DOCUMENT_KINDS = ['process', 'prd', 'roadmap'];
 export const PLANNING_TYPES = ['objective', 'problem', 'requirement', 'milestone', 'metric', 'risk', 'decision', 'research', 'release'];
 export const PLAN_STATUSES = ['draft', 'discovery', 'planned', 'in-progress', 'blocked', 'validated', 'shipped', 'archived'];
 export const PLAN_PRIORITIES = ['must', 'should', 'could', 'wont'];
+export const HIERARCHY_RELATION_TYPES = ['part-of', 'member-of', 'variant-of'];
 export const RELATION_TYPES = ['informed-by', 'supports', 'satisfies', 'depends-on', 'validated-by', 'measured-by', 'mitigates', 'blocks', 'delivers'];
+export const OWNER_ROLES = ['owner', 'business', 'technical', 'data-steward'];
 
 const TYPE_HINTS = {
   step: 'process', stage: 'process', task: 'process', activity: 'process',
   tool: 'system', software: 'system', platform: 'system', app: 'system',
+  database: 'database', datastore: 'database', db: 'database',
+  api: 'api', endpoint: 'api', service: 'api',
+  item: 'item', box: 'item', entity: 'item', concept: 'item',
   person: 'role', team: 'role', actor: 'role', department: 'role',
   document: 'artifact', doc: 'artifact', data: 'artifact', output: 'artifact',
   choice: 'decision', branch: 'decision', gateway: 'decision',
@@ -56,9 +65,18 @@ export function parseMap(source) {
     return { doc, model: null, errors, warnings };
   }
 
+  const mode = typeof data.mode === 'string' ? data.mode : 'process';
+  if (!MAP_MODES.includes(mode)) {
+    err(['mode'], `"mode:" must be one of: ${MAP_MODES.join(', ')}.`);
+  }
+
   const byId = new Map();
   const seenIds = new Map(); // id -> first path (for duplicate messages)
   const nodePaths = new Map();
+  const elementById = new Map();
+  const placementsByElement = new Map();
+  const placementByKey = new Map();
+  const placementPaths = new Map();
 
   const stringList = (raw, path, label) => {
     if (raw == null) return [];
@@ -95,14 +113,101 @@ export function parseMap(source) {
     successMetrics: stringList(documentData.successMetrics, ['document', 'successMetrics'], '"document.successMetrics:"'),
   };
 
-  function normalizeScope(rawNodes, rawEdges, ownerId, path, depth) {
-    const nodes = [];
-    rawNodes.forEach((raw, i) => {
-      const npath = [...path, 'nodes', i];
-      if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
-        err(npath, `Node #${i + 1} here is not a map — each list item needs id, type, and label.`);
+  const placementKey = (ownerId, elementId) => `${ownerId ?? '$root'}\u0000${elementId}`;
+
+  const normalizePosition = (raw, path, id, field = 'position') => {
+    if (raw == null) return null;
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)
+      && Number.isFinite(raw.x) && Number.isFinite(raw.y)) {
+      return { x: raw.x, y: raw.y };
+    }
+    err(path, `Node "${id}": "${field}:" must be a map of two numbers, e.g. ${field}: { x: 340, y: 120 }.`);
+    return null;
+  };
+
+  const normalizeOwners = (raw, path, id) => {
+    if (raw == null) return [];
+    if (!Array.isArray(raw)) {
+      err(path, `Node "${id}": "owners:" must be a list of { to, role } references.`);
+      return [];
+    }
+    const owners = [];
+    raw.forEach((owner, index) => {
+      const ownerPath = [...path, index];
+      if (!owner || typeof owner !== 'object' || Array.isArray(owner)) {
+        err(ownerPath, `Node "${id}": owner #${index + 1} must be a map.`);
         return;
       }
+      const to = typeof owner.to === 'string' ? owner.to.trim() : '';
+      const role = typeof owner.role === 'string' ? owner.role.trim() : 'owner';
+      if (!to) err([...ownerPath, 'to'], `Node "${id}": owner #${index + 1} needs a "to:" element id.`);
+      if (!OWNER_ROLES.includes(role)) {
+        err([...ownerPath, 'role'], `Node "${id}": owner #${index + 1} "role:" must be one of: ${OWNER_ROLES.join(', ')}.`);
+      }
+      if (to && OWNER_ROLES.includes(role)) owners.push({ to, role });
+    });
+    return owners;
+  };
+
+  function normalizeScope(rawNodes, rawEdges, ownerId, path, depth, elementMode = false) {
+    const nodes = [];
+    const usedElementIds = new Set();
+    rawNodes.forEach((raw, i) => {
+      const npath = elementMode ? ['elements', i] : [...path, 'nodes', i];
+      if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+        err(npath, `Node #${i + 1} here is not a map.`);
+        return;
+      }
+
+      if (mode === 'freeform' && !elementMode && Object.hasOwn(raw, 'use')) {
+        if (ownerId == null) {
+          err(npath, 'Freeform placements must be inside a group.');
+          return;
+        }
+        const elementId = typeof raw.use === 'string' ? raw.use.trim() : '';
+        if (!elementId) {
+          err([...npath, 'use'], 'A placement needs a "use:" element id.');
+          return;
+        }
+        if (usedElementIds.has(elementId)) {
+          err([...npath, 'use'], `Element "${elementId}" is already placed in this group.`);
+          return;
+        }
+        const element = elementById.get(elementId);
+        if (!element) {
+          err([...npath, 'use'], `Placement references unknown element "${elementId}".`);
+          return;
+        }
+        for (const key of Object.keys(raw)) {
+          if (!['use', 'note', 'position'].includes(key)) {
+            err([...npath, key], `Placement "${elementId}" cannot override "${key}". Edit the shared element instead.`);
+          }
+        }
+        if (raw.note != null && typeof raw.note !== 'string') {
+          err([...npath, 'note'], `Placement "${elementId}": "note:" must be text.`);
+        }
+        const key = placementKey(ownerId, elementId);
+        const placement = {
+          ...element,
+          elementId,
+          isElement: false,
+          isPlacement: true,
+          note: typeof raw.note === 'string' ? raw.note : '',
+          position: normalizePosition(raw.position, [...npath, 'position'], elementId),
+          ownerId,
+          depth,
+          placementKey: key,
+          stats: { childCount: 0, descendantCount: 0, maxDepth: 0 },
+        };
+        usedElementIds.add(elementId);
+        nodes.push(placement);
+        placementByKey.set(key, placement);
+        placementPaths.set(key, npath);
+        if (!placementsByElement.has(elementId)) placementsByElement.set(elementId, []);
+        placementsByElement.get(elementId).push(placement);
+        return;
+      }
+
       const id = raw.id;
       if (typeof id !== 'string' || !id.trim()) {
         err(npath, `A node${raw.label ? ` (label "${raw.label}")` : ''} is missing its "id:".`);
@@ -113,12 +218,11 @@ export function parseMap(source) {
         return;
       }
       if (seenIds.has(id)) {
-        err([...npath, 'id'], `Duplicate id "${id}" — ids must be unique across the entire file (first used at ${seenIds.get(id)}).`);
+        err([...npath, 'id'], `Duplicate id "${id}" — definitions must be unique across the entire file (first used at ${seenIds.get(id)}).`);
         return;
       }
       seenIds.set(id, npath.join('.') || '(top)');
       nodePaths.set(id, npath);
-
       let type = raw.type;
       if (type == null) {
         err(npath, `Node "${id}" is missing its "type:" — one of: ${NODE_TYPES.join(', ')}.`);
@@ -127,6 +231,9 @@ export function parseMap(source) {
         const hint = TYPE_HINTS[String(type).toLowerCase()];
         err([...npath, 'type'], `Node "${id}" has type "${type}" — must be one of: ${NODE_TYPES.join(', ')}.` + (hint ? ` (did you mean "${hint}"?)` : ''));
         type = 'process';
+      }
+      if (elementMode && !FREEFORM_NODE_TYPES.includes(type)) {
+        err([...npath, 'type'], `Element "${id}" type must be one of: ${FREEFORM_NODE_TYPES.join(', ')}.`);
       }
       const label = typeof raw.label === 'string' && raw.label.trim() ? raw.label : null;
       if (!label) err([...npath, 'label'], `Node "${id}" is missing its "label:".`);
@@ -160,18 +267,22 @@ export function parseMap(source) {
           });
         }
       }
-
-      // optional pinned position — { x, y } is the node's CENTER in the
-      // layout coordinates of the scope it lives in (see docs/FORMAT.md)
-      let position = null;
-      if (raw.position != null) {
-        const p = raw.position;
-        if (p && typeof p === 'object' && !Array.isArray(p) && Number.isFinite(p.x) && Number.isFinite(p.y)) {
-          position = { x: p.x, y: p.y };
-        } else {
-          err([...npath, 'position'], `Node "${id}": "position:" must be a map of two numbers, e.g. position: { x: 340, y: 120 }.`);
-        }
+      const owners = normalizeOwners(raw.owners, [...npath, 'owners'], id);
+      if (mode === 'freeform' && raw.owner != null) {
+        err([...npath, 'owner'], `Node "${id}": use "owners:" with shared role elements instead of free-text "owner:".`);
       }
+      if (mode !== 'freeform' && raw.owners != null) {
+        err([...npath, 'owners'], `Node "${id}": "owners:" is available only in Freeform maps.`);
+      }
+
+      // Position and notes belong to placements or ordinary process nodes.
+      if (elementMode && raw.position != null) {
+        err([...npath, 'position'], `Element "${id}" cannot have a shared position. Put "position:" on each placement.`);
+      }
+      if (elementMode && raw.note != null) {
+        err([...npath, 'note'], `Element "${id}" cannot have a shared note. Put "note:" on each placement.`);
+      }
+      const position = elementMode ? null : normalizePosition(raw.position, [...npath, 'position'], id);
 
       // optional cost block — human-vs-agent economics inputs (FORMAT.md).
       // Missing numbers stay null (unknown ≠ zero); negatives are errors.
@@ -205,6 +316,7 @@ export function parseMap(source) {
       const relations = [];
       if (raw.relations != null) {
         const relationPath = [...npath, 'relations'];
+        const allowedRelationTypes = elementMode ? HIERARCHY_RELATION_TYPES : RELATION_TYPES;
         if (!Array.isArray(raw.relations)) {
           err(relationPath, `Node "${id}": "relations:" must be a list of { to, type } references.`);
         } else {
@@ -217,10 +329,10 @@ export function parseMap(source) {
             const to = typeof relation.to === 'string' ? relation.to.trim() : '';
             const type = typeof relation.type === 'string' ? relation.type.trim() : '';
             if (!to) err([...rpath, 'to'], `Node "${id}": relation #${j + 1} needs a "to:" node id.`);
-            if (!RELATION_TYPES.includes(type)) {
-              err([...rpath, 'type'], `Node "${id}": relation #${j + 1} "type:" must be one of: ${RELATION_TYPES.join(', ')}.`);
+            if (!allowedRelationTypes.includes(type)) {
+              err([...rpath, 'type'], `Node "${id}": relation #${j + 1} "type:" must be one of: ${allowedRelationTypes.join(', ')}.`);
             }
-            if (to && RELATION_TYPES.includes(type)) relations.push({ to, type });
+            if (to && allowedRelationTypes.includes(type)) relations.push({ to, type });
           });
         }
       }
@@ -313,6 +425,7 @@ export function parseMap(source) {
         label: label ?? id,
         description: typeof raw.description === 'string' ? raw.description : '',
         owner: typeof raw.owner === 'string' ? raw.owner.trim() : '',
+        owners,
         trigger: typeof raw.trigger === 'string' ? raw.trigger.trim() : '',
         sla: typeof raw.sla === 'string' ? raw.sla.trim() : '',
         automation,
@@ -323,13 +436,19 @@ export function parseMap(source) {
         relations,
         review,
         planning,
+        note: '',
+        elementId: elementMode ? id : null,
+        isElement: elementMode,
+        isPlacement: false,
         children: null,
         ownerId,
         depth,
         stats: { childCount: 0, descendantCount: 0, maxDepth: 0 },
       };
 
-      if (raw.children != null) {
+      if (elementMode && raw.children != null) {
+        err([...npath, 'children'], `Element "${id}" cannot contain a group. Use "part-of" to describe item hierarchy.`);
+      } else if (raw.children != null) {
         let childNodes, childEdges, cpath = [...npath, 'children'];
         if (Array.isArray(raw.children)) {
           childNodes = raw.children; childEdges = [];
@@ -344,22 +463,24 @@ export function parseMap(source) {
             err([...cpath, 'edges'], `Node "${id}": "children.edges:" must be a list.`);
             childEdges = [];
           }
-          cpath = [...cpath];
         } else {
-          err(cpath, `Node "${id}": "children:" must contain "nodes:" (and optionally "edges:").`);
+          err(cpath, `Node "${id}": "children:" must contain "nodes:" and optionally "edges:".`);
           childNodes = []; childEdges = [];
         }
-        if (childNodes.length || childEdges.length) {
-          const scopePath = Array.isArray(raw.children) ? [...npath, 'children'] : [...npath, 'children'];
-          node.children = normalizeScope(childNodes, childEdges, id, scopePath, depth + 1);
+        if (childNodes.length || childEdges.length || mode === 'freeform') {
+          node.children = normalizeScope(childNodes, childEdges, id, [...npath, 'children'], depth + 1);
           node.stats.childCount = node.children.nodes.length;
           node.stats.descendantCount = node.children.nodes.reduce(
-            (sum, c) => sum + 1 + c.stats.descendantCount, 0);
-          node.stats.maxDepth = 1 + Math.max(0, ...node.children.nodes.map(c => c.stats.maxDepth));
+            (sum, child) => sum + 1 + child.stats.descendantCount, 0);
+          node.stats.maxDepth = 1 + Math.max(0, ...node.children.nodes.map((child) => child.stats.maxDepth));
         }
+      }
+      if (mode === 'freeform' && !elementMode && !node.children) {
+        err(npath, `Freeform node "${id}" must be a group with "children:". Put reusable items in "elements:" and place them with "use: ${id}".`);
       }
 
       byId.set(id, node);
+      if (elementMode) elementById.set(id, node);
       nodes.push(node);
     });
 
@@ -388,12 +509,30 @@ export function parseMap(source) {
           return;
         }
       }
-      edges.push({ from, to, label: typeof raw.label === 'string' ? raw.label : '' });
+      const route = raw.route == null ? null : String(raw.route);
+      if (route != null && !ROUTE_STYLES.includes(route)) {
+        err([...epath, 'route'], `Edge ${from} → ${to}: "route:" must be one of: ${ROUTE_STYLES.join(', ')}.`);
+      }
+      edges.push({
+        from, to,
+        label: typeof raw.label === 'string' ? raw.label : '',
+        via: normalizePosition(raw.via, [...epath, 'via'], `${from} → ${to}`, 'via'),
+        route: ROUTE_STYLES.includes(route) ? route : null,
+      });
     });
 
     return { ownerId, nodes, edges };
   }
 
+  let elements = [];
+  if (mode === 'freeform') {
+    if (!Array.isArray(data.elements)) {
+      err(['elements'], 'Freeform maps need a top-level "elements:" list.');
+    }
+    elements = normalizeScope(Array.isArray(data.elements) ? data.elements : [], [], null, [], 0, true).nodes;
+  } else if (data.elements != null) {
+    err(['elements'], '"elements:" is available only in Freeform maps.');
+  }
   const root = normalizeScope(data.nodes, data.edges, null, [], 0);
 
   for (const node of byId.values()) {
@@ -401,6 +540,25 @@ export function parseMap(source) {
       if (!byId.has(relation.to)) {
         const path = nodePaths.get(node.id) ?? [];
         err([...path, 'relations'], `Node "${node.id}": relation target "${relation.to}" does not exist in this document.`);
+      }
+    }
+    for (const owner of node.owners) {
+      const target = elementById.get(owner.to);
+      const path = nodePaths.get(node.id) ?? [];
+      if (!target) {
+        err([...path, 'owners'], `Node "${node.id}": owner target "${owner.to}" is not a shared element.`);
+      } else if (target.type !== 'role') {
+        err([...path, 'owners'], `Node "${node.id}": owner target "${owner.to}" must have type "role".`);
+      }
+    }
+    if (node.isElement) {
+      for (const relation of node.relations) {
+        const path = nodePaths.get(node.id) ?? [];
+        if (!HIERARCHY_RELATION_TYPES.includes(relation.type)) {
+          err([...path, 'relations'], `Element "${node.id}": relation type must be one of: ${HIERARCHY_RELATION_TYPES.join(', ')}.`);
+        } else if (!elementById.has(relation.to)) {
+          err([...path, 'relations'], `Element "${node.id}": "${relation.type}" target "${relation.to}" must be a shared element.`);
+        }
       }
     }
     for (const dependencyId of node.planning?.dependsOn ?? []) {
@@ -444,11 +602,18 @@ export function parseMap(source) {
 
   const model = {
     name: data.name,
+    mode: MAP_MODES.includes(mode) ? mode : 'process',
     description: typeof data.description === 'string' ? data.description : '',
     costModel,
     document,
     root,
     byId,
+    elements,
+    elementById,
+    placementsByElement,
+    placementByKey,
+    placementPaths,
+    placementCount: placementByKey.size,
     nodeCount: byId.size,
   };
   return { doc, model, errors, warnings };
@@ -470,4 +635,12 @@ export function scopeOf(model, ownerId) {
   if (ownerId == null) return model.root;
   const owner = model.byId.get(ownerId);
   return owner && owner.children ? owner.children : null;
+}
+
+export function placementInScope(model, ownerId, elementId) {
+  return model?.placementByKey?.get(`${ownerId ?? '$root'}\u0000${elementId}`) ?? null;
+}
+
+export function placementsOf(model, elementId) {
+  return model?.placementsByElement?.get(elementId) ?? [];
 }

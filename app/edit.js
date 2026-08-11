@@ -28,12 +28,48 @@ export function findNodePath(doc, nodeId, basePath = ['nodes']) {
   return null;
 }
 
+export function findElementPath(doc, elementId) {
+  const seq = doc.getIn(['elements'], true);
+  if (!isSeq(seq)) return null;
+  for (let i = 0; i < seq.items.length; i++) {
+    const item = seq.items[i];
+    if (isMap(item) && item.get('id') === elementId) return ['elements', i];
+  }
+  return null;
+}
+
+export function findDefinitionPath(doc, nodeId) {
+  return findElementPath(doc, nodeId) ?? findNodePath(doc, nodeId);
+}
+
+export function findPlacementPath(doc, ownerId, elementId) {
+  const scope = ensureScope(doc, ownerId, { create: false });
+  if (!scope) return null;
+  const seq = doc.getIn(scope.nodesPath, true);
+  if (!isSeq(seq)) return null;
+  for (let i = 0; i < seq.items.length; i++) {
+    const item = seq.items[i];
+    if (isMap(item) && item.get('use') === elementId) return [...scope.nodesPath, i];
+  }
+  return null;
+}
+
+function useBlockSequence(doc, path) {
+  const seq = doc.getIn(path, true);
+  if (isSeq(seq)) seq.flow = false;
+  return seq;
+}
+
 // Returns { nodesPath, edgesPath } for the scope owned by ownerId
 // (null = root). Creates/normalizes the children container when needed.
 export function ensureScope(doc, ownerId, { create = true } = {}) {
   if (ownerId == null) {
     if (!doc.getIn(['nodes'], true) && create) doc.setIn(['nodes'], doc.createNode([]));
     if (!doc.getIn(['edges'], true) && create) doc.setIn(['edges'], doc.createNode([]));
+    if (create) {
+      useBlockSequence(doc, ['nodes']);
+      useBlockSequence(doc, ['edges']);
+    }
     return { nodesPath: ['nodes'], edgesPath: ['edges'] };
   }
   const nodePath = findNodePath(doc, ownerId);
@@ -51,6 +87,10 @@ export function ensureScope(doc, ownerId, { create = true } = {}) {
   } else if (isMap(children)) {
     if (!children.get('nodes', true) && create) doc.setIn([...childrenPath, 'nodes'], doc.createNode([]));
     if (!children.get('edges', true) && create) doc.setIn([...childrenPath, 'edges'], doc.createNode([]));
+  }
+  if (create) {
+    useBlockSequence(doc, [...childrenPath, 'nodes']);
+    useBlockSequence(doc, [...childrenPath, 'edges']);
   }
   return { nodesPath: [...childrenPath, 'nodes'], edgesPath: [...childrenPath, 'edges'] };
 }
@@ -70,17 +110,17 @@ export function uniqueId(model, base, extraTaken = new Set()) {
   return id;
 }
 
-// position maps stay one-liners wherever a YAML node gets built from a plain
-// object (palette drops, templates)
+// Position maps stay on one line wherever a YAML node is built from a plain
+// object, including palette drops and templates.
 function flowPositions(node) {
   if (isMap(node)) {
     for (const pair of node.items) {
-      const k = typeof pair.key === 'string' ? pair.key : pair.key?.value;
-      if (k === 'position' && isMap(pair.value)) pair.value.flow = true;
+      const key = typeof pair.key === 'string' ? pair.key : pair.key?.value;
+      if (key === 'position' && isMap(pair.value)) pair.value.flow = true;
       else flowPositions(pair.value);
     }
   } else if (isSeq(node)) {
-    for (const it of node.items) flowPositions(it);
+    for (const item of node.items) flowPositions(item);
   }
 }
 
@@ -101,11 +141,27 @@ export function updateDocument(fields = {}) {
   }
 }
 
+export function setMapMode(mode) {
+  if (mode !== 'process' && mode !== 'freeform') throw new Error(`unknown map mode "${mode}"`);
+  if (state.model?.nodeCount) throw new Error('Create a new map to use a different mode');
+  if (mode === 'process') {
+    if (state.doc.getIn(['mode'], true)) state.doc.deleteIn(['mode']);
+    if (state.doc.getIn(['elements'], true)) state.doc.deleteIn(['elements']);
+  } else {
+    state.doc.setIn(['mode'], mode);
+    if (!state.doc.getIn(['elements'], true)) state.doc.setIn(['elements'], state.doc.createNode([]));
+  }
+  tidyTopOrder(state.doc);
+}
+
 // ── node object construction (key order = file convention) ──────────
 function nodeToPlain(fields) {
   const obj = { id: fields.id, type: fields.type, label: fields.label };
   if (fields.description?.trim()) obj.description = fields.description;
   if (fields.owner?.trim()) obj.owner = fields.owner.trim();
+  if (fields.owners?.length) obj.owners = fields.owners
+    .filter((owner) => owner?.to)
+    .map((owner) => ({ to: String(owner.to).trim(), role: String(owner.role || 'owner').trim() }));
   if (fields.trigger?.trim()) obj.trigger = fields.trigger.trim();
   if (fields.sla?.trim()) obj.sla = fields.sla.trim();
   if (fields.automation?.trim()) obj.automation = fields.automation.trim();
@@ -165,9 +221,53 @@ export function addNode(ownerId, fields) {
   return fields.id;
 }
 
+export function addElement(fields) {
+  const doc = state.doc;
+  if (!doc.getIn(['elements'], true)) doc.setIn(['elements'], doc.createNode([]));
+  useBlockSequence(doc, ['elements']);
+  const plain = nodeToPlain(fields);
+  delete plain.owner;
+  delete plain.position;
+  delete plain.children;
+  doc.addIn(['elements'], doc.createNode(plain));
+  tidyTopOrder(doc);
+  return fields.id;
+}
+
+export function addPlacement(ownerId, elementId, { note = '', position = null } = {}) {
+  if (state.model?.mode === 'freeform' && ownerId == null) {
+    throw new Error('Choose a group before adding an item');
+  }
+  const doc = state.doc;
+  const scope = ensureScope(doc, ownerId);
+  if (!scope) throw new Error(`can't find group "${ownerId}" in the file`);
+  if (findPlacementPath(doc, ownerId, elementId)) {
+    throw new Error(`"${elementId}" is already in this group`);
+  }
+  const plain = { use: elementId };
+  if (String(note).trim()) plain.note = String(note).trim();
+  if (position) plain.position = { x: Math.round(position.x), y: Math.round(position.y) };
+  const created = doc.createNode(plain);
+  flowPositions(created);
+  doc.addIn(scope.nodesPath, created);
+  return elementId;
+}
+
+export function updatePlacement(ownerId, elementId, fields = {}) {
+  const doc = state.doc;
+  const p = findPlacementPath(doc, ownerId, elementId);
+  if (!p) throw new Error(`"${elementId}" is not placed in this group`);
+  if (fields.note !== undefined) {
+    const note = String(fields.note ?? '').trim();
+    if (note) doc.setIn([...p, 'note'], note);
+    else if (doc.getIn([...p, 'note'], true)) doc.deleteIn([...p, 'note']);
+  }
+  tidyKeyOrder(doc, p);
+}
+
 export function updateNode(nodeId, fields) {
   const doc = state.doc;
-  const p = findNodePath(doc, nodeId);
+  const p = findDefinitionPath(doc, nodeId);
   if (!p) throw new Error(`node "${nodeId}" not found in file`);
   if (fields.label != null) doc.setIn([...p, 'label'], fields.label);
   if (fields.type != null) doc.setIn([...p, 'type'], fields.type);
@@ -175,6 +275,13 @@ export function updateNode(nodeId, fields) {
     if (fields[key] === undefined) continue;
     if (String(fields[key] ?? '').trim()) doc.setIn([...p, key], String(fields[key]).trim());
     else if (doc.getIn([...p, key], true)) doc.deleteIn([...p, key]);
+  }
+  if (fields.owners !== undefined) {
+    const owners = (fields.owners ?? [])
+      .filter((owner) => owner?.to)
+      .map((owner) => ({ to: String(owner.to).trim(), role: String(owner.role || 'owner').trim() }));
+    if (owners.length) doc.setIn([...p, 'owners'], doc.createNode(owners));
+    else if (doc.getIn([...p, 'owners'], true)) doc.deleteIn([...p, 'owners']);
   }
   if (fields.systems !== undefined) {
     const systems = (fields.systems ?? []).map((s) => String(s).trim()).filter(Boolean);
@@ -219,18 +326,22 @@ export function updateNode(nodeId, fields) {
 // Pin a node where the user dropped it: position is the node's CENTER in its
 // scope's layout coordinates, written as a one-line flow map so files stay
 // human-readable. Clearing it returns the node to automatic layout.
-export function setNodePosition(nodeId, { x, y }) {
+export function setNodePosition(nodeId, { x, y }, ownerId = state.scopeId) {
   const doc = state.doc;
-  const p = findNodePath(doc, nodeId);
-  if (!p) throw new Error(`node "${nodeId}" not found in file`);
+  const p = state.model?.mode === 'freeform' && state.model.elementById?.has(nodeId)
+    ? findPlacementPath(doc, ownerId, nodeId)
+    : findNodePath(doc, nodeId);
+  if (!p) throw new Error(`node "${nodeId}" not found in this group`);
   doc.setIn([...p, 'position'], doc.createNode({ x: Math.round(x), y: Math.round(y) }, { flow: true }));
   tidyKeyOrder(doc, p);
 }
 
-export function clearNodePosition(nodeId) {
+export function clearNodePosition(nodeId, ownerId = state.scopeId) {
   const doc = state.doc;
-  const p = findNodePath(doc, nodeId);
-  if (!p) throw new Error(`node "${nodeId}" not found in file`);
+  const p = state.model?.mode === 'freeform' && state.model.elementById?.has(nodeId)
+    ? findPlacementPath(doc, ownerId, nodeId)
+    : findNodePath(doc, nodeId);
+  if (!p) throw new Error(`node "${nodeId}" not found in this group`);
   if (doc.getIn([...p, 'position'], true)) doc.deleteIn([...p, 'position']);
 }
 
@@ -239,7 +350,7 @@ export function clearNodePosition(nodeId) {
 // keys keep their current value. Clearing everything removes the block.
 export function setNodeCost(nodeId, fields) {
   const doc = state.doc;
-  const p = findNodePath(doc, nodeId);
+  const p = findDefinitionPath(doc, nodeId);
   if (!p) throw new Error(`node "${nodeId}" not found in file`);
   const cur = state.model?.byId.get(nodeId)?.cost ?? {};
   const val = (v, name) => {
@@ -306,7 +417,7 @@ export function setMapCostModel({ currency, defaultRate } = {}) {
 // human has verified the fact; the file stops carrying the doubt.
 export function confirmNodeFlag(nodeId) {
   const doc = state.doc;
-  const p = findNodePath(doc, nodeId);
+  const p = findDefinitionPath(doc, nodeId);
   if (!p) throw new Error(`node "${nodeId}" not found in file`);
   if (!stripFlagComments(doc.getIn(p, true))) throw new Error('no provenance flag on this node');
 }
@@ -320,7 +431,7 @@ export function confirmEdgeFlag(ownerId, index) {
 }
 
 // keep the top level predictable across process and product documents
-const TOP_ORDER = ['name', 'description', 'document', 'costModel', 'nodes', 'edges'];
+const TOP_ORDER = ['name', 'description', 'mode', 'document', 'costModel', 'elements', 'nodes', 'edges'];
 function tidyTopOrder(doc) {
   const map = doc.contents;
   if (!isMap(map)) return;
@@ -337,7 +448,7 @@ function tidyTopOrder(doc) {
 
 export function addReviewComment(nodeId, { body, author = 'You', createdAt = new Date().toISOString() }) {
   const doc = state.doc;
-  const p = findNodePath(doc, nodeId);
+  const p = findDefinitionPath(doc, nodeId);
   if (!p) throw new Error(`node "${nodeId}" not found`);
   const message = String(body || '').trim();
   if (!message) throw new Error('write a note before saving');
@@ -351,7 +462,7 @@ export function addReviewComment(nodeId, { body, author = 'You', createdAt = new
 
 export function setReviewResolved(nodeId, reviewId, resolved) {
   const doc = state.doc;
-  const p = findNodePath(doc, nodeId);
+  const p = findDefinitionPath(doc, nodeId);
   if (!p) throw new Error(`node "${nodeId}" not found`);
   const review = doc.getIn([...p, 'review'], true);
   if (!isSeq(review)) throw new Error('review note not found');
@@ -368,9 +479,9 @@ export function setReviewResolved(nodeId, reviewId, resolved) {
 
 // keep files predictable; unknown keys keep their relative order at the end
 const KEY_ORDER = [
-  'id', 'type', 'label', 'description', 'owner', 'trigger', 'sla',
+  'id', 'type', 'label', 'description', 'owner', 'owners', 'trigger', 'sla',
   'automation', 'systems', 'planning', 'links', 'relations', 'review',
-  'cost', 'position', 'children',
+  'cost', 'note', 'position', 'children',
 ];
 function tidyKeyOrder(doc, nodePath) {
   const map = doc.getIn(nodePath, true);
@@ -385,6 +496,85 @@ function tidyKeyOrder(doc, nodePath) {
     .map((pair, i) => [pair, i])
     .sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1])
     .map(([pair]) => pair);
+}
+
+function removeScopeEdgesFor(doc, scope, nodeId) {
+  const edges = scope ? doc.getIn(scope.edgesPath, true) : null;
+  if (!isSeq(edges)) return 0;
+  let removed = 0;
+  for (let i = edges.items.length - 1; i >= 0; i--) {
+    const edge = edges.items[i];
+    if (isMap(edge) && (edge.get('from') === nodeId || edge.get('to') === nodeId)) {
+      doc.deleteIn([...scope.edgesPath, i]);
+      removed += 1;
+    }
+  }
+  return removed;
+}
+
+export function removePlacement(ownerId, elementId) {
+  const doc = state.doc;
+  const scope = ensureScope(doc, ownerId, { create: false });
+  const path = findPlacementPath(doc, ownerId, elementId);
+  if (!scope || !path) throw new Error(`"${elementId}" is not placed in this group`);
+  const dropped = removeScopeEdgesFor(doc, scope, elementId);
+  doc.deleteIn(path);
+  cleanupScope(doc, ownerId);
+  return { removed: true, dropped };
+}
+
+export function movePlacement(elementId, fromOwnerId, targetOwnerId) {
+  if (fromOwnerId === targetOwnerId) return { moved: false, dropped: 0, lifted: 0 };
+  const doc = state.doc;
+  const sourcePath = findPlacementPath(doc, fromOwnerId, elementId);
+  if (!sourcePath) throw new Error(`"${elementId}" is not placed in the current group`);
+  if (findPlacementPath(doc, targetOwnerId, elementId)) {
+    throw new Error(`"${elementId}" is already in that group`);
+  }
+  const note = doc.getIn([...sourcePath, 'note']) || '';
+  const { dropped } = removePlacement(fromOwnerId, elementId);
+  addPlacement(targetOwnerId, elementId, { note });
+  return { moved: true, dropped, lifted: 0 };
+}
+
+export function deleteElement(elementId) {
+  const doc = state.doc;
+  const element = state.model?.elementById?.get(elementId);
+  if (!element) throw new Error(`element "${elementId}" not found`);
+
+  for (const placement of [...(state.model.placementsByElement.get(elementId) ?? [])]) {
+    removePlacement(placement.ownerId, elementId);
+  }
+
+  for (const candidate of state.model.byId.values()) {
+    if (candidate.id === elementId) continue;
+    const candidatePath = findDefinitionPath(doc, candidate.id);
+    if (!candidatePath) continue;
+    for (const key of ['relations', 'owners']) {
+      const listPath = [...candidatePath, key];
+      const list = doc.getIn(listPath, true);
+      if (!isSeq(list)) continue;
+      for (let i = list.items.length - 1; i >= 0; i--) {
+        const item = list.items[i];
+        if (isMap(item) && item.get('to') === elementId) doc.deleteIn([...listPath, i]);
+      }
+      if (list.items.length === 0) doc.deleteIn(listPath);
+    }
+    const dependenciesPath = [...candidatePath, 'planning', 'dependsOn'];
+    const dependencies = doc.getIn(dependenciesPath, true);
+    if (isSeq(dependencies)) {
+      for (let i = dependencies.items.length - 1; i >= 0; i--) {
+        if ((dependencies.items[i]?.value ?? dependencies.items[i]) === elementId) {
+          doc.deleteIn([...dependenciesPath, i]);
+        }
+      }
+      if (dependencies.items.length === 0) doc.deleteIn(dependenciesPath);
+    }
+  }
+
+  const path = findElementPath(doc, elementId);
+  if (!path) throw new Error(`element "${elementId}" not found in file`);
+  doc.deleteIn(path);
 }
 
 export function deleteNode(nodeId) {
@@ -558,6 +748,7 @@ export function moveNode(nodeId, targetOwnerId) {
 
 // remove empty children containers so files stay tidy
 function cleanupScope(doc, ownerId) {
+  if (state.model?.mode === 'freeform') return;
   if (ownerId == null) return;
   const nodePath = findNodePath(doc, ownerId);
   if (!nodePath) return;
@@ -574,8 +765,13 @@ export function addEdge(ownerId, { from, to, label }) {
   const doc = state.doc;
   const scope = ensureScope(doc, ownerId);
   if (!scope) throw new Error(`can't find scope for "${ownerId}"`);
+  const trimmed = label?.trim() ?? '';
+  const scopeModel = ownerId == null ? state.model?.root : state.model?.byId.get(ownerId)?.children;
+  if (scopeModel?.edges.some((e) => e.from === from && e.to === to && (e.label || '') === trimmed)) {
+    throw new Error('That connection already exists.');
+  }
   const edge = { from, to };
-  if (label?.trim()) edge.label = label.trim();
+  if (trimmed) edge.label = trimmed;
   doc.addIn(scope.edgesPath, doc.createNode(edge));
 }
 
@@ -594,6 +790,38 @@ export function deleteEdge(ownerId, index) {
   doc.deleteIn([...scope.edgesPath, index]);
 }
 
+// Pin an edge's route: via is a point in the scope's layout coordinates that
+// the edge bends through, written as a one-line flow map like a node
+// position. Clearing it returns the edge to automatic routing.
+export function setEdgeVia(ownerId, index, { x, y }) {
+  const doc = state.doc;
+  const scope = ensureScope(doc, ownerId, { create: false });
+  if (!scope) throw new Error('scope not found');
+  if (!doc.getIn([...scope.edgesPath, index], true)) throw new Error('edge not found');
+  doc.setIn([...scope.edgesPath, index, 'via'], doc.createNode({ x: Math.round(x), y: Math.round(y) }, { flow: true }));
+}
+
+export function clearEdgeVia(ownerId, index) {
+  const doc = state.doc;
+  const scope = ensureScope(doc, ownerId, { create: false });
+  if (!scope) throw new Error('scope not found');
+  if (doc.getIn([...scope.edgesPath, index, 'via'], true)) doc.deleteIn([...scope.edgesPath, index, 'via']);
+}
+
+// The edge's route style: curved, straight, angled, or stepped (FORMAT.md).
+// Null clears the field and returns the edge to fully automatic routing.
+export function setEdgeRoute(ownerId, index, style) {
+  const doc = state.doc;
+  const scope = ensureScope(doc, ownerId, { create: false });
+  if (!scope) throw new Error('scope not found');
+  if (!doc.getIn([...scope.edgesPath, index], true)) throw new Error('edge not found');
+  if (style == null) {
+    if (doc.getIn([...scope.edgesPath, index, 'route'], true)) doc.deleteIn([...scope.edgesPath, index, 'route']);
+  } else {
+    doc.setIn([...scope.edgesPath, index, 'route'], style);
+  }
+}
+
 // ── template insertion ───────────────────────────────────────────────
 // Grafts a parsed template model into the given scope, renaming any ids
 // that would collide with ids already in the map.
@@ -604,10 +832,13 @@ export function insertTemplate(ownerId, templateModel) {
   const taken = new Set();
   const rename = new Map();
   const allTemplateIds = [];
+  if (templateModel.mode === 'freeform') {
+    allTemplateIds.push(...templateModel.elements.map((element) => element.id));
+  }
   (function collect(scope) {
-    for (const n of scope.nodes) {
-      allTemplateIds.push(n.id);
-      if (n.children) collect(n.children);
+    for (const node of scope.nodes) {
+      if (!node.isPlacement) allTemplateIds.push(node.id);
+      if (node.children) collect(node.children);
     }
   })(templateModel.root);
 
@@ -622,32 +853,56 @@ export function insertTemplate(ownerId, templateModel) {
   }
   const rid = (id) => rename.get(id) ?? id;
 
+  const elementToPlain = (element) => nodeToPlain({
+    ...element,
+    id: rid(element.id),
+    owners: element.owners.map((owner) => ({ ...owner, to: rid(owner.to) })),
+    planning: element.planning ? {
+      ...element.planning,
+      dependsOn: element.planning.dependsOn.map(rid),
+    } : null,
+    relations: element.relations.map((relation) => ({ ...relation, to: rid(relation.to) })),
+    position: null,
+    children: null,
+  });
+
   const plainScope = (scope) => ({
-    nodes: scope.nodes.map((n) => nodeToPlain({
-      id: rid(n.id), type: n.type, label: n.label,
-      description: n.description,
-      owner: n.owner,
-      trigger: n.trigger,
-      sla: n.sla,
-      automation: n.automation,
-      systems: n.systems,
-      planning: n.planning ? {
-        ...n.planning,
-        dependsOn: n.planning.dependsOn.map(rid),
-      } : null,
-      links: n.links,
-      relations: n.relations.map((relation) => ({ ...relation, to: rid(relation.to) })),
-      review: n.review,
-      position: n.position,
-      children: n.children ? plainScope(n.children) : undefined,
-    })),
-    edges: scope.edges.map((e) => {
-      const edge = { from: rid(e.from), to: rid(e.to) };
-      if (e.label) edge.label = e.label;
-      return edge;
+    nodes: scope.nodes.map((node) => {
+      if (node.isPlacement) {
+        return {
+          use: rid(node.elementId),
+          ...(node.note ? { note: node.note } : {}),
+          ...(node.position ? { position: node.position } : {}),
+        };
+      }
+      return nodeToPlain({
+        ...node,
+        id: rid(node.id),
+        owners: node.owners.map((owner) => ({ ...owner, to: rid(owner.to) })),
+        planning: node.planning ? {
+          ...node.planning,
+          dependsOn: node.planning.dependsOn.map(rid),
+        } : null,
+        relations: node.relations.map((relation) => ({ ...relation, to: rid(relation.to) })),
+        children: node.children ? plainScope(node.children) : undefined,
+      });
+    }),
+    edges: scope.edges.map((edge) => {
+      const plainEdge = { from: rid(edge.from), to: rid(edge.to) };
+      if (edge.label) plainEdge.label = edge.label;
+      return plainEdge;
     }),
   });
   const plain = plainScope(templateModel.root);
+  if (templateModel.mode === 'freeform') {
+    if (model.mode !== 'freeform') throw new Error('Freeform templates can only be inserted into Freeform maps');
+    if (!doc.getIn(['elements'], true)) doc.setIn(['elements'], doc.createNode([]));
+    useBlockSequence(doc, ['elements']);
+    for (const element of templateModel.elements) {
+      doc.addIn(['elements'], doc.createNode(elementToPlain(element)));
+    }
+    tidyTopOrder(doc);
+  }
 
   const scope = ensureScope(doc, ownerId);
   if (!scope) throw new Error(`can't find scope for "${ownerId}"`);

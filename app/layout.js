@@ -48,9 +48,9 @@ function sizeNode(node, model) {
     return { w, h: 0, lines };
   }
   if (node.type === 'decision') {
-    const lines = wrapText(node.label, 116, `600 ${FONT}`, 3);
+    const lines = wrapText(node.label, 108, `600 ${FONT}`, 3);
     const lw = Math.max(...lines.map((l) => measure(l)), 40);
-    return { w: Math.max(128, lw + 72), h: Math.max(76, lines.length * 17 + 48), lines };
+    return { w: Math.max(120, Math.min(148, lw + 40)), h: Math.max(88, lines.length * 17 + 44), lines };
   }
   const lines = wrapText(node.label, 148, `600 ${FONT}`, 3);
   const lw = Math.max(...lines.map((l) => measure(l)), 30);
@@ -90,8 +90,8 @@ function layoutComponent(comp, sized) {
     g.setNode(n.id, { width: s.w, height: s.h });
   }
   comp.edges.forEach((e, i) => {
-    const labelW = e.label ? measure(e.label, '600 10.5px ui-sans-serif, sans-serif') + 20 : 0;
-    g.setEdge(e.from, e.to, { width: labelW, height: e.label ? 22 : 0, labelpos: 'c' }, 'e' + i);
+    const labelW = e.label ? measure(e.label, '600 12px "SFMono-Regular", "SF Mono", Menlo, monospace') + 24 : 0;
+    g.setEdge(e.from, e.to, { width: labelW, height: e.label ? 26 : 0, labelpos: 'c' }, 'e' + i);
   });
   dagre.layout(g);
 
@@ -171,6 +171,47 @@ export function routeDirect(a, b) {
   const p1 = boundaryPoint(a, centerOf(b));
   const p2 = boundaryPoint(b, centerOf(a));
   return { points: [p1, p2], labelPos: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 } };
+}
+
+// Route through a user-pinned via point: boundary → via → boundary.
+// `smooth` tells the canvas to draw one continuous cable curve through the
+// via instead of the usual rounded orthogonal path. The label sits at t=0.3
+// along the curve, clear of the bend and the pointer.
+export function routeVia(a, b, via) {
+  const p1 = boundaryPoint(a, via);
+  const p2 = boundaryPoint(b, via);
+  const c = { x: 2 * via.x - (p1.x + p2.x) / 2, y: 2 * via.y - (p1.y + p2.y) / 2 };
+  const t = 0.3;
+  const labelPos = {
+    x: (1 - t) * (1 - t) * p1.x + 2 * (1 - t) * t * c.x + t * t * p2.x,
+    y: (1 - t) * (1 - t) * p1.y + 2 * (1 - t) * t * c.y + t * t * p2.y,
+  };
+  return { points: [p1, { x: via.x, y: via.y }, p2], labelPos, smooth: true };
+}
+
+// Route by style: curved is the smooth cable through the via; angled is one
+// rounded corner at the via; stepped is a stair whose riser passes through
+// the via on the dominant axis; straight ignores the via entirely.
+export function routeStyled(a, b, via, style) {
+  if (style === 'straight' || !via) return routeDirect(a, b);
+  if (style === 'angled') {
+    const p1 = boundaryPoint(a, via);
+    const p2 = boundaryPoint(b, via);
+    return { points: [p1, { x: via.x, y: via.y }, p2], labelPos: { x: (p1.x + via.x) / 2, y: (p1.y + via.y) / 2 } };
+  }
+  if (style === 'stepped') {
+    const p1 = boundaryPoint(a, via);
+    const p2 = boundaryPoint(b, via);
+    const flat = Math.abs(p2.x - p1.x) >= Math.abs(p2.y - p1.y);
+    const points = flat
+      ? [p1, { x: via.x, y: p1.y }, { x: via.x, y: p2.y }, p2]
+      : [p1, { x: p1.x, y: via.y }, { x: p2.x, y: via.y }, p2];
+    const labelPos = flat
+      ? { x: via.x, y: (p1.y + p2.y) / 2 }
+      : { x: (p1.x + p2.x) / 2, y: via.y };
+    return { points, labelPos };
+  }
+  return routeVia(a, b, via);
 }
 
 // Push auto nodes out of (inflated) pinned rects, minimal-displacement axis
@@ -280,13 +321,25 @@ export function layoutScope(model, ownerId) {
   }
 
   let bounds = { x: 0, y: 0, w: packed.w, h: packed.h };
-  if (movedIds.size) {
-    resolvePinnedOverlaps(nodes, movedIds);
+  const styledEdges = edges.filter((e) => e.edge.via || e.edge.route);
+  if (movedIds.size || styledEdges.length) {
     const byId = new Map(nodes.map((n) => [n.id, n]));
-    for (const e of edges) {
-      if (movedIds.has(e.edge.from) || movedIds.has(e.edge.to)) {
-        Object.assign(e, routeDirect(byId.get(e.edge.from), byId.get(e.edge.to)));
+    if (movedIds.size) {
+      resolvePinnedOverlaps(nodes, movedIds);
+      for (const e of edges) {
+        if (movedIds.has(e.edge.from) || movedIds.has(e.edge.to)) {
+          Object.assign(e, routeDirect(byId.get(e.edge.from), byId.get(e.edge.to)));
+        }
       }
+    }
+    // user-chosen routes win over everything, pins included; a style with no
+    // via yet seeds its via at the direct-route midpoint
+    for (const e of styledEdges) {
+      const a = byId.get(e.edge.from), b = byId.get(e.edge.to);
+      if (!a || !b) continue;
+      const style = e.edge.route ?? 'curved';
+      const via = e.edge.via ?? routeDirect(a, b).labelPos;
+      Object.assign(e, routeStyled(a, b, via, style));
     }
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const n of nodes) {
@@ -318,9 +371,22 @@ export function miniTransform(layoutNode) {
   };
 }
 
+// One continuous cable through a via point: a single quadratic whose
+// control point is chosen so the curve passes exactly through the middle
+// point (at t = 0.5). Returns the path d and the tangent angle at the end,
+// which the arrowhead needs because the last segment is curved.
+export function smoothEdgePath(points) {
+  if (!points || points.length !== 3) return { d: edgePath(points || []), endAngle: null };
+  const [p1, via, p2] = points;
+  const c = { x: 2 * via.x - (p1.x + p2.x) / 2, y: 2 * via.y - (p1.y + p2.y) / 2 };
+  return {
+    d: `M${p1.x},${p1.y} Q${c.x},${c.y} ${p2.x},${p2.y}`,
+    endAngle: (Math.atan2(p2.y - c.y, p2.x - c.x) * 180) / Math.PI,
+  };
+}
+
 // Smooth path through dagre points: straight lines with rounded corners.
-export function edgePath(points, radius = 10) {
-  if (points.length < 2) return '';
+export function edgePath(points, radius = 10) {  if (points.length < 2) return '';
   let d = `M${points[0].x},${points[0].y}`;
   for (let i = 1; i < points.length - 1; i++) {
     const p0 = points[i - 1], p1 = points[i], p2 = points[i + 1];
