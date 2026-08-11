@@ -1,23 +1,31 @@
-// LLM provider chain for the transcript importer. Secrets never leave the
-// server: the browser only ever calls our own /api/import endpoint.
+// LLM provider chain for the transcript importer and the map assistant.
+// Secrets never leave the server: the browser only ever calls our own API.
 //
-// Provider resolution (first match wins):
-//   1. OPSMAP_MOCK_LLM=<file>   — canned response, for tests/offline demos
-//   2. OPSMAP_LLM_CMD=<cmd>     — any local model: shell command, prompt on
-//                                 stdin, completion on stdout (ollama, llama.cpp…)
-//   3. ANTHROPIC_API_KEY        — direct Claude API call (Node's global fetch)
-//   4. OPENAI_API_KEY           — direct OpenAI API call (Node's global fetch)
-//   5. `claude` CLI on PATH     — zero-config local provider; uses the user's
-//                                 existing Claude Code login, spawned server-side
-//   6. none                     — importer disabled; UI shows a setup hint
+// Provider resolution:
+//   0. OPSMAP_LLM_PROVIDER     — an explicit choice from AI settings wins
+//   1. OPSMAP_MOCK_LLM=<file>  — canned response, for tests/offline demos
+//   2. OPSMAP_LLM_CMD=<cmd>    — any local model over stdin/stdout
+//   3. ANTHROPIC_API_KEY       — direct Claude API call
+//   4. OPENROUTER_API_KEY      — OpenRouter (OpenAI-compatible)
+//   5. OPENAI_API_KEY          — direct OpenAI API call
+//   6. `claude` CLI on PATH    — zero-config local provider
+//   7. none                    — AI features show a setup hint
+// Models resolve at call time so AI settings can change them without a
+// restart: OPSMAP_MODEL (chat), OPSMAP_VOICE_MODEL (transcription).
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 
-const API_MODEL = process.env.OPSMAP_MODEL || 'claude-opus-4-8';
-const CLI_MODEL = process.env.OPSMAP_MODEL || 'opus';
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 const API_TIMEOUT_MS = 240_000;
 const CLI_TIMEOUT_MS = 300_000;
+
+const chatModel = (kind) => {
+  if (process.env.OPSMAP_MODEL) return process.env.OPSMAP_MODEL;
+  if (kind === 'api') return 'claude-opus-4-8';
+  if (kind === 'openrouter') return 'openai/gpt-4o';
+  if (kind === 'openai') return 'gpt-4o';
+  return 'opus'; // cli
+};
+const voiceModel = () => process.env.OPSMAP_VOICE_MODEL || 'whisper-1';
 
 let cliAvailable = null; // lazily probed, cached
 async function hasClaudeCli() {
@@ -38,9 +46,17 @@ async function hasClaudeCli() {
 export async function resolveProvider() {
   if (process.env.OPSMAP_MOCK_LLM) return { kind: 'mock', model: 'mock' };
   if (process.env.OPSMAP_LLM_CMD) return { kind: 'cmd', model: process.env.OPSMAP_LLM_CMD.split(/\s+/)[0] };
-  if (process.env.ANTHROPIC_API_KEY) return { kind: 'api', model: API_MODEL };
-  if (process.env.OPENAI_API_KEY) return { kind: 'openai', model: OPENAI_MODEL };
-  if (await hasClaudeCli()) return { kind: 'cli', model: CLI_MODEL };
+  // an explicit choice from AI settings wins over the auto chain
+  const explicit = process.env.OPSMAP_LLM_PROVIDER;
+  if (explicit === 'anthropic' && process.env.ANTHROPIC_API_KEY) return { kind: 'api', model: chatModel('api') };
+  if (explicit === 'openrouter' && process.env.OPENROUTER_API_KEY) return { kind: 'openrouter', model: chatModel('openrouter') };
+  if (explicit === 'openai' && process.env.OPENAI_API_KEY) return { kind: 'openai', model: chatModel('openai') };
+  if (explicit === 'cli' && await hasClaudeCli()) return { kind: 'cli', model: chatModel('cli') };
+  if (explicit) return { kind: 'misconfigured', model: explicit };
+  if (process.env.ANTHROPIC_API_KEY) return { kind: 'api', model: chatModel('api') };
+  if (process.env.OPENROUTER_API_KEY) return { kind: 'openrouter', model: chatModel('openrouter') };
+  if (process.env.OPENAI_API_KEY) return { kind: 'openai', model: chatModel('openai') };
+  if (await hasClaudeCli()) return { kind: 'cli', model: chatModel('cli') };
   return null;
 }
 
@@ -48,13 +64,17 @@ export async function resolveProvider() {
 export async function callLLM({ system, prompt }) {
   const provider = await resolveProvider();
   if (!provider) {
-    throw new Error('No LLM provider configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY, log in the claude CLI, or set OPSMAP_LLM_CMD.');
+    throw new Error('No LLM provider configured. Open AI settings in the app, or add a key to .env.');
+  }
+  if (provider.kind === 'misconfigured') {
+    throw new Error(`AI settings picked "${provider.model}" but its key isn't set — check AI settings.`);
   }
   if (provider.kind === 'mock') return callMock();
   if (provider.kind === 'cmd') return callCmd({ system, prompt });
-  if (provider.kind === 'openai') return callOpenAI({ system, prompt });
-  if (provider.kind === 'api') return callApi({ system, prompt });
-  return callCli({ system, prompt });
+  if (provider.kind === 'openrouter') return callOpenAICompat({ system, prompt, base: 'https://openrouter.ai/api/v1', key: process.env.OPENROUTER_API_KEY, name: 'OpenRouter', keyName: 'OPENROUTER_API_KEY', model: provider.model });
+  if (provider.kind === 'openai') return callOpenAICompat({ system, prompt, base: 'https://api.openai.com/v1', key: process.env.OPENAI_API_KEY, name: 'OpenAI', keyName: 'OPENAI_API_KEY', model: provider.model });
+  if (provider.kind === 'api') return callApi({ system, prompt, model: provider.model });
+  return callCli({ system, prompt, model: provider.model });
 }
 
 // Generic local-model escape hatch: run a shell command, write the prompt to
@@ -95,7 +115,7 @@ async function callMock() {
 
 // Direct Claude API via fetch — the project is zero-dependency by design, so
 // no SDK; the request shape follows the Messages API (see docs/IMPORTER.md).
-async function callApi({ system, prompt }) {
+async function callApi({ system, prompt, model }) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), API_TIMEOUT_MS);
   let res;
@@ -109,7 +129,7 @@ async function callApi({ system, prompt }) {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: API_MODEL,
+        model,
         max_tokens: 16000,
         thinking: { type: 'adaptive' },
         system,
@@ -142,21 +162,21 @@ async function callApi({ system, prompt }) {
   return text;
 }
 
-// Direct OpenAI API via fetch — same zero-dependency approach as callApi.
-async function callOpenAI({ system, prompt }) {
+// OpenAI-compatible chat API via fetch — serves both OpenAI and OpenRouter.
+async function callOpenAICompat({ system, prompt, base, key, name, keyName, model }) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), API_TIMEOUT_MS);
   let res;
   try {
-    res = await fetch('https://api.openai.com/v1/chat/completions', {
+    res = await fetch(`${base}/chat/completions`, {
       method: 'POST',
       signal: ctrl.signal,
       headers: {
-        authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        authorization: `Bearer ${key}`,
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: OPENAI_MODEL,
+        model,
         max_completion_tokens: 16000,
         messages: [
           { role: 'system', content: system },
@@ -167,16 +187,16 @@ async function callOpenAI({ system, prompt }) {
   } catch (e) {
     throw new Error(e.name === 'AbortError'
       ? 'The model took too long (>4 min) — try a shorter request.'
-      : `Could not reach the OpenAI API: ${e.message}`);
+      : `Could not reach the ${name} API: ${e.message}`);
   } finally {
     clearTimeout(timer);
   }
   if (!res.ok) {
     let detail = '';
     try { detail = (await res.json())?.error?.message ?? ''; } catch { /* opaque */ }
-    if (res.status === 401) throw new Error('The OPENAI_API_KEY was rejected (401). Check the key.');
-    if (res.status === 429) throw new Error('Rate limited by the OpenAI API — wait a minute and retry.');
-    throw new Error(`OpenAI API error ${res.status}${detail ? `: ${detail}` : ''}`);
+    if (res.status === 401) throw new Error(`The ${keyName} was rejected (401). Check the key in AI settings.`);
+    if (res.status === 429) throw new Error(`Rate limited by the ${name} API — wait a minute and retry.`);
+    throw new Error(`${name} API error ${res.status}${detail ? `: ${detail}` : ''}`);
   }
   const data = await res.json();
   const text = data.choices?.[0]?.message?.content ?? '';
@@ -187,13 +207,59 @@ async function callOpenAI({ system, prompt }) {
   return text;
 }
 
+// Speech-to-text via an OpenAI-compatible /audio/transcriptions endpoint.
+// Voice provider: OPSMAP_VOICE_PROVIDER (openai|openrouter), else whichever
+// key exists. Anthropic has no transcription API — the app falls back to the
+// browser's built-in recognizer in that case.
+export async function callTranscription({ audio, mime }) {
+  const explicit = process.env.OPSMAP_VOICE_PROVIDER;
+  let base, key, name;
+  if (explicit === 'openai' || (!explicit && process.env.OPENAI_API_KEY)) {
+    base = 'https://api.openai.com/v1'; key = process.env.OPENAI_API_KEY; name = 'OpenAI';
+  } else if (explicit === 'openrouter' || (!explicit && process.env.OPENROUTER_API_KEY)) {
+    base = 'https://openrouter.ai/api/v1'; key = process.env.OPENROUTER_API_KEY; name = 'OpenRouter';
+  } else if (explicit === 'browser') {
+    throw new Error('Voice is set to the browser recognizer — no API call needed.');
+  }
+  if (!base || !key) {
+    throw new Error('API voice needs an OpenAI or OpenRouter key — add one in AI settings, or switch voice to Browser.');
+  }
+  const form = new FormData();
+  form.append('file', new Blob([audio], { type: mime || 'audio/webm' }), 'audio.webm');
+  form.append('model', voiceModel());
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 120_000);
+  let res;
+  try {
+    res = await fetch(`${base}/audio/transcriptions`, {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: { authorization: `Bearer ${key}` },
+      body: form,
+    });
+  } catch (e) {
+    throw new Error(e.name === 'AbortError' ? 'Transcription took too long — try a shorter clip.' : `Could not reach the ${name} API: ${e.message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.json())?.error?.message ?? ''; } catch { /* opaque */ }
+    throw new Error(`${name} transcription error ${res.status}${detail ? `: ${detail}` : ''}`);
+  }
+  const data = await res.json();
+  const text = data?.text ?? '';
+  if (!text.trim()) throw new Error('The transcription came back empty — try again.');
+  return text;
+}
+
 // Local `claude` CLI in print mode. The prompt goes over stdin; the user's
 // existing Claude Code credentials stay entirely on this machine. Tools are
 // disabled (pure completion) and cwd is neutral so no project context leaks
 // into the extraction.
-async function callCli({ system, prompt }) {
+async function callCli({ system, prompt, model }) {
   return new Promise((resolve, reject) => {
-    const args = ['-p', '--output-format', 'text', '--model', CLI_MODEL, '--tools', ''];
+    const args = ['-p', '--output-format', 'text', '--model', model, '--tools', ''];
     if (system) args.push('--append-system-prompt', system);
     const child = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],

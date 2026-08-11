@@ -64,6 +64,24 @@ export const api = {
       body: JSON.stringify({ source: state.source, instruction, history, focus }),
     });
   },
+  async getSettings() {
+    if (state.standalone) return null;
+    return jfetch('/api/settings');
+  },
+  async saveSettings(patch) {
+    return jfetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+  },
+  async transcribe(base64, mime) {
+    return jfetch('/api/transcribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audio: base64, mime }),
+    });
+  },
   subscribe(onEvent) {
     if (state.standalone || typeof EventSource === 'undefined') return;
     const es = new EventSource('/api/events');

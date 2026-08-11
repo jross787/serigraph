@@ -2799,3 +2799,6 @@ body.presenting #chat-dock { display: none; }
 .chat-mic.recording { color: #fff; background: var(--danger); border-color: var(--danger); animation: mic-pulse 1.2s ease-in-out infinite; }
 @keyframes mic-pulse { 50% { opacity: .72; } }
 @media (prefers-reduced-motion: reduce) { .chat-mic.recording { animation: none; } }
+
+.chat-head-actions { display: flex; gap: 2px; flex: none; }
+.chat-mic.thinking { opacity: .55; cursor: wait; }

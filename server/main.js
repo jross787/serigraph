@@ -9,9 +9,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseMap, MAP_MODES } from '../shared/model.js';
 import { buildExport } from './export.js';
-import { callLLM, resolveProvider } from './llm.js';
+import { callLLM, resolveProvider, callTranscription } from './llm.js';
 import { importTranscript, ImportError } from './importer.js';
 import { chatEdit, ChatError } from './chat.js';
+import { readSettings, writeSettings } from './settings.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -265,6 +266,35 @@ async function handleApi(req, res, url) {
       const status = e instanceof ChatError ? e.status : 502;
       console.error('[serigraph] chat failed:', e.message);
       return json(res, status, { error: e.message });
+    }
+  }
+
+  // AI settings — masked on read; keys are stored server-side in .env
+  if (parts[1] === 'settings' && req.method === 'GET') {
+    return json(res, 200, await readSettings());
+  }
+  if (parts[1] === 'settings' && req.method === 'POST') {
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON body' }); }
+    try {
+      return json(res, 200, await writeSettings(body ?? {}));
+    } catch (e) {
+      return json(res, 400, { error: e.message });
+    }
+  }
+
+  // voice transcription — audio goes to the configured provider, never to the browser
+  if (parts[1] === 'transcribe' && req.method === 'POST') {
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON body' }); }
+    if (typeof body?.audio !== 'string' || !body.audio) return json(res, 400, { error: 'body must be { audio: base64, mime? }' });
+    if (body.audio.length > 20_000_000) return json(res, 413, { error: 'Keep the clip under about 2 minutes.' });
+    try {
+      const text = await callTranscription({ audio: Buffer.from(body.audio, 'base64'), mime: body.mime });
+      return json(res, 200, { text });
+    } catch (e) {
+      console.error('[serigraph] transcribe failed:', e.message);
+      return json(res, 502, { error: e.message });
     }
   }
 
