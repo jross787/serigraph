@@ -9,3 +9,4 @@ maps/vip*.yaml
 dist/
 .agents/
 .claude/skills/
+.env
