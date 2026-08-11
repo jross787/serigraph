@@ -8,3 +8,4 @@ maps/stress-*.yaml
 dist/
 .agents/
 .claude/skills/
+.env

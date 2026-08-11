@@ -14,6 +14,20 @@ import { importTranscript, ImportError } from './importer.js';
 import { chatEdit, ChatError } from './chat.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+
+// .env next to the repo root carries secrets like ANTHROPIC_API_KEY — this is
+// how the double-clicked Mac app picks them up, since it launches without a
+// shell. Real environment variables always win; the file only fills gaps.
+try {
+  const envFile = await fs.readFile(path.join(ROOT, '.env'), 'utf8');
+  for (const line of envFile.split('\n')) {
+    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+    if (!m) continue;
+    const value = m[2].replace(/^["']|["']$/g, '');
+    if (process.env[m[1]] === undefined) process.env[m[1]] = value;
+  }
+} catch { /* no .env — fine */ }
+
 const MAPS_DIR = path.join(ROOT, 'maps');
 const TEMPLATES_DIR = path.join(ROOT, 'templates');
 const DEFAULT_PORT = Number(process.env.PORT) || 4700;
@@ -222,7 +236,7 @@ async function handleApi(req, res, url) {
       ? { available: true, provider: provider.kind, model: provider.model }
       : {
         available: false,
-        hint: 'Set ANTHROPIC_API_KEY or OPENAI_API_KEY in the server\'s environment, log in the claude CLI (run `claude` once), or point OPSMAP_LLM_CMD at a local model — then restart Serigraph.',
+        hint: 'Add ANTHROPIC_API_KEY or OPENAI_API_KEY to a .env file in the Serigraph folder (see .env.example), or log in the claude CLI (run `claude` once) — then restart Serigraph.',
       });
   }
   if (parts[1] === 'import' && parts.length === 2 && req.method === 'POST') {
