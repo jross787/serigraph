@@ -208,6 +208,14 @@ export async function applySource(after, label = 'AI edit') {
   return true;
 }
 
+// Masked AI settings, cached on state for the chat dock's voice mode.
+export async function loadAiSettings(force = false) {
+  if (state.standalone) return null;
+  if (state.aiSettings && !force) return state.aiSettings;
+  state.aiSettings = await api.getSettings().catch(() => null);
+  return state.aiSettings;
+}
+
 // ── the edit pipeline ────────────────────────────────────────────────
 // commit(() => { ...mutate state.doc via edit.js... })
 export async function commit(mutator, { select = undefined } = {}) {

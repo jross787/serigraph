@@ -319,6 +319,8 @@ function wireToolbar() {
   on('btn-import-file', () => { productWorkspace.setWorkspaceView('map'); workbench.importMapFile(); });
   on('btn-export-file', workbench.downloadYaml);
   on('btn-ai', () => { productWorkspace.setWorkspaceView('map'); ui.toggleChat(); });
+  on('btn-ai-settings', workbench.aiSettingsDialog);
+  bus.on('ai-settings-request', workbench.aiSettingsDialog);
   on('btn-present', () => { productWorkspace.setWorkspaceView('map'); togglePresent(); });
   on('btn-theme', toggleTheme);
   on('btn-help', ui.helpDialog);

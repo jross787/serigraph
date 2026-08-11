@@ -1624,15 +1624,54 @@ function renderChat() {
     if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); sendChat(input.value); }
     if (ev.key === 'Escape') { ev.stopPropagation(); toggleChat(false); }
   });
-  // voice input, where the browser supports it — speech lands in the box,
-  // nothing sends until the user presses Send
+  // voice input: browser recognizer by default, or API transcription when AI
+  // settings say so — either way, speech lands in the box and nothing sends
+  // until the user presses Send
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const apiVoice = state.aiSettings?.voiceProvider === 'api';
   let micBtn = null;
-  if (SpeechRecognition && !state.standalone) {
+  if ((SpeechRecognition || apiVoice) && !state.standalone) {
     let rec = null;
+    let mediaRec = null;
     micBtn = h('button', {
       class: 'chat-mic', title: 'Dictate your request', 'aria-label': 'Dictate your request',
-      onClick: () => {
+      onClick: async () => {
+        if (apiVoice) {
+          if (mediaRec) { mediaRec.stop(); return; }
+          let stream;
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          } catch (e) {
+            toast(`Microphone unavailable: ${e.message}`, true);
+            return;
+          }
+          const chunks = [];
+          mediaRec = new MediaRecorder(stream);
+          const mime = mediaRec.mimeType || 'audio/webm';
+          mediaRec.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+          mediaRec.onstop = async () => {
+            stream.getTracks().forEach((t) => t.stop());
+            mediaRec = null;
+            micBtn.classList.remove('recording');
+            try {
+              const base64 = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(String(reader.result).split(',')[1] ?? '');
+                reader.readAsDataURL(new Blob(chunks, { type: mime }));
+              });
+              micBtn.classList.add('thinking');
+              const { text } = await api.transcribe(base64, mime);
+              input.value = (input.value ? input.value.replace(/\s+$/, '') + ' ' : '') + text;
+            } catch (e) {
+              toast(e.message, true);
+            } finally {
+              micBtn.classList.remove('thinking');
+            }
+          };
+          mediaRec.start();
+          micBtn.classList.add('recording');
+          return;
+        }
         if (rec) { rec.stop(); return; }
         rec = new SpeechRecognition();
         rec.lang = 'en-US';
@@ -1654,7 +1693,9 @@ function renderChat() {
   dock.replaceChildren(
     h('div', { class: 'chat-head' },
       h('div', {}, h('span', { class: 'chat-kicker' }, 'Map assistant'), h('strong', {}, state.model?.name ?? '')),
-      h('button', { class: 'panel-close', onClick: () => toggleChat(false) }, '✕')),
+      h('div', { class: 'chat-head-actions' },
+        state.standalone ? null : h('button', { class: 'panel-close', title: 'AI settings', onClick: () => bus.emit('ai-settings-request') }, '⚙'),
+        h('button', { class: 'panel-close', onClick: () => toggleChat(false) }, '✕'))),
     focusNode ? h('div', { class: 'chat-focus' },
       h('span', {}, `About: ${focusNode.label}`),
       h('button', { title: 'Clear the focus — talk about the whole map', onClick: () => { chatFocusId = null; renderChat(); } }, '×')) : null,
@@ -1695,7 +1736,7 @@ export function toggleChat(force) {
   if (!dock) return;
   const show = force ?? dock.hidden;
   dock.hidden = !show;
-  if (show) renderChat();
+  if (show) { ctrl.loadAiSettings().then(() => { if (!dock.hidden) renderChat(); }); renderChat(); }
   else document.getElementById('canvas')?.focus();
 }
 

@@ -459,8 +459,79 @@ export function importMapFile() {
   input.click();
 }
 
-export function openHistory() {
-  const revisions = ctrl.listRevisions();
+// AI settings: provider, keys, and models. Keys are written to the server's
+// .env (gitignored) and never come back — the dialog shows only saved/not.
+const MODEL_SUGGESTIONS = {
+  anthropic: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
+  openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1'],
+  openrouter: ['openai/gpt-4o', 'anthropic/claude-opus-4', 'google/gemini-2.5-pro'],
+  cli: ['opus', 'sonnet'],
+};
+const VOICE_MODEL_SUGGESTIONS = ['whisper-1', 'gpt-4o-transcribe', 'gpt-4o-mini-transcribe'];
+
+export async function aiSettingsDialog() {
+  if (state.standalone) { ui.toast('AI settings need the local Serigraph server.', true); return; }
+  const s = await ctrl.loadAiSettings(true);
+  if (!s) { ui.toast('Could not reach the Serigraph server.', true); return; }
+
+  const provider = h('select', { class: 'f-select' },
+    ...[['auto', 'Auto — first key found'], ['anthropic', 'Anthropic (Claude)'], ['openai', 'OpenAI'], ['openrouter', 'OpenRouter'], ['cli', 'Claude CLI — no key']].map(([v, label]) => h('option', { value: v }, label)));
+  provider.value = s.provider;
+
+  const keyField = (field, label, isSet) => {
+    const input = h('input', { class: 'f-input', type: 'password', autocomplete: 'off', placeholder: isSet ? 'Saved — type a new key to replace it' : 'Not set — paste the key here' });
+    return { field, input, row: h('div', { class: 'f-field' }, h('label', {}, label), input) };
+  };
+  const keys = [
+    keyField('openaiKey', 'OpenAI API key', s.openaiKeySet),
+    keyField('openrouterKey', 'OpenRouter API key', s.openrouterKeySet),
+    keyField('anthropicKey', 'Anthropic API key', s.anthropicKeySet),
+  ];
+
+  const modelList = h('datalist', { id: 'ai-model-list' });
+  const model = h('input', { class: 'f-input', list: 'ai-model-list', placeholder: 'Provider default', value: s.model || '' });
+  const syncSuggestions = () => {
+    modelList.replaceChildren(...(MODEL_SUGGESTIONS[provider.value] ?? []).map((m) => h('option', { value: m })));
+  };
+  provider.addEventListener('change', syncSuggestions);
+  syncSuggestions();
+
+  const voiceProvider = h('select', { class: 'f-select' },
+    h('option', { value: 'browser' }, 'Browser built-in — free, on this machine'),
+    h('option', { value: 'api' }, 'API transcription — uses your key'));
+  voiceProvider.value = s.voiceProvider;
+  const voiceList = h('datalist', { id: 'ai-voice-model-list' }, VOICE_MODEL_SUGGESTIONS.map((m) => h('option', { value: m })));
+  const voiceModel = h('input', { class: 'f-input', list: 'ai-voice-model-list', placeholder: 'whisper-1', value: s.voiceModel || '' });
+  const voiceModelRow = h('div', { class: 'f-field' }, h('label', {}, 'Voice model'), voiceModel, voiceList);
+  const syncVoice = () => { voiceModelRow.style.display = voiceProvider.value === 'api' ? '' : 'none'; };
+  voiceProvider.addEventListener('change', syncVoice);
+  syncVoice();
+
+  const close = makeDialog('AI settings', h('div', { class: 'share-stack' },
+    h('div', { class: 'f-field' }, h('label', {}, 'Provider'), provider),
+    ...keys.map((k) => k.row),
+    h('div', { class: 'f-field' }, h('label', {}, 'Chat model'), model, modelList),
+    h('div', { class: 'f-field' }, h('label', {}, 'Voice input'), voiceProvider),
+    voiceModelRow,
+    h('p', { class: 'hint' }, 'Keys are stored in the .env file on this machine and never sent back to the browser.'),
+    h('div', { class: 'dialog-actions' },
+      h('button', {
+        class: 'd-btn primary',
+        onClick: async () => {
+          const patch = { provider: provider.value, model: model.value, voiceProvider: voiceProvider.value, voiceModel: voiceModel.value };
+          for (const k of keys) if (k.input.value.trim()) patch[k.field] = k.input.value.trim();
+          try {
+            state.aiSettings = await api.saveSettings(patch);
+            close();
+            ui.toast('AI settings saved');
+          } catch (e) {
+            ui.toast(e.message, true);
+          }
+        },
+      }, 'Save'))));
+}
+
+export function openHistory() {  const revisions = ctrl.listRevisions();
   const body = h('div', { class: 'history-list' }, revisions.length
     ? revisions.slice(0, 12).map((revision, index) => h('div', { class: 'history-row' },
       h('div', {}, h('strong', {}, revision.label || 'Edited map'), h('small', {}, formatReviewDate(revision.savedAt))),
