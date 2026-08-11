@@ -22,6 +22,15 @@ Use the map switcher, or open these seeded examples directly:
 >
 > The server listens on **localhost only** (client data stays on your machine — see [docs/DATA-HANDLING.md](docs/DATA-HANDLING.md)). To share on your network deliberately: `node server/main.js --lan`.
 
+## Process maps and Freeform maps
+
+Choose a mode when you create a map:
+
+- **Process** maps work from step to step. They include decisions, owner lanes, path tracing, automation, cost, Brief, Roadmap, and Audit.
+- **Freeform** maps systems, databases, APIs, people, documents, and other items. One shared element can appear in several groups without copying its facts.
+
+Files without a `mode` field use Process mode. A populated map cannot switch modes because Process and Freeform files store their contents differently. Use the **Systems of Record** template to start a Freeform map.
+
 ## One source, four useful views
 
 The file is the truth. A graph lives in `maps/<name>.yaml`; visual edits write back to that file, file edits live-reload into the canvas, and YAML comments survive supported edits.
@@ -104,30 +113,36 @@ The complete schema, enums, validation rules, and examples are in [docs/FORMAT.m
 | Do this | Get this |
 |---|---|
 | **Double-click** a node with a badge (or press ⏎) | Zoom into its sub-map — any depth, breadcrumbs keep you oriented |
+| **Pan toward a connected group** | Keep exploring on the same canvas. Click its frame or any item inside it to make that group active. The minimap spans the full connected view |
 | **Esc** / ⌫ | Zoom back out one level |
 | **⌘K** | Search every node at every level, jump straight to it |
-| **Click** a node | Inspect what happens here, product facts, links, related nodes, and its sub-map |
-| **`#id ⧉`** in the inspector | Copy a deep link — paste it in a fresh tab and land on that exact node |
-| **✨ Import** | Paste a meeting/discovery transcript → get a reviewable map: steps, decisions, roles, systems, artifacts — with inferred items flagged before anything is saved. Needs a model: `ANTHROPIC_API_KEY`, a logged-in `claude` CLI, or `OPSMAP_LLM_CMD` pointing at any local model |
-| **$ Economics** | Give steps a monthly volume, human minutes × rate, and an agent cost/run — the map rolls up human vs. agent cost, savings, payback, and ROI live. Unknowns show "—" and never sneak into totals |
-| **Add step**, **Edit**, **Connect** | Build the map visually; every change is written back to the YAML |
-| **Drag from the palette** (or double-click empty canvas) | Drop a new typed node exactly where you release — onto a container to nest it inside |
-| **Drag a node** | Pin it exactly there — one `position: { x, y }` line in the YAML; click its pin badge to release back to auto-layout. Drag the background to pan |
-| **Drag a node onto a container** | Move it into that sub-map — nesting rewritten in the file, crossing edges re-homed, never invalid. A drop bar moves it back out |
-| **Drag from a node's ○ port** | Draw an edge to any sibling — release on it and the edge is in the file |
-| **Templates** | Drop in a reusable process or product block (lead intake, incident response, invoice-to-cash…) and customize it |
-| **Shift+P** | Enter presentation mode and walk through the flow step by step |
-| **Share & export** | Copy a deep link or download a read-only standalone HTML application that works offline |
-| **?** | Open the complete shortcut reference |
+| **Click** a Process node | Inspect the step, product facts, links, related nodes, and its sub-map |
+| **Click** a Freeform card | Inspect its shared definition and local group note. Every placement of that element is highlighted |
+| **`#id ⧉`** in the inspector | Copy a deep link and open that exact node |
+| **✨ Import** | Paste a meeting or discovery transcript and get a reviewable Process map. Inferred items stay marked until reviewed. This needs `ANTHROPIC_API_KEY`, a logged-in `claude` CLI, or `OPSMAP_LLM_CMD` |
+| **$ Economics** | Add monthly volume, human time and rate, and agent cost to Process steps. Unknown values stay out of totals |
+| **Add step** | Add a new Process node |
+| **Add item** | In a Freeform group, choose an existing shared element or create and place a new one |
+| **Add group** | Add a top-level Freeform group |
+| **Drag from the palette** | Drop a new typed item at that position |
+| **Drag a card** | Pin it at that position. In Freeform, dragging into another group moves only that placement |
+| **Drag from a card's port** | Draw an edge to another card in the same scope |
+| **Remove from group** | Remove one Freeform placement while keeping the shared element and its other placements |
+| **Delete shared element** | Remove the definition, all placements, and all connections after confirmation |
+| **Templates** | Insert a reusable block that matches the current map mode |
+| **Shift+P** | Enter presentation mode and walk through a Process flow |
+| **Share & export** | Copy a deep link or download a read-only HTML application that works offline |
+| **?** | Open the shortcut reference |
 
 ## For software agents
 
-- Read and write `maps/*.yaml` directly; the running app detects file changes.
+- Read and write `maps/*.yaml` directly. The running app detects file changes.
 - Use [docs/FORMAT.md](docs/FORMAT.md) as the complete public contract.
-- Validate without opening the UI: `node tools/validate.mjs maps/your-map.yaml`.
+- Validate without opening the interface: `node tools/validate.mjs maps/your-map.yaml`.
 - Deep-link a node: `http://localhost:4700/#/map/<file>/node/<node-id>`.
-- Keep stable IDs stable. Edges connect siblings; typed relations can connect nodes across nested scopes.
-- Do not infer missing evidence. The Audit view evaluates structural readiness, not whether a claim is factually true.
+- In Freeform, define each identity once in `elements` and place it with `use` inside groups.
+- Keep definition IDs stable. Process edges connect sibling nodes. Freeform group edges connect placements. Typed relations record cross-scope Process meaning or shared-element hierarchy.
+- Do not infer missing evidence. Audit checks structure, not whether a claim is true.
 
 ## Project layout
 

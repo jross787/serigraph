@@ -405,3 +405,110 @@ edges:
   assert.ok(model.byId.get('parse-2'));
   assert.ok(model.root.edges.some((edge) => edge.from === 'parse-2' && edge.to === 'intake-2' && edge.label === 'enables'));
 });
+
+test('freeform edits keep one shared definition and separate placement notes', () => {
+  load(`
+name: Shared map
+mode: freeform
+elements:
+  - id: data-team
+    type: role
+    label: Data Team
+  - id: looker
+    type: system
+    label: Looker
+nodes:
+  - id: analytics
+    type: item
+    label: Analytics
+    children:
+      nodes:
+        - use: looker
+      edges: []
+  - id: controls
+    type: item
+    label: Controls
+    children:
+      nodes:
+        - use: looker
+      edges: []
+edges: []
+`);
+
+  edit.addElement({
+    id: 'looker-api',
+    type: 'api',
+    label: 'Looker API',
+    owners: [{ to: 'data-team', role: 'technical' }],
+    relations: [{ to: 'looker', type: 'part-of' }],
+  });
+  edit.addPlacement('analytics', 'looker-api', {
+    note: 'Interactive dashboards',
+    position: { x: 220, y: 140 },
+  });
+  edit.addPlacement('controls', 'looker-api', { note: 'Approved control views' });
+  edit.addEdge('analytics', { from: 'looker', to: 'looker-api', label: 'exposes' });
+
+  let { out, model } = reserialize();
+  assert.equal(model.elementById.get('looker-api').label, 'Looker API');
+  assert.deepEqual(model.elementById.get('looker-api').owners, [{ to: 'data-team', role: 'technical' }]);
+  assert.deepEqual(model.elementById.get('looker-api').relations, [{ to: 'looker', type: 'part-of' }]);
+  assert.equal(model.placementsByElement.get('looker-api').length, 2);
+  assert.equal(model.placementByKey.get('analytics\u0000looker-api').note, 'Interactive dashboards');
+  assert.deepEqual(model.placementByKey.get('analytics\u0000looker-api').position, { x: 220, y: 140 });
+  assert.equal(model.placementByKey.get('controls\u0000looker-api').note, 'Approved control views');
+
+  load(out);
+  const removal = edit.removePlacement('analytics', 'looker-api');
+  assert.equal(removal.dropped, 1);
+  ({ out, model } = reserialize());
+  assert.ok(model.elementById.has('looker-api'), 'shared definition remains');
+  assert.equal(model.placementsByElement.get('looker-api').length, 1);
+  assert.equal(model.byId.get('analytics').children.edges.length, 0);
+  assert.ok(model.byId.get('analytics').children, 'empty Freeform group stays a group');
+
+  load(out);
+  edit.deleteElement('looker-api');
+  ({ model } = reserialize());
+  assert.ok(!model.elementById.has('looker-api'));
+  assert.equal(model.placementsByElement.has('looker-api'), false);
+});
+
+test('freeform template insertion adds definitions and placement groups together', () => {
+  load(`
+name: Target
+mode: freeform
+elements:
+  - id: shared
+    type: system
+    label: Existing
+nodes: []
+edges: []
+`);
+  const template = parseMap(`
+name: Reusable systems
+mode: freeform
+elements:
+  - id: shared
+    type: system
+    label: Template system
+nodes:
+  - id: landscape
+    type: item
+    label: Landscape
+    children:
+      nodes:
+        - use: shared
+          note: Template placement
+      edges: []
+edges: []
+`).model;
+
+  const inserted = edit.insertTemplate(null, template);
+  const { out, model } = reserialize();
+  assert.deepEqual(inserted, ['landscape']);
+  assert.equal(model.elementById.get('shared-2').label, 'Template system');
+  assert.equal(model.placementByKey.get('landscape\u0000shared-2').note, 'Template placement');
+  assert.match(out, /elements:\n\s+- id: shared/);
+  assert.match(out, /nodes:\n\s+- id: landscape/);
+});

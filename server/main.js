@@ -7,10 +7,11 @@ import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseMap } from '../shared/model.js';
+import { parseMap, MAP_MODES } from '../shared/model.js';
 import { buildExport } from './export.js';
 import { callLLM, resolveProvider } from './llm.js';
 import { importTranscript, ImportError } from './importer.js';
+import { chatEdit, ChatError } from './chat.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const MAPS_DIR = path.join(ROOT, 'maps');
@@ -78,7 +79,7 @@ async function mapSummaries(dir) {
       const source = await fs.readFile(path.join(dir, file), 'utf8');
       const { model, errors } = parseMap(source);
       if (model) {
-        out.push({ id, file, name: model.name, description: model.description, nodeCount: model.nodeCount, kind: model.document.kind });
+        out.push({ id, file, name: model.name, description: model.description, nodeCount: model.nodeCount, kind: model.document.kind, mode: model.mode });
       } else {
         out.push({ id, file, name: id, description: '', nodeCount: 0, invalid: true, errorCount: errors.length });
       }
@@ -120,11 +121,18 @@ async function primeHashes() {
 
 function watchDir(dir, onChange) {
   if (!existsSync(dir)) return;
+  let watcher;
   try {
-    watch(dir, (eventType, filename) => {
+    watcher = watch(dir, (eventType, filename) => {
       if (filename && /\.ya?ml$/.test(filename)) onChange(filename);
     });
-  } catch { /* fs.watch unsupported — SSE degrades gracefully */ }
+  } catch { return; } // fs.watch unsupported — SSE degrades gracefully
+  // watcher errors arrive asynchronously (e.g. EMFILE under fd pressure) and
+  // must never take the server down — live reload just stops
+  watcher.on('error', (e) => {
+    console.warn(`[serigraph] file watcher for ${path.basename(dir)} stopped (${e.code ?? e.message}); live reload off, server unaffected`);
+    try { watcher.close(); } catch { /* already closed */ }
+  });
 }
 
 function scheduleMapChange(filename) {
@@ -161,10 +169,15 @@ async function handleApi(req, res, url) {
     if (req.method === 'POST') {
       const body = JSON.parse(await readBody(req) || '{}');
       const name = String(body.name || '').trim();
+      const mode = body.mode == null ? 'process' : String(body.mode);
       if (!name) return json(res, 400, { error: 'name is required' });
+      if (!MAP_MODES.includes(mode)) return json(res, 400, { error: `mode must be one of: ${MAP_MODES.join(', ')}` });
       const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'untitled';
       if (await findMapFile(slug)) return json(res, 409, { error: `a map named "${slug}" already exists` });
-      const source = `# ${name} — operations map\nname: ${JSON.stringify(name)}\ndescription: ""\n\nnodes: []\n\nedges: []\n`;
+      const modeLine = mode === 'freeform' ? 'mode: freeform\n' : '';
+      const elements = mode === 'freeform' ? '\nelements: []\n' : '';
+      const purpose = mode === 'freeform' ? 'map' : 'operations map';
+      const source = `# ${name} - ${purpose}\nname: ${JSON.stringify(name)}\n${modeLine}description: ""\n${elements}\nnodes: []\n\nedges: []\n`;
       await fs.mkdir(MAPS_DIR, { recursive: true });
       await fs.writeFile(path.join(MAPS_DIR, slug + '.yaml'), source, 'utf8');
       // fileHashes deliberately NOT updated here: the watcher must see the
@@ -209,7 +222,7 @@ async function handleApi(req, res, url) {
       ? { available: true, provider: provider.kind, model: provider.model }
       : {
         available: false,
-        hint: 'Set ANTHROPIC_API_KEY in the server\'s environment, log in the claude CLI (run `claude` once), or point OPSMAP_LLM_CMD at a local model — then restart Serigraph.',
+        hint: 'Set ANTHROPIC_API_KEY or OPENAI_API_KEY in the server\'s environment, log in the claude CLI (run `claude` once), or point OPSMAP_LLM_CMD at a local model — then restart Serigraph.',
       });
   }
   if (parts[1] === 'import' && parts.length === 2 && req.method === 'POST') {
@@ -226,6 +239,21 @@ async function handleApi(req, res, url) {
     }
   }
 
+  // map assistant — same server-side LLM discipline as the importer: the
+  // proposal is validated here, and the browser reviews before applying
+  if (parts[1] === 'chat' && req.method === 'POST') {
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON body' }); }
+    try {
+      const result = await chatEdit(body, { llm: callLLM });
+      return json(res, 200, result);
+    } catch (e) {
+      const status = e instanceof ChatError ? e.status : 502;
+      console.error('[serigraph] chat failed:', e.message);
+      return json(res, status, { error: e.message });
+    }
+  }
+
   if (parts[1] === 'templates' && req.method === 'GET') {
     const out = [];
     for (const file of await listDir(TEMPLATES_DIR)) {
@@ -233,7 +261,7 @@ async function handleApi(req, res, url) {
       try {
         const source = await fs.readFile(path.join(TEMPLATES_DIR, file), 'utf8');
         const { model } = parseMap(source);
-        if (model) out.push({ id, name: model.name, description: model.description, nodeCount: model.nodeCount, source });
+        if (model) out.push({ id, name: model.name, description: model.description, nodeCount: model.nodeCount, mode: model.mode, source });
       } catch { /* skip unreadable */ }
     }
     return json(res, 200, out);

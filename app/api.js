@@ -35,11 +35,11 @@ export const api = {
       body: JSON.stringify({ source }),
     });
   },
-  async createMap(name) {
+  async createMap(name, mode = 'process') {
     return jfetch('/api/maps', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, mode }),
     });
   },
   async listTemplates() {
@@ -55,6 +55,13 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ transcript }),
+    });
+  },
+  async chat(instruction, history) {
+    return jfetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: state.source, instruction, history }),
     });
   },
   subscribe(onEvent) {
