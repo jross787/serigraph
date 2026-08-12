@@ -8,8 +8,9 @@
 //   3. ANTHROPIC_API_KEY       — direct Claude API call
 //   4. OPENROUTER_API_KEY      — OpenRouter (OpenAI-compatible)
 //   5. OPENAI_API_KEY          — direct OpenAI API call
-//   6. `claude` CLI on PATH    — zero-config local provider
-//   7. none                    — AI features show a setup hint
+//   6. VENICE_API_KEY          — Venice.ai (OpenAI-compatible)
+//   7. `claude` CLI on PATH    — zero-config local provider
+//   8. none                    — AI features show a setup hint
 // Models resolve at call time so AI settings can change them without a
 // restart: OPSMAP_MODEL (chat), OPSMAP_VOICE_MODEL (transcription).
 import { spawn } from 'node:child_process';
@@ -23,6 +24,7 @@ const chatModel = (kind) => {
   if (kind === 'api') return 'claude-opus-4-8';
   if (kind === 'openrouter') return 'openai/gpt-4o';
   if (kind === 'openai') return 'gpt-4o';
+  if (kind === 'venice') return 'llama-3.3-70b';
   return 'opus'; // cli
 };
 const voiceModel = () => process.env.OPSMAP_VOICE_MODEL || 'whisper-1';
@@ -51,11 +53,13 @@ export async function resolveProvider() {
   if (explicit === 'anthropic' && process.env.ANTHROPIC_API_KEY) return { kind: 'api', model: chatModel('api') };
   if (explicit === 'openrouter' && process.env.OPENROUTER_API_KEY) return { kind: 'openrouter', model: chatModel('openrouter') };
   if (explicit === 'openai' && process.env.OPENAI_API_KEY) return { kind: 'openai', model: chatModel('openai') };
+  if (explicit === 'venice' && process.env.VENICE_API_KEY) return { kind: 'venice', model: chatModel('venice') };
   if (explicit === 'cli' && await hasClaudeCli()) return { kind: 'cli', model: chatModel('cli') };
   if (explicit) return { kind: 'misconfigured', model: explicit };
   if (process.env.ANTHROPIC_API_KEY) return { kind: 'api', model: chatModel('api') };
   if (process.env.OPENROUTER_API_KEY) return { kind: 'openrouter', model: chatModel('openrouter') };
   if (process.env.OPENAI_API_KEY) return { kind: 'openai', model: chatModel('openai') };
+  if (process.env.VENICE_API_KEY) return { kind: 'venice', model: chatModel('venice') };
   if (await hasClaudeCli()) return { kind: 'cli', model: chatModel('cli') };
   return null;
 }
@@ -73,6 +77,7 @@ export async function callLLM({ system, prompt }) {
   if (provider.kind === 'cmd') return callCmd({ system, prompt });
   if (provider.kind === 'openrouter') return callOpenAICompat({ system, prompt, base: 'https://openrouter.ai/api/v1', key: process.env.OPENROUTER_API_KEY, name: 'OpenRouter', keyName: 'OPENROUTER_API_KEY', model: provider.model });
   if (provider.kind === 'openai') return callOpenAICompat({ system, prompt, base: 'https://api.openai.com/v1', key: process.env.OPENAI_API_KEY, name: 'OpenAI', keyName: 'OPENAI_API_KEY', model: provider.model });
+  if (provider.kind === 'venice') return callOpenAICompat({ system, prompt, base: 'https://api.venice.ai/api/v1', key: process.env.VENICE_API_KEY, name: 'Venice', keyName: 'VENICE_API_KEY', model: provider.model });
   if (provider.kind === 'api') return callApi({ system, prompt, model: provider.model });
   return callCli({ system, prompt, model: provider.model });
 }

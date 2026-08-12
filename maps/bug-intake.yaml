@@ -11,6 +11,7 @@ nodes:
     type: role
     label: Reporter
     description: Anyone on the team who spots a bug.
+    position: { x: -20, y: 135 }
 
   - id: joe
     type: role
@@ -26,24 +27,27 @@ nodes:
   - id: intake-clickup
     type: process
     label: Report in ClickUp
-    automation: manual
-    owner: Reporter
     description: Someone opens a ClickUp ticket by hand. ClickUp status — To do.
+    owner: Reporter
+    automation: manual
+    position: { x: 349, y: -46 }
 
   - id: intake-whatsapp
     type: process
     label: Report via WhatsApp
-    automation: manual
-    owner: Reporter
-    systems: [ WhatsApp ]
     description: Someone messages Joe about a bug. Captured into ClickUp — status To do.
+    owner: Reporter
+    automation: manual
+    systems: [ WhatsApp ]
+    position: { x: 326, y: 121 }
 
   - id: intake-phone
     type: process
     label: Report by phone
-    automation: manual
-    owner: Reporter
     description: Someone describes the bug on a call. Captured into ClickUp — status To do.
+    owner: Reporter
+    automation: manual
+    position: { x: 344, y: 282 }
 
   - id: capture
     type: process
@@ -185,6 +189,10 @@ nodes:
     automation: manual
     owner: Joe
     description: Merge to main and deploy. Ticket closes. ClickUp status — Closed.
+  - id: new-process
+    type: process
+    label: New Process
+    position: { x: 705, y: -20 }
 
 edges:
   - from: reporter
@@ -218,10 +226,6 @@ edges:
     to: triage
   - from: triage
     to: reproduced
-  - from: reproduced
-    to: capture
-    label: no — alert a human
-    via: { x: 1204, y: 190 }
   - from: reproduced
     to: explore
     label: yes
@@ -265,8 +269,9 @@ edges:
   - from: opener-verify
     to: expected
   - from: expected
-    to: capture
-    label: no — reopens the ticket
-  - from: expected
     to: ship
     label: yes
+  - from: reproduced
+    to: triage
+    label: no
+    via: { x: 2207, y: 197 }

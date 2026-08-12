@@ -80,7 +80,15 @@ test('provider resolution honors the explicit choice and reports misconfiguratio
   process.env.OPSMAP_LLM_PROVIDER = 'openai';
   assert.equal((await llm.resolveProvider()).kind, 'openai', 'explicit choice wins');
 
+  process.env.OPSMAP_LLM_PROVIDER = 'venice';
+  process.env.VENICE_API_KEY = 'z';
+  delete process.env.OPSMAP_MODEL; // earlier tests pin a model, which correctly wins over defaults
+  const v = await llm.resolveProvider();
+  assert.equal(v.kind, 'venice');
+  assert.equal(v.model, 'llama-3.3-70b', 'venice default model');
+
   process.env.OPSMAP_LLM_PROVIDER = 'anthropic';
   const p = await llm.resolveProvider();
   assert.equal(p.kind, 'misconfigured', 'explicit choice without a key is reported, not silent');
+  delete process.env.VENICE_API_KEY;
 });
