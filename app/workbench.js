@@ -465,6 +465,7 @@ const MODEL_SUGGESTIONS = {
   anthropic: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
   openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1'],
   openrouter: ['openai/gpt-4o', 'anthropic/claude-opus-4', 'google/gemini-2.5-pro'],
+  venice: ['llama-3.3-70b', 'qwen-2.5-coder-32b', 'deepseek-r1-671b'],
   cli: ['opus', 'sonnet'],
 };
 const VOICE_MODEL_SUGGESTIONS = ['whisper-1', 'gpt-4o-transcribe', 'gpt-4o-mini-transcribe'];
@@ -475,7 +476,7 @@ export async function aiSettingsDialog() {
   if (!s) { ui.toast('Could not reach the Serigraph server.', true); return; }
 
   const provider = h('select', { class: 'f-select' },
-    ...[['auto', 'Auto — first key found'], ['anthropic', 'Anthropic (Claude)'], ['openai', 'OpenAI'], ['openrouter', 'OpenRouter'], ['cli', 'Claude CLI — no key']].map(([v, label]) => h('option', { value: v }, label)));
+    ...[['auto', 'Auto — first key found'], ['anthropic', 'Anthropic (Claude)'], ['openai', 'OpenAI'], ['openrouter', 'OpenRouter'], ['venice', 'Venice.ai'], ['cli', 'Claude CLI — no key']].map(([v, label]) => h('option', { value: v }, label)));
   provider.value = s.provider;
 
   const keyField = (field, label, isSet) => {
@@ -483,6 +484,7 @@ export async function aiSettingsDialog() {
     return { field, input, row: h('div', { class: 'f-field' }, h('label', {}, label), input) };
   };
   const keys = [
+    keyField('veniceKey', 'Venice.ai API key', s.veniceKeySet),
     keyField('openaiKey', 'OpenAI API key', s.openaiKeySet),
     keyField('openrouterKey', 'OpenRouter API key', s.openrouterKeySet),
     keyField('anthropicKey', 'Anthropic API key', s.anthropicKeySet),

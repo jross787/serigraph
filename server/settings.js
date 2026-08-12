@@ -15,13 +15,14 @@ const KEY_FIELDS = {
   anthropicKey: 'ANTHROPIC_API_KEY',
   openaiKey: 'OPENAI_API_KEY',
   openrouterKey: 'OPENROUTER_API_KEY',
+  veniceKey: 'VENICE_API_KEY',
   provider: 'OPSMAP_LLM_PROVIDER',
   model: 'OPSMAP_MODEL',
   voiceProvider: 'OPSMAP_VOICE_PROVIDER',
   voiceModel: 'OPSMAP_VOICE_MODEL',
 };
 
-export const PROVIDERS = ['auto', 'anthropic', 'openai', 'openrouter', 'cli'];
+export const PROVIDERS = ['auto', 'anthropic', 'openai', 'openrouter', 'venice', 'cli'];
 export const VOICE_PROVIDERS = ['browser', 'api'];
 
 async function readEnvLines() {
@@ -52,6 +53,7 @@ export async function readSettings() {
     anthropicKeySet: !!get('ANTHROPIC_API_KEY'),
     openaiKeySet: !!get('OPENAI_API_KEY'),
     openrouterKeySet: !!get('OPENROUTER_API_KEY'),
+    veniceKeySet: !!get('VENICE_API_KEY'),
   };
 }
 
@@ -70,7 +72,7 @@ export async function writeSettings(patch) {
   }
   if (patch.model !== undefined) updates.set('OPSMAP_MODEL', String(patch.model).trim());
   if (patch.voiceModel !== undefined) updates.set('OPSMAP_VOICE_MODEL', String(patch.voiceModel).trim());
-  for (const field of ['anthropicKey', 'openaiKey', 'openrouterKey']) {
+  for (const field of ['anthropicKey', 'openaiKey', 'openrouterKey', 'veniceKey']) {
     if (patch[field] !== undefined) updates.set(KEY_FIELDS[field], String(patch[field]).trim());
   }
 
