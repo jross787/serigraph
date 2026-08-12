@@ -2802,3 +2802,6 @@ body.presenting #chat-dock { display: none; }
 
 .chat-head-actions { display: flex; gap: 2px; flex: none; }
 .chat-mic.thinking { opacity: .55; cursor: wait; }
+
+/* The dock's settings gear matches the close button's weight. */
+.chat-settings-btn { font-size: 15px; padding: 2px 6px; }
