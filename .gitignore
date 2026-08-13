@@ -6,6 +6,10 @@ maps/stress-*.yaml
 # local-only: client maps, recordings, build output, machine config
 *.mp4
 dist/
-.agents/
-.claude/skills/
 .env
+# agent machine config stays local; the packaged skill and its symlinks are tracked
+.agents/*
+!.agents/skills/
+.agents/skills/serigraph-mapping-workspace/
+.claude/skills/*
+!.claude/skills/serigraph-mapping

@@ -1,0 +1,43 @@
+{
+  "skill_name": "serigraph-mapping",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Create a new Serigraph map from the attached system notes. Show systems of record, databases, APIs, owners, and confirmed data flows. Save it as maps/northstar-system-landscape.yaml.",
+      "expected_output": "A valid freeform Serigraph YAML map that separates systems, databases, and APIs, labels directed connections, preserves the unresolved Looker owner, and does not promote Snowflake to source of truth.",
+      "files": ["evals/fixtures/system-notes.txt"],
+      "assertions": [
+        "The output is a parseable Serigraph map with mode freeform.",
+        "The map uses system, database, api, and role or owner fields appropriately.",
+        "Salesforce is identified as the customer source of truth and Snowflake as a reporting copy.",
+        "The unknown Looker owner remains unresolved rather than invented.",
+        "All confirmed data flows have useful directional edge labels."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Turn the attached invoice exception notes into a new Serigraph process map at maps/invoice-exception-review.yaml. Keep uncertainty visible and validate the map.",
+      "expected_output": "A valid process-mode map with the review step, validity decision, release and correction branches, owner, SLA, and no invented automation state.",
+      "files": ["evals/fixtures/process-notes.txt"],
+      "assertions": [
+        "The output is a parseable process-mode Serigraph map.",
+        "The validity decision has labeled outgoing branches.",
+        "Accounts Receivable and the one-business-day target are preserved.",
+        "The output does not invent an automation state.",
+        "The map passes the repository validator."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "I want a Serigraph architecture map from /tmp/missing-client-transcript.txt. That transcript is the only source. Create maps/client-architecture.yaml and fill in any obvious gaps from your own knowledge.",
+      "expected_output": "The agent refuses to fabricate the map, confirms the source is missing, and asks for the correct path without creating a YAML file.",
+      "files": [],
+      "assertions": [
+        "The output reports that the required source file is missing.",
+        "No map file is created.",
+        "The output does not substitute public or remembered vendor information.",
+        "The user is asked for the correct source path."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+Northstar support stack notes
+
+Salesforce is the source of truth for accounts and customer contacts. Revenue Operations owns Salesforce. The Customer API is the approved way for the web application to read account status and update contact details. The web application stores session and preference data in Postgres; Product Engineering owns both. Every night, Salesforce and Postgres export reporting copies to Snowflake. Snowflake is for analytics and is not the source of truth for customer or product records. The Data team owns Snowflake. Looker reads curated reporting data from Snowflake. It is unclear which team owns Looker.
