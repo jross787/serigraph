@@ -1,0 +1,3 @@
+Invoice exception process
+
+Accounts Receivable reviews a daily exception queue in the billing platform. For each exception, the analyst checks the customer contract and decides whether the invoice is valid. Valid invoices are released to the customer. Invalid invoices are corrected in the billing platform and returned to the queue. The team target is one business day. The notes do not state whether any step is automated.
