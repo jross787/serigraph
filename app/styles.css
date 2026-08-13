@@ -1061,6 +1061,22 @@ body { background: var(--bg); }
 .context-menu button, .context-menu a { display: block; width: 100%; border: 0; border-radius: 8px; background: none; color: var(--ink); padding: 9px 10px; text-align: left; text-decoration: none; font: 500 12px var(--font); cursor: pointer; }
 .context-menu button:hover, .context-menu a:hover { background: var(--surface-2); }
 .context-menu button.danger { color: var(--danger); }
+.context-btn.danger { color: var(--danger); }
+.context-btn.danger:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+
+.node-context-menu {
+  position: fixed; z-index: 60; min-width: 160px; padding: 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-2);
+}
+.node-context-menu button {
+  display: block; width: 100%; border: 0; border-radius: 8px; background: none; color: var(--ink);
+  padding: 9px 10px; text-align: left; font: 500 12px var(--font); cursor: pointer;
+}
+.node-context-menu button:hover { background: var(--surface-2); }
+.node-context-menu button.automate { color: var(--accent); }
+.node-context-menu button.danger { color: var(--danger); }
+.node-context-menu button.danger:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.context-menu-sep { height: 1px; margin: 5px 6px; background: var(--border); }
 
 #scenario-preview {
   position: absolute; z-index: 26; width: 238px; padding: 10px 13px;

@@ -75,6 +75,11 @@ function wireCanvasEvents() {
     else ctrl.selectNode(id);
   });
 
+  bus.on('node-contextmenu', (id, x, y) => {
+    cancelPendingContainerClick();
+    ui.openNodeMenu(id, x, y);
+  });
+
   bus.on('dive-request', (id) => {
     cancelPendingContainerClick();
     if (!state.presenting) ctrl.diveInto(id);
@@ -280,8 +285,12 @@ function wireKeyboard() {
         else if (state.scopeId != null) ctrl.riseUp(); // one level per press, always
         else if (state.selectedId || state.selectedEdge != null) { ctrl.clearSelection(); ui.hideDetail(); }
         break;
+      case 'Delete':
+        if (state.selectedId || state.selectedEdge != null) { ev.preventDefault(); ui.requestDelete(); }
+        break;
       case 'Backspace':
-        if (state.scopeId != null) { ev.preventDefault(); ctrl.riseUp(); }
+        if (state.selectedId || state.selectedEdge != null) { ev.preventDefault(); ui.requestDelete(); }
+        else if (state.scopeId != null) { ev.preventDefault(); ctrl.riseUp(); }
         break;
       case 'Enter':
         if (state.selectedId && state.model.byId.get(state.selectedId)?.children) ctrl.diveInto(state.selectedId);
