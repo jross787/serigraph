@@ -54,6 +54,17 @@ Open the checked-in examples after starting the app:
 
 The detailed product contract is in [docs/PRODUCT-REQUIREMENTS.md](docs/PRODUCT-REQUIREMENTS.md), with the completed release evidence in [docs/RELEASE-VERIFICATION.md](docs/RELEASE-VERIFICATION.md). The PRD and roadmap above are not screenshots or duplicate planning stores: they are real Serigraph charts that dogfood the public YAML format.
 
+## Projects
+
+A project is a folder of portable maps: `projects/<slug>/` holds ordinary Serigraph map files plus one optional `projects.yaml` index — the project's display name, a description, the tile order, and a free-text tag per map. Maps that belong to no project stay in `maps/`. A map inside a project is an ordinary map in every way; only its id changes, to `<project>/<map>`.
+
+The app boots to the [Projects home](http://localhost:4700/): one card per project with a tile per map, and ungrouped maps at the bottom. Create a project with **New project** beside **New map**, or by adding a `projects/<slug>/` folder yourself. Two seeded examples ship in the repository:
+
+- [Atlas Logistics — Operations Review](http://localhost:4700/#/map/atlas-logistics/order-flow), a consulting engagement pairing an order-to-cash process with the [system landscape](http://localhost:4700/#/map/atlas-logistics/systems) behind it.
+- [Serigraph Dogfood](http://localhost:4700/#/map/serigraph-dogfood/code-pipeline), Serigraph's own YAML → parse → validate → render → export pipeline mapped in Serigraph.
+
+To move a map, open its row's context menu in the map switcher and choose **Move to project…**, then pick a project or **Root (no project)**. Old links keep working: the server answers the old id with the new one and the app follows it.
+
 ## Product documents
 
 Any existing map can become a product document by adding an optional top-level `document:` block and optional `planning:` and `relations:` fields to its nodes. The original five visual node types remain unchanged; product semantics are a separate layer.

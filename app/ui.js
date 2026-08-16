@@ -6,8 +6,9 @@ import {
   OWNER_ROLES, ancestryOf, placementInScope, placementsOf,
 } from '../shared/model.js';
 import { nodeCost, rollupCost, formatMoney, formatPayback, formatPercent, compactMoney } from '../shared/cost.js';
+import { mapProjectTag } from '../shared/projects.js';
 import { api } from './api.js';
-import { state, bus } from './state.js';
+import { state, bus, currentProjectSlug } from './state.js';
 import * as ctrl from './controller.js';
 import * as edit from './edit.js';
 import * as canvas from './canvas.js';
@@ -105,8 +106,23 @@ function renderBreadcrumbs() {
 function renderSwitcher() {
   const nameEl = document.getElementById('map-switcher-name');
   if (!nameEl) return;
+  if (!state.mapId) { nameEl.replaceChildren(); nameEl.textContent = 'All maps'; return; }
   const current = state.maps.find((m) => m.id === state.mapId);
-  nameEl.textContent = current?.name ?? state.model?.name ?? state.mapId ?? 'No map';
+  const mapName = current?.name ?? state.model?.name ?? state.mapId ?? 'No map';
+  const projectName = current?.project?.name;
+  nameEl.replaceChildren();
+  if (projectName) {
+    const link = h('button', { class: 'switcher-project', title: `Open the ${projectName} project` }, projectName);
+    link.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (state.standalone) return; // exports are single-map, read-only
+      homeFilter = current.project.slug;
+      ctrl.goHome();
+    });
+    nameEl.append(link, h('span', { class: 'switcher-sep' }, '/'), h('span', {}, mapName));
+  } else {
+    nameEl.textContent = mapName;
+  }
 }
 
 function renderMapMode() {
@@ -122,8 +138,10 @@ function renderMapMode() {
   if (label) label.textContent = freeform ? 'Freeform' : 'Process';
   const addLabel = document.getElementById('btn-add-node-label');
   if (addLabel) addLabel.textContent = freeform ? (state.scopeId == null ? 'Add group' : 'Add item') : 'Add step';
+  const addBtn = document.getElementById('btn-add-node');
+  if (addBtn) addBtn.hidden = !state.model;
   const workspaces = document.getElementById('workspace-switcher');
-  if (workspaces) workspaces.hidden = freeform;
+  if (workspaces) workspaces.hidden = freeform || !state.model;
   for (const id of ['btn-import', 'btn-economics']) {
     const control = document.getElementById(id);
     if (control) control.hidden = freeform;
@@ -169,18 +187,68 @@ function openMapMenu(anchor) {
   closeMenus();
   const r = anchor.getBoundingClientRect();
   const menu = h('div', { class: 'menu', style: `top:${r.bottom + 6}px;left:${r.left}px` });
-  for (const m of state.maps) {
-    menu.append(h('button', {
-      class: `menu-item${m.id === state.mapId ? ' current' : ''}${m.invalid ? ' invalid' : ''}`,
-      onClick: () => { closeMenus(); ctrl.openMap(m.id); },
+
+  const item = (m) => {
+    const isCurrent = m.id === state.mapId;
+    // In a standalone export, sibling project maps are listed read-only —
+    // the bundle carries their summaries, not their sources.
+    const readOnlySibling = state.standalone && !isCurrent;
+    const row = h('button', {
+      class: `menu-item${isCurrent ? ' current' : ''}${m.invalid ? ' invalid' : ''}`,
+      ...(readOnlySibling ? { disabled: '', title: 'Read-only in this export' } : {}),
+      onClick: () => { if (readOnlySibling) return; closeMenus(); ctrl.openMap(m.id); },
     },
     h('span', { class: 'mi-name' }, m.name || m.id),
-    h('span', { class: 'mi-sub' }, m.invalid ? `⚠ ${m.errorCount} problem${m.errorCount === 1 ? '' : 's'} — open to see details` : `${m.nodeCount} nodes · maps/${m.file}`)));
+    h('span', { class: 'mi-sub' }, m.invalid ? `⚠ ${m.errorCount} problem${m.errorCount === 1 ? '' : 's'} — open to see details` : `${m.nodeCount} nodes`));
+    if (!state.standalone) {
+      row.addEventListener('contextmenu', (ev) => {
+        ev.preventDefault();
+        closeMenus();
+        moveMapDialog(m);
+      });
+      row.append(h('span', {
+        class: 'mi-move',
+        title: 'Move to a project',
+        onClick: (ev) => {
+          ev.stopPropagation();
+          closeMenus();
+          moveMapDialog(m);
+        },
+      }, 'Move'));
+    }
+    return row;
+  };
+
+  // group by project, current project first, then alphabetical; root maps last
+  const byProject = new Map();
+  const rootMaps = [];
+  for (const m of state.maps) {
+    if (!m.project) { rootMaps.push(m); continue; }
+    if (!byProject.has(m.project.slug)) byProject.set(m.project.slug, { name: m.project.name, maps: [] });
+    byProject.get(m.project.slug).maps.push(m);
   }
+  const currentSlug = currentProjectSlug();
+  const groups = [...byProject.entries()].sort(([a], [b]) => {
+    if (a === currentSlug) return -1;
+    if (b === currentSlug) return 1;
+    return (byProject.get(a).name ?? a).localeCompare(byProject.get(b).name ?? b);
+  });
+  for (const [slug, group] of groups) {
+    const heading = state.standalone && slug === currentSlug ? `From this project — ${group.name ?? slug}` : (group.name ?? slug);
+    menu.append(h('div', { class: `menu-group${slug === currentSlug ? ' current' : ''}` }, heading));
+    for (const m of group.maps) menu.append(item(m));
+  }
+  if (rootMaps.length) {
+    if (groups.length) menu.append(h('div', { class: 'menu-group' }, 'Ungrouped'));
+    for (const m of rootMaps) menu.append(item(m));
+  }
+
   if (!state.standalone) {
     menu.append(h('div', { class: 'menu-sep' }));
     menu.append(h('button', { class: 'menu-item', onClick: () => { closeMenus(); newMapDialog(); } },
       h('span', { class: 'mi-name' }, '+ New map…')));
+    menu.append(h('button', { class: 'menu-item', onClick: () => { closeMenus(); newProjectDialog(); } },
+      h('span', { class: 'mi-name' }, '+ New project…')));
   }
   document.body.append(menu);
   setTimeout(() => {
@@ -189,6 +257,167 @@ function openMapMenu(anchor) {
   }, 0);
 }
 function closeMenus() { document.querySelectorAll('.menu').forEach((m) => m.remove()); }
+
+// ── projects home ────────────────────────────────────────────────────
+// Route #/ — replaces the empty boot state. Cards per project, one tile per
+// map; root maps group under "Ungrouped" at the bottom.
+let homeFilter = null; // project slug when the home is scoped to one project
+export function resetHomeFilter() { homeFilter = null; }
+
+function mapStatusDot(m) {
+  // red = invalid; amber = provenance flags or issue: edges; else green.
+  // hasFlags/hasIssues come from the server summaries; undefined → false.
+  if (m.invalid) return { cls: 'bad', label: 'Invalid — open to see the problems' };
+  if (m.hasFlags || m.hasIssues) return { cls: 'warn', label: 'Has inferred flags or issue edges' };
+  return { cls: 'ok', label: 'Valid' };
+}
+
+function projectIndexFor(slug) {
+  const p = state.projects.find((item) => item.slug === slug);
+  return p ? { name: p.name, description: p.description ?? null, order: p.order ?? [], tags: p.tags ?? {} } : null;
+}
+
+function mapTile(m, index) {
+  const dot = mapStatusDot(m);
+  const mapSlug = m.id.includes('/') ? m.id.split('/').pop() : m.id;
+  const tag = index ? mapProjectTag(index, mapSlug) : null;
+  const isCurrent = m.id === state.mapId;
+  const readOnlySibling = state.standalone && !isCurrent;
+  return h('button', {
+    class: 'proj-tile',
+    ...(readOnlySibling ? { disabled: '', title: 'Read-only in this export' } : { title: dot.label }),
+    onClick: () => { if (!readOnlySibling) ctrl.openMap(m.id); },
+  },
+  h('span', { class: 'proj-tile-top' },
+    tag ? h('span', { class: 'proj-tag' }, tag) : null,
+    h('span', { class: `proj-dot ${dot.cls}` })),
+  h('span', { class: 'proj-tile-name' }, m.name || mapSlug),
+  h('span', { class: 'proj-tile-meta' }, `${m.mode === 'freeform' ? 'Freeform' : 'Process'} · ${m.nodeCount ?? 0} nodes`));
+}
+
+function renderHome() {
+  const host = document.getElementById('projects-home');
+  if (!host) return;
+  if (state.mapId) { host.hidden = true; return; }
+  host.hidden = false;
+
+  const rootMaps = state.maps.filter((m) => !m.project);
+  const byProject = new Map();
+  for (const m of state.maps) {
+    if (!m.project) continue;
+    if (!byProject.has(m.project.slug)) byProject.set(m.project.slug, []);
+    byProject.get(m.project.slug).push(m);
+  }
+  // a project with zero maps still gets a card
+  for (const p of state.projects) {
+    if (!byProject.has(p.slug)) byProject.set(p.slug, []);
+  }
+
+  const orderedSlugs = [...byProject.keys()].sort((a, b) => {
+    const an = state.projects.find((p) => p.slug === a)?.name ?? a;
+    const bn = state.projects.find((p) => p.slug === b)?.name ?? b;
+    return an.localeCompare(bn);
+  });
+
+  const visibleSlugs = homeFilter ? orderedSlugs.filter((s) => s === homeFilter) : orderedSlugs;
+
+  const head = h('div', { class: 'proj-head' },
+    h('div', {},
+      h('h1', {}, homeFilter ? (state.projects.find((p) => p.slug === homeFilter)?.name ?? homeFilter) : 'Projects'),
+      h('p', { class: 'proj-sub' }, homeFilter
+        ? 'Every map in this project.'
+        : 'A project is a folder of maps that belong to one engagement.')),
+    state.standalone ? null : h('div', { class: 'proj-head-actions' },
+      homeFilter ? h('button', { class: 'd-btn', onClick: () => { homeFilter = null; renderHome(); } }, '‹ All projects') : null,
+      h('button', { class: 'd-btn', onClick: () => newProjectDialog() }, '+ New project'),
+      h('button', { class: 'd-btn primary', onClick: () => newMapDialog() }, '+ New map')));
+
+  const body = h('div', { class: 'proj-grid' });
+  for (const slug of visibleSlugs) {
+    const index = projectIndexFor(slug);
+    const maps = byProject.get(slug) ?? [];
+    const order = index?.order ?? [];
+    const tiles = [...maps].sort((a, b) => {
+      const ai = order.indexOf(a.id.split('/').pop());
+      const bi = order.indexOf(b.id.split('/').pop());
+      if (ai === -1 && bi === -1) return (a.name || a.id).localeCompare(b.name || b.id);
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
+    body.append(h('article', { class: 'proj-card' },
+      h('header', { class: 'proj-card-head' },
+        h('h2', {}, index?.name ?? slug),
+        h('span', { class: 'proj-count' }, `${maps.length} map${maps.length === 1 ? '' : 's'}`)),
+      index?.description ? h('p', { class: 'proj-desc' }, index.description) : null,
+      h('div', { class: 'proj-tiles' }, tiles.length
+        ? tiles.map((m) => mapTile(m, index))
+        : [h('p', { class: 'proj-empty' }, 'No maps yet — move one in from the map switcher.')])));
+  }
+
+  if (!homeFilter && rootMaps.length) {
+    body.append(h('article', { class: 'proj-card ungrouped' },
+      h('header', { class: 'proj-card-head' },
+        h('h2', {}, 'Ungrouped'),
+        h('span', { class: 'proj-count' }, `${rootMaps.length} map${rootMaps.length === 1 ? '' : 's'}`)),
+      h('p', { class: 'proj-desc' }, 'Maps in the root maps/ folder, outside any project.'),
+      h('div', { class: 'proj-tiles' }, rootMaps.map((m) => mapTile(m, null)))));
+  }
+
+  if (!visibleSlugs.length && !rootMaps.length) {
+    body.append(h('div', { class: 'proj-none' },
+      h('p', {}, 'Nothing here yet. Create a project or a map to get started.')));
+  }
+
+  host.replaceChildren(head, body);
+}
+
+function newProjectDialog() {
+  const name = h('input', { class: 'f-input', placeholder: 'e.g. Acme Corp — Discovery' });
+  modal('New project', h('div', {},
+    h('div', { class: 'f-field' }, h('label', {}, 'Project name'), name),
+    h('p', { class: 'hint' }, 'Creates a folder in projects/ with an optional projects.yaml index.')), [
+    { label: 'Cancel' },
+    {
+      label: 'Create', primary: true,
+      onClick: () => {
+        const v = name.value.trim();
+        if (!v) { name.focus(); return false; }
+        api.createProject(v).then(async () => {
+          await ctrl.loadProjects();
+          renderHome();
+          toast(`Created project “${v}”`);
+        }).catch((e) => toast(e.message, true));
+      },
+    },
+  ]);
+}
+
+// Small chooser for moving a map between the root and a project.
+function moveMapDialog(mapSummary) {
+  const current = mapSummary.project?.slug ?? null;
+  const options = [
+    { slug: null, name: 'Ungrouped (root maps/ folder)' },
+    ...state.projects.map((p) => ({ slug: p.slug, name: p.name })),
+  ].filter((o) => o.slug !== current);
+  const list = h('div', { class: 'move-list' }, options.map((o) =>
+    h('button', {
+      class: 'menu-item',
+      onClick: async () => {
+        document.querySelector('.dialog-backdrop')?.remove();
+        try {
+          const res = await api.moveMap(mapSummary.id, o.slug);
+          await ctrl.loadMapList();
+          await ctrl.loadProjects();
+          const newId = res?.id ?? (o.slug ? `${o.slug}/${mapSummary.id}` : mapSummary.id.split('/').pop());
+          if (state.mapId === mapSummary.id) await ctrl.openMap(newId, { replace: true });
+          renderHome();
+          toast(o.slug ? `Moved to ${o.name}` : 'Moved to the root');
+        } catch (e) { toast(e.message, true); }
+      },
+    }, h('span', { class: 'mi-name' }, o.name))));
+  modal(`Move “${mapSummary.name || mapSummary.id}”`, list, [{ label: 'Cancel' }]);
+}
 
 // ── dialogs ──────────────────────────────────────────────────────────
 function modal(title, body, actions) {
@@ -526,22 +755,27 @@ export function addNodeDialog(ownerId, options = {}) {
 function newMapDialog() {
   const name = h('input', { class: 'f-input', placeholder: 'e.g. Customer systems' });
   const mode = mapModeSegment('process');
+  const projectSel = h('select', { class: 'f-select' },
+    h('option', { value: '' }, 'Ungrouped (root maps/ folder)'),
+    state.projects.map((p) => h('option', { value: p.slug, ...(p.slug === currentProjectSlug() || p.slug === homeFilter ? { selected: '' } : {}) }, p.name)));
   modal('New map', h('div', {},
     h('div', { class: 'f-field' }, h('label', {}, 'Map name'), name),
     h('div', { class: 'f-field' }, h('label', {}, 'Mode'), mode),
-    h('p', { class: 'hint' }, 'Creates a new YAML file in the maps/ folder.')), [
+    state.projects.length ? h('div', { class: 'f-field' }, h('label', {}, 'Project'), projectSel) : null,
+    h('p', { class: 'hint' }, 'Creates a new YAML file — portable, like every Serigraph map.')), [
     { label: 'Cancel' },
     {
       label: 'Create', primary: true,
       onClick: () => {
         const v = name.value.trim();
         if (!v) { name.focus(); return false; }
+        const project = projectSel.value || null;
         import('./api.js').then(async ({ api }) => {
           try {
-            const { id } = await api.createMap(v, mode.value());
+            const { id } = await api.createMap(v, mode.value(), project);
             await ctrl.loadMapList();
             await ctrl.openMap(id);
-            toast(`Created maps/${id}.yaml`);
+            toast(`Created ${id}.yaml`);
           } catch (e) { toast(e.message, true); }
         });
       },
@@ -1722,7 +1956,7 @@ async function sendChat(text) {
     }));
     const focusNode = chatFocusId ? state.model?.byId.get(chatFocusId) : null;
     const focus = focusNode ? { id: focusNode.id, summary: nodeFocusSummary(focusNode) } : null;
-    const result = await api.chat(instruction, history, focus);
+    const result = await api.chat(instruction, history, focus, currentProjectSlug());
     const summary = chatDiffSummary(state.source, result.source);
     chatMessages.push({ role: 'assistant', text: 'Here is the proposed change.', proposal: { source: result.source, summary } });
   } catch (e) {
@@ -1794,7 +2028,7 @@ export async function importDialog() {
             transcript = ta.value;
             if (transcript.trim().length < 120) { toast('Paste the full transcript — a few hundred words minimum.', true); return; }
             renderProgress();
-            api.importTranscript(transcript)
+            api.importTranscript(transcript, currentProjectSlug())
               .then((result) => { if (!closed) renderReview(result); })
               .catch((e) => {
                 if (closed) return;
@@ -1849,7 +2083,7 @@ export async function importDialog() {
           onClick: async () => {
             const name = nameIn.value.trim() || 'Imported map';
             try {
-              const { id } = await api.createMap(name);
+              const { id } = await api.createMap(name, 'process', currentProjectSlug());
               // the generated YAML is the source of truth; keep the user's name
               const named = source.replace(/^name:.*$/m, `name: ${JSON.stringify(name)}`);
               await api.saveMap(id, named);
@@ -2100,14 +2334,13 @@ export function openSearch() {
 // ── canvas-level messages (errors / empty states) ────────────────────
 function renderCanvasMessage() {
   const box = document.getElementById('canvas-msg');
-  if (!state.mapId && state.maps.length === 0) {
-    box.hidden = false;
-    box.replaceChildren(h('div', { class: 'map-card' },
-      h('h2', {}, 'No maps yet'),
-      h('p', {}, 'Create your first map, or drop a YAML file into the maps/ folder.'),
-      state.standalone ? null : h('div', { class: 'empty-actions' },
-        h('button', { class: 'd-btn primary', onClick: () => newMapDialog() }, '+ New map'),
-        h('button', { class: 'd-btn', onClick: () => document.getElementById('btn-import-file')?.click() }, 'Import file…'))));
+  const home = document.getElementById('projects-home');
+  const atHome = !state.mapId;
+  document.getElementById('stage')?.classList.toggle('home-active', atHome);
+  if (home) home.hidden = !atHome;
+  if (atHome) {
+    box.hidden = true;
+    renderHome();
     return;
   }
   if (state.mapId && !state.model) {
@@ -2169,7 +2402,8 @@ export function initUI() {
     } else if (state.selectedEdge != null) renderDetail();
     else hideDetail();
   });
-  bus.on('maps-listed', () => { renderSwitcher(); });
+  bus.on('maps-listed', () => { renderSwitcher(); if (!state.mapId) renderHome(); });
+  bus.on('projects-listed', () => { if (!state.mapId) renderHome(); });
   bus.on('templates-loaded', () => {
     if (!document.getElementById('templates-panel').hidden) renderTemplates();
   });
@@ -2180,7 +2414,7 @@ export function initUI() {
   document.getElementById('map-mode')?.addEventListener('click', (ev) => openModeMenu(ev.currentTarget));
 
   if (state.standalone) {
-    for (const id of ['btn-add-node', 'btn-templates', 'btn-export', 'btn-import']) {
+    for (const id of ['btn-add-node', 'btn-templates', 'btn-export', 'btn-import', 'btn-projects']) {
       document.getElementById(id)?.remove();
     }
   }

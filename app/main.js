@@ -341,7 +341,15 @@ function wireToolbar() {
     ev.preventDefault();
     if (state.presenting) exitPresent();
     productWorkspace.setWorkspaceView('map');
-    if (state.model) ctrl.gotoScope(null);
+    if (state.standalone) { if (state.model) ctrl.gotoScope(null); return; }
+    ui.resetHomeFilter();
+    ctrl.goHome();
+  });
+  on('btn-projects', () => {
+    if (state.presenting) exitPresent();
+    productWorkspace.setWorkspaceView('map');
+    ui.resetHomeFilter();
+    ctrl.goHome();
   });
 }
 
@@ -363,19 +371,23 @@ async function boot() {
     ui.toast('Could not reach the Serigraph server: ' + e.message, true);
     return;
   }
+  ctrl.loadProjects();
 
   const route = ctrl.readHash();
   let mapId = route.mapId && state.maps.some((m) => m.id === route.mapId) ? route.mapId : null;
-  if (!mapId) mapId = state.maps.some((m) => m.id === 'insurance') ? 'insurance' : state.maps[0]?.id;
+  // A standalone export is a single-map artifact — open it directly, never the home.
+  if (!mapId && state.standalone) mapId = state.maps[0]?.id ?? null;
 
   if (mapId) {
     try {
-      await ctrl.openMap(mapId, route.mapId === mapId ? route : {});
+      await ctrl.openMap(mapId, { ...route, replace: true });
     } catch (e) {
       ui.toast(`Couldn't open map "${mapId}": ${e.message}`, true);
+      ctrl.goHome({ push: false });
     }
   } else {
-    bus.emit('view-changed');
+    // No valid map id in the URL: the projects home is the boot state.
+    ctrl.goHome({ push: false });
   }
 
   ctrl.loadTemplates();

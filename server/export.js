@@ -10,8 +10,10 @@ const MODULE_FILES = [
   'shared/model.js',
   'shared/cost.js',
   'shared/provenance.js',
+  'shared/projects.js',
   'app/state.js',
   'app/api.js',
+  'app/routes.js',
   'app/layout.js',
   'app/canvas.js',
   'app/edit.js',
@@ -40,7 +42,22 @@ function rewriteSpecifiers(source, moduleDir) {
 
 const escapeInline = (s) => s.replace(/<\/script/gi, '<\\/script');
 
-export async function buildExport(root, id, mapSource) {
+// Shape the optional project context embedded in a standalone export:
+// { slug, name, maps: [{ id, name, description, nodeCount, kind, mode }] }
+export function projectStandalonePayload(projectMeta) {
+  if (!projectMeta) return null;
+  const maps = (projectMeta.maps ?? []).map((m) => ({
+    id: m.id,
+    name: m.name ?? m.id,
+    description: m.description ?? null,
+    nodeCount: m.nodeCount ?? 0,
+    kind: m.kind ?? null,
+    mode: m.mode ?? null,
+  }));
+  return { slug: projectMeta.slug, name: projectMeta.name ?? projectMeta.slug, maps };
+}
+
+export async function buildExport(root, id, mapSource, projectMeta = null) {
   const read = (p) => fs.readFile(path.join(root, p), 'utf8');
 
   const [html, css, dagre] = await Promise.all([
@@ -57,7 +74,12 @@ export async function buildExport(root, id, mapSource) {
 
   const { model } = parseMap(mapSource);
   const title = model ? `${model.name} — Serigraph` : `${id} — Serigraph`;
-  const payload = JSON.stringify({ id, name: model?.name ?? id, source: mapSource }).replace(/</g, '\\u003c');
+  const payload = JSON.stringify({
+    id,
+    name: model?.name ?? id,
+    source: mapSource,
+    project: projectStandalonePayload(projectMeta),
+  }).replace(/</g, '\\u003c');
 
   // replacement callbacks throughout: user content (map name, YAML source)
   // must never be interpreted as $-replacement patterns

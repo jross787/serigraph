@@ -2,45 +2,39 @@
 // navigation (scopes, selection, deep links, history), and remote changes.
 import { parseMap, ancestryOf, scopeOf, placementInScope, placementsOf } from '../shared/model.js';
 import { collectProvenance } from '../shared/provenance.js';
+import { parseHash, buildHash } from './routes.js';
 import { state, bus } from './state.js';
 import { invalidateLayouts } from './layout.js';
 import * as canvas from './canvas.js';
 import { api } from './api.js';
 
 // ── hash routing ─────────────────────────────────────────────────────
-// #/map/<id>            — root scope
-// #/map/<id>/in/<node>  — inside a container node
-// #/map/<id>/node/<id>  — a node, selected in its parent scope
+// The codec lives in ./routes.js (pure, unit-tested). #/ is the projects
+// home; #/map/<id> opens a map — the id may be "<project>/<map>".
 export function readHash() {
-  let h;
-  try { h = decodeURIComponent(location.hash || ''); }
-  catch { h = location.hash || ''; } // malformed %-sequence: use it verbatim
-  let m = h.match(/^#\/map\/([^/]+)\/in\/([^/]+)\/node\/(.+)$/);
-  if (m) return { mapId: m[1], inId: m[2], nodeId: m[3] };
-  m = h.match(/^#\/map\/([^/]+)\/node\/(.+)$/);
-  if (m) return { mapId: m[1], nodeId: m[2] };
-  m = h.match(/^#\/map\/([^/]+)\/in\/(.+)$/);
-  if (m) return { mapId: m[1], inId: m[2] };
-  m = h.match(/^#\/map\/([^/]+)/);
-  if (m) return { mapId: m[1] };
-  return {};
+  return parseHash(location.hash || '');
 }
 
 let squelchHash = false;
 export function writeHash({ push = false } = {}) {
-  if (!state.mapId) return;
-  const base = `#/map/${encodeURIComponent(state.mapId)}`;
-  let hash = base;
-  if (state.selectedId) {
-    const placed = state.model?.mode === 'freeform'
-      && state.model.elementById?.has(state.selectedId)
-      && state.scopeId != null;
-    hash = placed
-      ? `${base}/in/${encodeURIComponent(state.scopeId)}/node/${encodeURIComponent(state.selectedId)}`
-      : `${base}/node/${encodeURIComponent(state.selectedId)}`;
-  } else if (state.scopeId) {
-    hash = `${base}/in/${encodeURIComponent(state.scopeId)}`;
+  if (!state.mapId) {
+    const hash = '#/';
+    if (location.hash === hash || location.hash === '' || location.hash === '#') return;
+    squelchHash = true;
+    if (push) location.hash = hash;
+    else history.replaceState(null, '', hash);
+    setTimeout(() => { squelchHash = false; }, 0);
+    return;
   }
+  const placed = state.selectedId
+    && state.model?.mode === 'freeform'
+    && state.model.elementById?.has(state.selectedId)
+    && state.scopeId != null;
+  const hash = buildHash({
+    mapId: state.mapId,
+    inId: state.selectedId ? (placed ? state.scopeId : null) : state.scopeId,
+    nodeId: state.selectedId,
+  });
   if (location.hash === hash) return;
   squelchHash = true;
   if (push) location.hash = hash;
@@ -60,11 +54,13 @@ function scopeForNode(nodeId, preferredScopeId = state.scopeId) {
 }
 
 export function nodeUrl(nodeId) {
-  const base = `${location.origin}${location.pathname}#/map/${encodeURIComponent(state.mapId)}`;
   const ownerId = scopeForNode(nodeId);
-  return state.model?.mode === 'freeform' && state.model.elementById?.has(nodeId) && ownerId != null
-    ? `${base}/in/${encodeURIComponent(ownerId)}/node/${encodeURIComponent(nodeId)}`
-    : `${base}/node/${encodeURIComponent(nodeId)}`;
+  const inScope = state.model?.mode === 'freeform' && state.model.elementById?.has(nodeId) && ownerId != null;
+  return `${location.origin}${location.pathname}` + buildHash({
+    mapId: state.mapId,
+    inId: inScope ? ownerId : null,
+    nodeId,
+  });
 }
 
 // ── loading ──────────────────────────────────────────────────────────
@@ -81,9 +77,28 @@ export async function loadTemplates() {
   } catch { /* templates are optional */ }
 }
 
-export async function openMap(mapId, { nodeId = null, inId = null } = {}) {
-  const { source } = await api.getMap(mapId);
-  if (mapId !== state.mapId) canvas.resetScopeCameras();
+export async function openMap(mapId, { nodeId = null, inId = null, replace = false } = {}) {
+  const mapChanged = mapId !== state.mapId;
+  const pushHash = mapChanged && !replace;
+  let payload;
+  try {
+    payload = await api.getMap(mapId);
+  } catch (e) {
+    // The file may have moved into/out of a project. If the maps list shows
+    // the same file under a new id, follow it silently.
+    if (e.status === 404) {
+      await loadMapList().catch(() => {});
+      const tail = mapId.includes('/') ? mapId.slice(mapId.lastIndexOf('/') + 1) : mapId;
+      const hit = state.maps.find((m) => m.id === tail || m.id.endsWith(`/${tail}`) || m.id.split('/').pop() === tail);
+      if (hit && hit.id !== mapId) return followMoved(hit.id, { nodeId, inId });
+    }
+    throw e;
+  }
+  if (payload.movedTo && payload.movedTo !== mapId) {
+    return followMoved(payload.movedTo, { nodeId, inId });
+  }
+  const { source } = payload;
+  if (mapChanged) canvas.resetScopeCameras();
   state.mapId = mapId;
   state.undoStack = [];
   state.redoStack = [];
@@ -92,6 +107,7 @@ export async function openMap(mapId, { nodeId = null, inId = null } = {}) {
 
   if (!state.model) {
     canvas.showScope({ byId: new Map(), root: { nodes: [], edges: [] } }, null);
+    if (pushHash) writeHash({ push: true });
     bus.emit('view-changed');
     return;
   }
@@ -111,8 +127,49 @@ export async function openMap(mapId, { nodeId = null, inId = null } = {}) {
     state.selectedId = null;
     await canvas.showScope(state.model, null);
   }
-  writeHash();
+  writeHash({ push: pushHash });
   bus.emit('view-changed');
+}
+
+// Follow a map that was moved between the root and a project: swap the id,
+// update the address bar in place, and tell the user once.
+async function followMoved(newId, { nodeId = null, inId = null } = {}) {
+  const projectName = state.maps.find((m) => m.id === newId)?.project?.name
+    ?? state.projects.find((p) => p.slug === newId.split('/')[0])?.name
+    ?? newId.split('/')[0];
+  await openMap(newId, { nodeId, inId, replace: true });
+  history.replaceState(null, '', buildHash({ mapId: newId }));
+  bus.emit('toast', newId.includes('/') ? `Map moved to ${projectName}` : 'Map moved to the root');
+}
+
+// Leave the current map and show the projects home.
+export function goHome({ push = true } = {}) {
+  state.mapId = null;
+  state.source = '';
+  state.doc = null;
+  state.model = null;
+  state.errors = [];
+  state.scopeId = null;
+  state.selectedId = null;
+  state.selectedEdge = null;
+  if (push && location.hash !== '#/') {
+    squelchHash = true;
+    location.hash = '#/';
+    setTimeout(() => { squelchHash = false; }, 0);
+  } else if (!push) {
+    writeHash();
+  }
+  bus.emit('view-changed');
+}
+
+export async function loadProjects() {
+  try {
+    state.projects = await api.listProjects();
+  } catch {
+    state.projects = [];
+  }
+  bus.emit('projects-listed');
+  return state.projects;
 }
 
 // parse source into state (doc + model + errors); no rendering
@@ -311,10 +368,23 @@ function nearestSurvivingScope(oldScopeId) {
 // ── remote changes (file edited on disk / another tab) ───────────────
 export async function handleRemoteChange(ids) {
   await loadMapList();
-  if (!ids.includes(state.mapId)) return;
+  if (!state.mapId) return;
+  if (!ids.includes(state.mapId)) {
+    // The open map may have been moved into/out of a project by another
+    // process: its old id disappears from the list while the file survives
+    // under a new id. openMap follows that move on its own.
+    if (state.maps.length && !state.maps.some((m) => m.id === state.mapId)) {
+      try { await openMap(state.mapId, { replace: true }); } catch { /* truly gone — stay put */ }
+    }
+    return;
+  }
   let payload;
   try { payload = await api.getMap(state.mapId); }
   catch { return; }
+  if (payload.movedTo && payload.movedTo !== state.mapId) {
+    await openMap(state.mapId); // openMap follows the move
+    return;
+  }
   if (payload.source === state.source) return; // our own write echoed back
 
   lastAncestry = state.scopeId && state.model ? ancestryOf(state.model, state.scopeId) : [];
@@ -419,9 +489,12 @@ export function wireHistory() {
   window.addEventListener('hashchange', async () => {
     if (squelchHash) return;
     const r = readHash();
-    if (!r.mapId) return;
+    if (!r.mapId) {
+      if (r.home && state.mapId) goHome({ push: false });
+      return;
+    }
     if (r.mapId !== state.mapId) {
-      await openMap(r.mapId, r);
+      await openMap(r.mapId, { ...r, replace: true });
       return;
     }
     if (!state.model) return;

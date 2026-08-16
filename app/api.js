@@ -19,9 +19,32 @@ async function jfetch(url, opts) {
 export const api = {
   async listMaps() {
     if (state.standalone) {
-      return [{ id: window.OPSMAP_STANDALONE.id, name: window.OPSMAP_STANDALONE.name || window.OPSMAP_STANDALONE.id }];
+      const s = window.OPSMAP_STANDALONE;
+      if (s.project?.maps) return s.project.maps.map((m) => ({ ...m, project: { slug: s.project.slug, name: s.project.name } }));
+      return [{ id: s.id, name: s.name || s.id }];
     }
     return jfetch('/api/maps');
+  },
+  async listProjects() {
+    if (state.standalone) {
+      const p = window.OPSMAP_STANDALONE.project;
+      return p ? [{ slug: p.slug, name: p.name, mapCount: p.maps?.length ?? 0 }] : [];
+    }
+    return jfetch('/api/projects');
+  },
+  async createProject(name) {
+    return jfetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+  },
+  async moveMap(id, project) {
+    return jfetch(`/api/maps/${encodeURIComponent(id)}/move`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project }),
+    });
   },
   async getMap(id) {
     if (state.standalone) return { id: window.OPSMAP_STANDALONE.id, source: window.OPSMAP_STANDALONE.source };
@@ -35,11 +58,11 @@ export const api = {
       body: JSON.stringify({ source }),
     });
   },
-  async createMap(name, mode = 'process') {
+  async createMap(name, mode = 'process', project = null) {
     return jfetch('/api/maps', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, mode }),
+      body: JSON.stringify({ name, mode, ...(project ? { project } : {}) }),
     });
   },
   async listTemplates() {
@@ -50,18 +73,18 @@ export const api = {
     if (state.standalone) return { available: false, hint: 'Imports need the local Serigraph server.' };
     return jfetch('/api/import/status');
   },
-  async importTranscript(transcript) {
+  async importTranscript(transcript, project = null) {
     return jfetch('/api/import', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ transcript }),
+      body: JSON.stringify({ transcript, ...(project ? { project } : {}) }),
     });
   },
-  async chat(instruction, history, focus = null) {
+  async chat(instruction, history, focus = null, project = null) {
     return jfetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source: state.source, instruction, history, focus }),
+      body: JSON.stringify({ source: state.source, instruction, history, focus, ...(project ? { project } : {}) }),
     });
   },
   async getSettings() {

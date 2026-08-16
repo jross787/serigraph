@@ -2,7 +2,8 @@
 export const state = {
   standalone: typeof window !== 'undefined' && !!window.OPSMAP_STANDALONE,
 
-  maps: [],            // [{id, name, description, nodeCount, invalid}]
+  maps: [],            // [{id, name, description, nodeCount, invalid, project, hasFlags, hasIssues}]
+  projects: [],        // [{slug, name, mapCount}]
   templates: [],       // [{id, name, description, nodeCount, source}]
 
   mapId: null,
@@ -30,6 +31,15 @@ export const state = {
   undoStack: [],       // previous sources
   redoStack: [],
 };
+
+// The project slug of the open map, or null for a root map / no map.
+// Map ids are "<projectSlug>/<mapSlug>" for project maps, plain otherwise.
+export function currentProjectSlug() {
+  const id = state.mapId;
+  if (!id) return null;
+  const slash = id.indexOf('/');
+  return slash > 0 ? id.slice(0, slash) : null;
+}
 
 const listeners = new Map();
 export const bus = {

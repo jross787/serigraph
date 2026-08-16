@@ -1,0 +1,11 @@
+# Project index for the Projects home. Every field is optional; unknown map
+# slugs in order/tags are ignored. Maps in this folder are ordinary Serigraph
+# maps — see docs/FORMAT.md.
+name: Atlas Logistics — Operations Review
+description: A consulting engagement — the client's order-to-cash process and the system landscape it runs on, kept together in one portable folder.
+order:
+  - order-flow
+  - systems
+tags:
+  order-flow: Business process
+  systems: Systems

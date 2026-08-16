@@ -1,9 +1,10 @@
 // The Quiet Instrument workbench: a compact tool rail, semantic path probe,
 // review notes, portable sharing, and local revision recovery. None of these
 // modes change the meaning of a map until the user explicitly saves a YAML edit.
-import { state, bus } from './state.js';
+import { state, bus, currentProjectSlug } from './state.js';
 import { api } from './api.js';
 import { parseMap } from '../shared/model.js';
+import { buildHash } from './routes.js';
 import * as canvas from './canvas.js';
 import * as ctrl from './controller.js';
 import * as edit from './edit.js';
@@ -398,7 +399,7 @@ async function copyText(text) {
 
 export function openShareDialog() {
   const nodeId = state.selectedId;
-  const link = nodeId ? ctrl.nodeUrl(nodeId) : `${location.origin}${location.pathname}#/map/${encodeURIComponent(state.mapId || '')}`;
+  const link = nodeId ? ctrl.nodeUrl(nodeId) : `${location.origin}${location.pathname}${buildHash({ mapId: state.mapId })}`;
   const input = h('input', { class: 'f-input', value: link, readonly: '' });
   const item = state.model?.mode === 'freeform' ? 'item' : 'step';
   makeDialog('Share & own this map', h('div', { class: 'share-stack' },
@@ -413,7 +414,7 @@ export function downloadYaml() {
   if (!state.source) return;
   const blob = new Blob([state.source], { type: 'text/yaml;charset=utf-8' });
   const href = URL.createObjectURL(blob);
-  const anchor = h('a', { href, download: `${state.mapId || 'serigraph'}.yaml` });
+  const anchor = h('a', { href, download: `${(state.mapId || 'serigraph').replace(/\//g, '-')}.yaml` });
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
@@ -436,6 +437,9 @@ export async function importMapSource(filename, source) {
   const base = edit.slugify(filename.replace(/\.ya?ml$/i, '')) || edit.slugify(model.name) || 'imported-map';
   let id = base;
   for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
+  // Inside a project, import into that project: the id carries the prefix.
+  const project = currentProjectSlug();
+  if (project) id = `${project}/${id}`;
   try {
     await api.saveMap(id, source);
   } catch (e) {
