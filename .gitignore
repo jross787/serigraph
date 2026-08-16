@@ -5,6 +5,7 @@ node_modules/
 maps/stress-*.yaml
 # local-only: client maps, recordings, build output, machine config
 maps/vip*.yaml
+maps/bug-intake.yaml
 *.mp4
 dist/
 .env
