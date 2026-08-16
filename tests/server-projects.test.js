@@ -1,0 +1,331 @@
+// Project API tests: boot the real server against a temp workspace
+// (OPSMAP_ROOT) and exercise project create/list, path-based map ids, and
+// moves between the root and a project. The temp workspace starts empty, so
+// booting here also proves the watcher survives a missing projects/ dir.
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { request } from 'node:http';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, symlinkSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+
+let proc;
+let port;
+let work;
+
+// raw client so we can send arbitrary Host / Content-Type headers
+function raw({ method = 'GET', p = '/', headers = {}, body = null }) {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, path: p, method, headers }, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: data }));
+    });
+    req.on('error', reject);
+    if (body != null) req.write(body);
+    req.end();
+  });
+}
+
+const api = (method, p, payload) => raw({
+  method,
+  p,
+  headers: { 'Content-Type': 'application/json' },
+  body: payload == null ? null : JSON.stringify(payload),
+});
+
+before(async () => {
+  work = mkdtempSync(path.join(os.tmpdir(), 'serigraph-projects-'));
+  // the standalone export inlines the app modules from ROOT — link them in
+  // so export routes work against the temp workspace
+  for (const dir of ['app', 'vendor', 'shared']) symlinkSync(path.join(ROOT, dir), path.join(work, dir));
+  const tryPort = 4960 + Math.floor(Math.random() * 100);
+  proc = spawn('node', ['server/main.js', '--no-open'], {
+    cwd: ROOT,
+    env: { ...process.env, PORT: String(tryPort), OPSMAP_ROOT: work },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  port = await new Promise((resolve, reject) => {
+    let buf = '';
+    const timer = setTimeout(() => reject(new Error('server did not start:\n' + buf)), 10000);
+    proc.stdout.on('data', (d) => {
+      buf += d;
+      const m = buf.match(/http:\/\/localhost:(\d+)\//);
+      if (m) { clearTimeout(timer); resolve(Number(m[1])); }
+    });
+    proc.stderr.on('data', (d) => { buf += d; });
+    proc.on('exit', (code) => { clearTimeout(timer); reject(new Error(`server exited ${code}:\n${buf}`)); });
+  });
+});
+
+after(() => {
+  proc?.kill();
+  rmSync(work, { recursive: true, force: true });
+});
+
+test('boots with no maps/ or projects/ and lists nothing', async () => {
+  const maps = await raw({ p: '/api/maps' });
+  assert.equal(maps.status, 200);
+  assert.deepEqual(JSON.parse(maps.body), []);
+  const projects = await raw({ p: '/api/projects' });
+  assert.equal(projects.status, 200);
+  assert.deepEqual(JSON.parse(projects.body), []);
+});
+
+test('POST /api/projects creates the folder and index; duplicate is 409', async () => {
+  const res = await api('POST', '/api/projects', { name: 'Atlas Logistics' });
+  assert.equal(res.status, 201);
+  assert.deepEqual(JSON.parse(res.body), { slug: 'atlas-logistics', name: 'Atlas Logistics' });
+  const index = path.join(work, 'projects', 'atlas-logistics', 'projects.yaml');
+  assert.ok(existsSync(index), 'index file written');
+  assert.match(readFileSync(index, 'utf8'), /name: "Atlas Logistics"/);
+
+  const again = await api('POST', '/api/projects', { name: 'Atlas Logistics' });
+  assert.equal(again.status, 409);
+
+  const noName = await api('POST', '/api/projects', {});
+  assert.equal(noName.status, 400);
+});
+
+test('POST /api/maps creates a map inside a project', async () => {
+  const res = await api('POST', '/api/maps', { name: 'Order Flow', project: 'atlas-logistics' });
+  assert.equal(res.status, 201);
+  assert.deepEqual(JSON.parse(res.body), { id: 'atlas-logistics/order-flow', project: 'atlas-logistics' });
+  assert.ok(existsSync(path.join(work, 'projects', 'atlas-logistics', 'order-flow.yaml')));
+
+  const again = await api('POST', '/api/maps', { name: 'Order Flow', project: 'atlas-logistics' });
+  assert.equal(again.status, 409);
+});
+
+test('POST /api/maps with a new project auto-creates folder and index', async () => {
+  const res = await api('POST', '/api/maps', { name: 'Solo Map', project: 'newproj' });
+  assert.equal(res.status, 201);
+  assert.deepEqual(JSON.parse(res.body), { id: 'newproj/solo-map', project: 'newproj' });
+  assert.ok(existsSync(path.join(work, 'projects', 'newproj', 'projects.yaml')), 'minimal index written');
+});
+
+test('POST /api/maps without a project stays at the root', async () => {
+  const res = await api('POST', '/api/maps', { name: 'Root Map' });
+  assert.equal(res.status, 201);
+  assert.deepEqual(JSON.parse(res.body), { id: 'root-map', project: null });
+  assert.ok(existsSync(path.join(work, 'maps', 'root-map.yaml')));
+});
+
+test('GET /api/maps lists root and project maps with project metadata, index hidden', async () => {
+  const res = await raw({ p: '/api/maps' });
+  assert.equal(res.status, 200);
+  const maps = JSON.parse(res.body);
+  const root = maps.find((m) => m.id === 'root-map');
+  assert.equal(root.project, null);
+  assert.equal(root.hasFlags, false);
+  assert.equal(root.hasIssues, false);
+  const nested = maps.find((m) => m.id === 'atlas-logistics/order-flow');
+  assert.deepEqual(nested.project, { slug: 'atlas-logistics', name: 'Atlas Logistics' });
+  assert.equal(nested.name, 'Order Flow');
+  assert.ok(!maps.some((m) => m.id === 'atlas-logistics/projects'), 'projects.yaml never listed as a map');
+});
+
+test('GET /api/projects returns slug, name, description, order, tags, mapCount', async () => {
+  const res = await raw({ p: '/api/projects' });
+  assert.equal(res.status, 200);
+  const projects = JSON.parse(res.body);
+  const atlas = projects.find((p) => p.slug === 'atlas-logistics');
+  assert.deepEqual(atlas, {
+    slug: 'atlas-logistics',
+    name: 'Atlas Logistics',
+    description: null,
+    order: [],
+    tags: {},
+    mapCount: 1,
+  });
+  const auto = projects.find((p) => p.slug === 'newproj');
+  assert.equal(auto.name, 'newproj', 'auto-created project falls back to the slug as its name');
+  assert.equal(auto.mapCount, 1);
+});
+
+test('GET and PUT by path-based id', async () => {
+  const got = await raw({ p: '/api/maps/atlas-logistics/order-flow' });
+  assert.equal(got.status, 200);
+  const { id, source } = JSON.parse(got.body);
+  assert.equal(id, 'atlas-logistics/order-flow');
+  assert.match(source, /Order Flow/);
+
+  const updated = 'name: Renamed Flow\nnodes:\n  - id: a\n    type: process\n    label: A\nedges: []\n';
+  const put = await api('PUT', '/api/maps/atlas-logistics/order-flow', { source: updated });
+  assert.equal(put.status, 200);
+  const back = await raw({ p: '/api/maps/atlas-logistics/order-flow' });
+  assert.equal(JSON.parse(back.body).source, updated);
+
+  const invalid = await api('PUT', '/api/maps/atlas-logistics/order-flow', { source: 'name: X\nnodes:\n  - id: a\n    type: wizard\n    label: A\n' });
+  assert.equal(invalid.status, 422);
+  const still = await raw({ p: '/api/maps/atlas-logistics/order-flow' });
+  assert.equal(JSON.parse(still.body).source, updated, '422 leaves the file untouched');
+});
+
+test('a .yml map inside a project resolves and lists', async () => {
+  writeFileSync(path.join(work, 'projects', 'atlas-logistics', 'legacy.yml'), 'name: Legacy\nnodes: []\nedges: []\n');
+  const got = await raw({ p: '/api/maps/atlas-logistics/legacy' });
+  assert.equal(got.status, 200);
+  const maps = JSON.parse((await raw({ p: '/api/maps' })).body);
+  assert.ok(maps.some((m) => m.id === 'atlas-logistics/legacy' && m.file === 'legacy.yml'));
+});
+
+test('move project -> root: file renames, old id answers with movedTo', async () => {
+  const res = await api('POST', '/api/maps/atlas-logistics/order-flow/move', { project: null });
+  assert.equal(res.status, 200);
+  assert.deepEqual(JSON.parse(res.body), { id: 'order-flow', project: null });
+  assert.ok(existsSync(path.join(work, 'maps', 'order-flow.yaml')), 'file landed at the root');
+  assert.ok(!existsSync(path.join(work, 'projects', 'atlas-logistics', 'order-flow.yaml')), 'old file gone');
+
+  const oldId = await raw({ p: '/api/maps/atlas-logistics/order-flow' });
+  assert.equal(oldId.status, 200, 'old id still answers');
+  const body = JSON.parse(oldId.body);
+  assert.equal(body.id, 'order-flow');
+  assert.equal(body.movedTo, 'order-flow');
+  assert.match(body.source, /Renamed Flow/);
+
+  const newId = await raw({ p: '/api/maps/order-flow' });
+  assert.equal(newId.status, 200);
+  assert.equal(JSON.parse(newId.body).movedTo, undefined, 'no movedTo on the canonical id');
+});
+
+test('move root -> project, and movedTo follows the chain', async () => {
+  const res = await api('POST', '/api/maps/order-flow/move', { project: 'atlas-logistics' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(JSON.parse(res.body), { id: 'atlas-logistics/order-flow', project: 'atlas-logistics' });
+
+  const oldest = await raw({ p: '/api/maps/order-flow' });
+  assert.equal(JSON.parse(oldest.body).movedTo, 'atlas-logistics/order-flow');
+});
+
+test('move refuses a name collision with 409', async () => {
+  const made = await api('POST', '/api/maps', { name: 'Order Flow' });
+  assert.equal(made.status, 201);
+  const res = await api('POST', '/api/maps/order-flow/move', { project: 'atlas-logistics' });
+  assert.equal(res.status, 409);
+  assert.ok(existsSync(path.join(work, 'maps', 'order-flow.yaml')), 'source left in place');
+});
+
+test('move to the same place is a 400', async () => {
+  const atRoot = await api('POST', '/api/maps/order-flow/move', { project: null });
+  assert.equal(atRoot.status, 400);
+  const inProject = await api('POST', '/api/maps/atlas-logistics/order-flow/move', { project: 'atlas-logistics' });
+  assert.equal(inProject.status, 400);
+});
+
+test('invalid ids and slugs are rejected', async () => {
+  const dots = await raw({ p: '/api/maps/%2E%2E%2Fsecret' });
+  assert.equal(dots.status, 400);
+  const tooDeep = await raw({ p: '/api/maps/a/b/c' });
+  assert.equal(tooDeep.status, 400);
+  const badProject = await api('POST', '/api/maps', { name: 'X', project: '..' });
+  assert.equal(badProject.status, 400);
+  const badChars = await api('POST', '/api/maps', { name: 'X', project: 'bad slug!' });
+  assert.equal(badChars.status, 400);
+  const badMove = await api('POST', '/api/maps/order-flow/move', { project: 'bad slug!' });
+  assert.equal(badMove.status, 400);
+});
+
+test('the index name is reserved inside a project', async () => {
+  const created = await api('POST', '/api/maps', { name: 'projects', project: 'atlas-logistics' });
+  assert.equal(created.status, 400);
+  const got = await raw({ p: '/api/maps/atlas-logistics/projects' });
+  assert.equal(got.status, 400);
+  const moved = await api('POST', '/api/maps/root-map/move', { project: null });
+  assert.equal(moved.status, 400, 'already at the root');
+});
+
+test('404 text mentions the looked-up path', async () => {
+  const nested = await raw({ p: '/api/maps/atlas-logistics/nope' });
+  assert.equal(nested.status, 404);
+  assert.match(JSON.parse(nested.body).error, /projects\/atlas-logistics\/nope\.yaml/);
+  const root = await raw({ p: '/api/maps/nope' });
+  assert.equal(root.status, 404);
+  assert.match(JSON.parse(root.body).error, /maps\/nope\.yaml/);
+});
+
+test('map summaries expose hasFlags and hasIssues', async () => {
+  const source = [
+    'name: Flagged',
+    'nodes:',
+    '  - id: a  # inferred: never stated outright',
+    '    type: process',
+    '    label: A',
+    '  - id: b',
+    '    type: system',
+    '    label: B',
+    'edges:',
+    '  - from: a',
+    '    to: b',
+    '    issue: "drops orders weekly"',
+    '',
+  ].join('\n');
+  const put = await api('PUT', '/api/maps/atlas-logistics/flagged', { source });
+  assert.equal(put.status, 200);
+  const maps = JSON.parse((await raw({ p: '/api/maps' })).body);
+  const flagged = maps.find((m) => m.id === 'atlas-logistics/flagged');
+  assert.equal(flagged.hasFlags, true);
+  assert.equal(flagged.hasIssues, true);
+  const plain = maps.find((m) => m.id === 'root-map');
+  assert.equal(plain.hasFlags, false);
+  assert.equal(plain.hasIssues, false);
+});
+
+const standalonePayload = (body) => JSON.parse(body.match(/window\.OPSMAP_STANDALONE = (\{.*?\});<\/script>/s)[1]);
+
+test('project export bundles the lead map with the project context', async () => {
+  // an explicit order makes the lead map deterministic
+  writeFileSync(path.join(work, 'projects', 'atlas-logistics', 'projects.yaml'), 'name: Atlas Logistics\norder:\n  - order-flow\n');
+  const res = await raw({ p: '/export/project/atlas-logistics.html' });
+  assert.equal(res.status, 200);
+  assert.match(res.headers['content-type'], /text\/html/);
+  assert.match(res.headers['content-disposition'], /attachment; filename="atlas-logistics-serigraph\.html"/);
+  const payload = standalonePayload(res.body);
+  assert.equal(payload.id, 'atlas-logistics/order-flow', 'opens on the first map in "order:"');
+  assert.match(payload.source, /Renamed Flow/);
+  assert.deepEqual(Object.keys(payload.project), ['slug', 'name', 'maps']);
+  assert.equal(payload.project.slug, 'atlas-logistics');
+  assert.equal(payload.project.name, 'Atlas Logistics');
+  const ids = payload.project.maps.map((m) => m.id).sort();
+  assert.deepEqual(ids, ['atlas-logistics/flagged', 'atlas-logistics/legacy', 'atlas-logistics/order-flow']);
+  assert.ok(!ids.includes('atlas-logistics/projects'), 'the index is not a map in the bundle either');
+});
+
+test('project export 404s for unknown or empty projects, 400 for bad slugs', async () => {
+  const made = await api('POST', '/api/projects', { name: 'Empty Proj' });
+  assert.equal(made.status, 201);
+  const empty = await raw({ p: '/export/project/empty-proj.html' });
+  assert.equal(empty.status, 404);
+  assert.match(empty.body, /no maps to export/);
+  const unknown = await raw({ p: '/export/project/nope.html' });
+  assert.equal(unknown.status, 404);
+  assert.match(unknown.body, /no project "nope"/);
+  const bad = await raw({ p: '/export/project/bad%20slug.html' });
+  assert.equal(bad.status, 400);
+});
+
+test('single-map export of a project map embeds the project context', async () => {
+  const res = await raw({ p: '/export/atlas-logistics/order-flow.html' });
+  assert.equal(res.status, 200);
+  assert.match(res.headers['content-disposition'], /atlas-logistics-order-flow-serigraph\.html/);
+  const payload = standalonePayload(res.body);
+  assert.equal(payload.id, 'atlas-logistics/order-flow');
+  assert.equal(payload.project.slug, 'atlas-logistics');
+
+  const root = await raw({ p: '/export/root-map.html' });
+  assert.equal(root.status, 200);
+  assert.equal(standalonePayload(root.body).project, null, 'root maps export without project context');
+});
+
+test('"project" is a reserved project slug (keeps /export/project/<slug> unambiguous)', async () => {
+  const made = await api('POST', '/api/projects', { name: 'project' });
+  assert.equal(made.status, 400);
+  const created = await api('POST', '/api/maps', { name: 'X', project: 'project' });
+  assert.equal(created.status, 400);
+  const moved = await api('POST', '/api/maps/root-map/move', { project: 'project' });
+  assert.equal(moved.status, 400);
+});

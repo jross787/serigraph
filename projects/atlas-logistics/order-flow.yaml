@@ -1,0 +1,132 @@
+# Atlas Logistics — Order Flow (seeded example)
+# A consulting engagement map of the order-to-cash process: intake, credit
+# hold, allocation, warehouse, and billing. Every integration handoff names
+# how the data moves (kind: api | file | manual | event); the one confirmed
+# problem is marked with issue:. Seeded demo data, not a real client.
+name: Atlas Logistics — Order Flow
+description: How a customer order moves from intake through credit, allocation, and the warehouse to invoicing — and where the billing handoff keeps breaking.
+
+nodes:
+  - id: order-intake
+    type: process
+    label: Order intake
+    description: Customer service enters new orders from email and phone into the ERP during the call. About 1,400 orders a month.
+    owner: Customer service
+    systems: [ Infor ERP ]
+    cost: { runs: 1400 }
+
+  - id: erp
+    type: system
+    label: Infor ERP
+    description: Source of truth for customers, orders, inventory, and invoices. Runs the credit check on every new order.
+
+  - id: credit-check
+    type: decision
+    label: Credit OK?
+
+  - id: hold-review
+    type: process
+    label: Review credit hold
+    description: The credit team works the hold queue each morning — checking open balances and payment history before releasing an order.
+    owner: Credit team
+    automation: manual
+    trigger: Daily 8am
+
+  - id: credit-team
+    type: role
+    label: Credit team
+    description: Two analysts who own credit limits, holds, and releases.
+
+  - id: allocate
+    type: process
+    label: Allocate inventory
+    description: The ERP reserves stock for released orders and builds the pick wave for the warehouse.
+    automation: automated
+
+  - id: wms
+    type: system
+    label: Manhattan WMS
+    description: Warehouse management system. Receives pick waves, directs pickers by scan gun, and confirms shipments back to the ERP.
+
+  - id: pick-pack
+    type: process
+    label: Pick & pack
+    description: Warehouse staff pick each order by scan gun and pack it for the booked carrier.
+    owner: Warehouse team
+    automation: manual
+    cost: { runs: 1400 }
+
+  - id: ship
+    type: process
+    label: Ship order
+    description: The carrier collects packed orders; the WMS fires a shipment webhook with the tracking number.
+    automation: automated
+
+  - id: billing
+    type: process
+    label: Generate invoices
+    description: Billing runs nightly over the day's shipment file and emails invoices from the ERP.
+    automation: automated
+    trigger: Nightly 1am
+
+  - id: invoice
+    type: artifact
+    label: Customer invoice
+    description: The invoice PDF emailed to the customer and posted to the finance ledger.
+
+  - id: billing-lead
+    type: role
+    label: Billing lead
+    description: Owns billing exceptions and the dispute queue when invoices go out short.
+
+edges:
+  - from: order-intake
+    to: erp
+    kind: api
+    label: saves order
+  - from: erp
+    to: credit-check
+    kind: api
+    label: credit lookup
+  - from: credit-check
+    to: allocate
+    label: approved
+  - from: credit-check
+    to: hold-review
+    label: held
+  - from: credit-team
+    to: hold-review
+    kind: manual
+    label: works queue
+  - from: hold-review
+    to: allocate
+    kind: manual
+    label: releases order
+  - from: allocate
+    to: wms
+    kind: api
+    label: pick wave
+  - from: wms
+    to: pick-pack
+    kind: manual
+    label: scan-directed work
+  - from: pick-pack
+    to: ship
+    label: packed
+  - from: ship
+    to: erp
+    kind: event
+    label: shipment webhook
+  - from: erp
+    to: billing
+    kind: file
+    label: nightly shipment file
+    issue: The nightly shipment file silently drops partial-shipment lines, so split orders are invoiced short until a customer disputes the bill.
+  - from: billing
+    to: invoice
+    kind: api
+    label: emails invoice
+  - from: billing-lead
+    to: billing
+    kind: manual
+    label: works exceptions

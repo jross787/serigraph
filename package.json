@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server/main.js",
     "test": "node --test 'tests/**/*.test.js'",
-    "validate": "node tools/validate.mjs maps/*.yaml templates/*.yaml"
+    "validate": "node tools/validate.mjs"
   },
   "engines": {
     "node": ">=18"

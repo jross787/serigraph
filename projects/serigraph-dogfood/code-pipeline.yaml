@@ -1,0 +1,94 @@
+# Serigraph — Code Pipeline (seeded example)
+# Serigraph's own YAML → parse → validate → render → export pipeline, mapped
+# in Serigraph. System nodes name the real components: shared/model.js (the
+# parser), tools/validate.mjs (the validator), app/ (the canvas), and
+# server/export.js (the exporter). Seeded demo data about this repository.
+name: Serigraph — Code Pipeline
+description: How a Serigraph YAML file becomes an interactive map — parse, validate, render, and export — with the real component behind each stage.
+
+nodes:
+  - id: edit-map
+    type: process
+    label: Edit the map
+    description: A human edits the canvas or the YAML text; a software agent writes the same file. Comment-preserving edits keep provenance flags and notes intact.
+    automation: assisted
+
+  - id: map-file
+    type: artifact
+    label: Map YAML file
+    description: maps/<name>.yaml or projects/<slug>/<name>.yaml — the single source of truth the app, humans, and agents all read and write.
+
+  - id: parser
+    type: system
+    label: shared/model.js
+    description: The one parser used by the app, the server, and the CLI. It builds the normalized model, reports errors with line numbers, and keeps source tokens so edits write back without dropping comments.
+
+  - id: is-valid
+    type: decision
+    label: Parses clean?
+
+  - id: fix-errors
+    type: process
+    label: Fix reported errors
+    description: Each error names the line and the rule it broke. Fix the YAML, save, and the loop runs again.
+    owner: Map author
+    automation: manual
+
+  - id: canvas
+    type: system
+    label: Serigraph app (app/)
+    description: The zero-build web app. Renders the model as a nested canvas and the Map, Flow, Brief, Roadmap, and Audit views; the server's watcher live-reloads it when the file changes.
+
+  - id: exporter
+    type: system
+    label: server/export.js
+    description: Share & export inlines the app code and the map source into one read-only HTML file that works offline.
+
+  - id: bundle
+    type: artifact
+    label: Standalone HTML export
+    description: A single portable file that opens in any browser with no server, account, or network.
+
+  - id: validator
+    type: system
+    label: tools/validate.mjs
+    description: The zero-dependency CLI gate — `npm run validate` runs the same shared parser over every checked-in map and template.
+
+edges:
+  - from: edit-map
+    to: map-file
+    kind: file
+    label: saves YAML
+  - from: map-file
+    to: parser
+    kind: file
+    label: read on change
+  - from: parser
+    to: is-valid
+    label: model or errors
+  - from: is-valid
+    to: canvas
+    kind: api
+    label: valid model
+  - from: is-valid
+    to: fix-errors
+    label: errors with lines
+  - from: fix-errors
+    to: edit-map
+    kind: manual
+    label: fix and re-save
+  - from: canvas
+    to: exporter
+    kind: api
+    label: Share & export
+  - from: exporter
+    to: bundle
+    kind: file
+    label: writes HTML
+  - from: map-file
+    to: validator
+    kind: file
+    label: npm run validate
+  - from: validator
+    to: fix-errors
+    label: fails the check

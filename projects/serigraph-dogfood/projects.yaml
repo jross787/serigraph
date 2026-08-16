@@ -1,0 +1,9 @@
+# Project index for the Projects home. Every field is optional; unknown map
+# slugs in order/tags are ignored. Maps in this folder are ordinary Serigraph
+# maps — see docs/FORMAT.md.
+name: Serigraph Dogfood
+description: Serigraph mapped in itself — the code pipeline that turns a YAML file on disk into an interactive map and a standalone export.
+order:
+  - code-pipeline
+tags:
+  code-pipeline: Code pipeline

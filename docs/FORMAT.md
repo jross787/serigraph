@@ -4,6 +4,25 @@ A Serigraph file is one YAML document describing a freeform map, an operating pr
 
 The top-level `mode` chooses the editing surface. Files without `mode` remain valid and use process mode. Product-document fields are optional.
 
+## Projects
+
+Related maps can live together as a project: a folder at `projects/<slug>/` holding ordinary Serigraph map files, plus one optional index file, `projects/<slug>/projects.yaml`. Maps that belong to no project stay in `maps/`. A map inside a project is an ordinary map — everything in this document applies unchanged. Only its id changes: it is addressed as `<project>/<map>`.
+
+The index is optional, and every field in it is optional:
+
+```yaml
+name: Atlas Logistics — Operations Review  # display name; defaults to the folder slug
+description: A consulting engagement.      # optional short text
+order:                                     # optional tile order on the Projects home
+  - order-flow
+  - systems
+tags:                                      # optional badge label per map
+  order-flow: Business process
+  systems: Systems
+```
+
+`order` and `tags` name map slugs — file names without the `.yaml` extension. Unknown slugs are ignored.
+
 ## Top level
 
 ```yaml

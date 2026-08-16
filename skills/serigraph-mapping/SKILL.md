@@ -81,6 +81,28 @@ The Flow view (view switcher > Flow) is a rotatable 3D animated reading of a pro
 - Prefix a YAML comment with `# inferred:` only when an inference is necessary and useful. State why it is uncertain.
 - Never invent owners, update frequency, API behavior, table names, data fields, controls, or source-of-truth status.
 
+### Group an engagement into a project
+
+When an engagement spans several maps — a process map and a system landscape for the same client, for example — keep them in a project instead of loose files:
+
+1. Create `projects/<slug>/` and place the ordinary map YAML files inside it.
+2. Add an optional `projects/<slug>/projects.yaml` index with a display name, a description, an `order:` list, and a `tags:` label per map:
+
+   ```yaml
+   name: Atlas Logistics — Operations Review
+   description: Order-to-cash process and the systems behind it.
+   order:
+     - order-flow
+     - systems
+   tags:
+     order-flow: Business process
+     systems: Systems
+   ```
+
+3. Tag every map — the Projects home shows the tag as the tile's badge.
+4. Keep file names stable. A map's id becomes `<project>/<map>`, and moving a file between `maps/` and a project folder changes that id.
+5. Validate the whole project folder after editing: `node tools/validate.mjs projects/<slug>/*.yaml`.
+
 ## 5. Write the file
 
 1. Create a descriptive kebab-case filename under `maps/`.

@@ -1,0 +1,107 @@
+# Atlas Logistics — Systems (seeded example)
+# The system landscape behind the order-to-cash process: the CRM, ERP, and
+# WMS the engagement found, the reporting database that copies from them,
+# and the API gateway in front. Freeform: each element is defined once and
+# placed into groups with `use:`. Seeded demo data, not a real client.
+name: Atlas Logistics — Systems
+description: The systems the operations review found — CRM, ERP, WMS, the reporting database, and the API gateway — and who owns each.
+mode: freeform
+elements:
+  - id: sales-cs
+    type: role
+    label: Sales & Customer Service
+    description: Owns the customer record, contact data, and access rules in the CRM.
+  - id: it-integrations
+    type: role
+    label: IT & Integrations
+    description: Owns the ERP, WMS, the API gateway, and every integration between them.
+  - id: data-analyst
+    type: role
+    label: Data analyst
+    description: Owns the reporting database, its nightly loads, and the definitions behind the dashboards.
+  - id: crm
+    type: system
+    label: Salesforce CRM
+    description: Source of truth for accounts, contacts, and open orders entered by customer service.
+    owners:
+      - to: sales-cs
+        role: owner
+  - id: erp
+    type: system
+    label: Infor ERP
+    description: Source of truth for customers on credit hold, released orders, inventory, and invoices.
+    owners:
+      - to: it-integrations
+        role: owner
+  - id: wms
+    type: system
+    label: Manhattan WMS
+    description: Warehouse management system. Receives pick waves from the ERP and confirms shipments back by webhook.
+    owners:
+      - to: it-integrations
+        role: owner
+  - id: reporting-db
+    type: database
+    label: Reporting database
+    description: A Postgres reporting store that receives nightly copies of CRM and ERP data. It is not the source of truth.
+    owners:
+      - to: data-analyst
+        role: owner
+  - id: api-gateway
+    type: api
+    label: API gateway
+    description: The supported interface in front of the ERP for carrier tracking lookups and customer order-status calls.
+    owners:
+      - to: it-integrations
+        role: owner
+nodes:
+  - id: core-systems
+    type: item
+    label: Core systems
+    children:
+      nodes:
+        - use: sales-cs
+        - use: crm
+        - use: it-integrations
+        - use: erp
+        - use: wms
+      edges:
+        - from: sales-cs
+          to: crm
+          label: "owns"
+        - from: it-integrations
+          to: erp
+          label: "owns"
+        - from: it-integrations
+          to: wms
+          label: "owns"
+        - from: crm
+          to: erp
+          label: "syncs accounts and orders"
+        - from: erp
+          to: wms
+          label: "sends pick waves"
+        - from: wms
+          to: erp
+          label: "confirms shipments"
+  - id: integration-reporting
+    type: item
+    label: Integration & reporting
+    children:
+      nodes:
+        - use: erp
+          note: The ERP sits in both groups — it is the operational core and the source every report copies from.
+        - use: api-gateway
+        - use: reporting-db
+        - use: data-analyst
+      edges:
+        - from: api-gateway
+          to: erp
+          label: "routes partner calls"
+        - from: erp
+          to: reporting-db
+          label: "nightly extract"
+        - from: data-analyst
+          to: reporting-db
+          label: "owns"
+edges: []

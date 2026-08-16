@@ -441,7 +441,7 @@ function downloadMarkdown() {
   if (!state.model) return;
   const blob = new Blob([productDocumentMarkdown(state.model)], { type: 'text/markdown;charset=utf-8' });
   const href = URL.createObjectURL(blob);
-  const anchor = h('a', { href, download: `${state.mapId || 'serigraph'}-${state.model.document.kind}.md` });
+  const anchor = h('a', { href, download: `${(state.mapId || 'serigraph').replace(/\//g, '-')}-${state.model.document.kind}.md` });
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
