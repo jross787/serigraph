@@ -26,23 +26,26 @@ Use the map switcher, or open these seeded examples directly:
 
 Choose a mode when you create a map:
 
-- **Process** maps work from step to step. They include decisions, owner lanes, path tracing, automation, cost, Brief, Roadmap, and Audit.
+- **Process** maps work from step to step. They include decisions, owner lanes, path tracing, automation, cost, Flow, Brief, Roadmap, and Audit.
 - **Freeform** maps systems, databases, APIs, people, documents, and other items. One shared element can appear in several groups without copying its facts.
 
 Files without a `mode` field use Process mode. A populated map cannot switch modes because Process and Freeform files store their contents differently. Use the **Systems of Record** template to start a Freeform map.
 
-## One source, four useful views
+## One source, five useful views
 
 The file is the truth. A graph lives in `maps/<name>.yaml`; visual edits write back to that file, file edits live-reload into the canvas, and YAML comments survive supported edits.
 
-The view switcher turns that one graph into four working surfaces:
+The view switcher turns that one graph into five working surfaces:
 
 | View | What it is for |
 |---|---|
 | **Map** | Design the process or product story as a nested, navigable graph. |
+| **Flow** | Watch the operating model in motion: a rotatable 3D view where every node is a building and moving payloads are the work items, paced by the monthly volume recorded in the file. Lanes show how each handoff moves — API, file, manual re-entry, or event — and confirmed issues render loudly. Drag to rotate, ⌘-drag to pan, scroll to zoom, drag a building to move it, click a payload to inspect the handoff it represents, or trace a named flow one step at a time. |
 | **Brief** | Read a graph-backed PRD with goals, problems, objectives, requirements, acceptance criteria, evidence, decisions, risks, and metrics. |
 | **Roadmap** | See eligible planning nodes in Now, Next, Later, named-target, and Unscheduled lanes; filter by status, priority, owner, or text. |
 | **Audit** | Run deterministic readiness checks for ownership, proof, traceability, priority, scheduling, dependencies, risk coverage, and cycles. |
+
+For data-movement maps, open the seeded example: [Order Data Flow — Integration Demo](http://localhost:4700/#/map/data-flow-demo). Add `kind: api | file | manual | event` to an edge to state how the data moves, and `issue:` to record a confirmed problem — the Flow view styles the lanes and lists the issues.
 
 Open the checked-in examples after starting the app:
 

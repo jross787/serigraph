@@ -61,6 +61,19 @@ Do not force a system landscape into process semantics. Do not remove process fi
 - Edges only connect siblings in one scope. Use a flat top level unless nesting clearly improves the user's question.
 - Prefer automatic layout. Add `position:` only when browser review proves that the automatic layout obscures the story.
 
+### Data-flow handoffs
+
+- When the user's question is how data moves — APIs, file drops, manual re-entry, events — stay in process mode so the Flow view can animate it.
+- Put `kind:` on every integration handoff: `api` for API calls, `file` for file transfers, `manual` for re-keyed or hand-carried data, `event` for events and webhooks.
+- Record a confirmed problem with `issue:` on the edge.
+- Keep edge labels at 4 words or fewer; long labels clutter the isometric view.
+- Add `cost.runs` as a monthly volume only when a source states it; the volume drives animation pacing.
+- Never invent volumes or issues.
+
+### The Flow view
+
+The Flow view (view switcher > Flow) is a rotatable 3D animated reading of a process map: drag rotates, right-drag or ⌘-drag pans, scroll zooms. Buildings are nodes, moving payloads are work items, each edge `kind:` gets a distinct lane style, and edges with `issue:` render loudly. Dragging a building moves it and writes `flowPosition: { col, row }` on the node. Prefer automatic placement. Add `flowPosition` only when browser review proves the automatic placement obscures the story, the same rule as `position:`.
+
 ### Evidence and uncertainty
 
 - Use descriptions to state what the source confirms, not generic product marketing.
@@ -106,6 +119,7 @@ edges:
 4. Confirm the correct mode, node types, labels, edge directions, and readable layout.
 5. Check the browser console for errors.
 6. For freeform maps, confirm that process-only controls are hidden. For process maps, confirm that Add step, owner lanes, automation, and product views remain available.
+7. For data-flow maps, open the Flow view (view switcher > Flow). Confirm edge kinds appear in the legend, issues show on the edges and in the edge panel, and the console stays clean.
 
 ## Output
 
