@@ -345,6 +345,29 @@ export function clearNodePosition(nodeId, ownerId = state.scopeId) {
   if (doc.getIn([...p, 'position'], true)) doc.deleteIn([...p, 'position']);
 }
 
+// Pin a node on the Flow view's ground grid: flowPosition is the node's
+// { col, row } cell, written as a one-line flow map like a node position.
+// Clearing it returns the node to automatic placement in the Flow view.
+export function setNodeFlowPosition(nodeId, { col, row }, ownerId = state.scopeId) {
+  const doc = state.doc;
+  const p = state.model?.mode === 'freeform' && state.model.elementById?.has(nodeId)
+    ? findPlacementPath(doc, ownerId, nodeId)
+    : findNodePath(doc, nodeId);
+  if (!p) throw new Error(`node "${nodeId}" not found in this group`);
+  const round = (v) => Math.round(v * 100) / 100;
+  doc.setIn([...p, 'flowPosition'], doc.createNode({ col: round(col), row: round(row) }, { flow: true }));
+  tidyKeyOrder(doc, p);
+}
+
+export function clearNodeFlowPosition(nodeId, ownerId = state.scopeId) {
+  const doc = state.doc;
+  const p = state.model?.mode === 'freeform' && state.model.elementById?.has(nodeId)
+    ? findPlacementPath(doc, ownerId, nodeId)
+    : findNodePath(doc, nodeId);
+  if (!p) throw new Error(`node "${nodeId}" not found in this group`);
+  if (doc.getIn([...p, 'flowPosition'], true)) doc.deleteIn([...p, 'flowPosition']);
+}
+
 // Cost inputs (human-vs-agent economics, FORMAT.md). `fields` carries any of
 // { runs, minutes, rate, perRun, setup }; a number sets, null clears, absent
 // keys keep their current value. Clearing everything removes the block.
@@ -481,7 +504,7 @@ export function setReviewResolved(nodeId, reviewId, resolved) {
 const KEY_ORDER = [
   'id', 'type', 'label', 'description', 'owner', 'owners', 'trigger', 'sla',
   'automation', 'systems', 'planning', 'links', 'relations', 'review',
-  'cost', 'note', 'position', 'children',
+  'cost', 'note', 'position', 'flowPosition', 'children',
 ];
 function tidyKeyOrder(doc, nodePath) {
   const map = doc.getIn(nodePath, true);

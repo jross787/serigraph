@@ -12,8 +12,9 @@ import {
   planningInventory,
   productDocumentMarkdown,
 } from './product.js';
+import { renderFlow, stopFlow } from './flow.js';
 
-const VIEWS = ['map', 'brief', 'roadmap', 'audit'];
+const VIEWS = ['map', 'flow', 'brief', 'roadmap', 'audit'];
 let filters = { status: 'all', priority: 'all', owner: 'all', query: '' };
 let auditSeverity = 'all';
 let dialogFieldId = 0;
@@ -384,7 +385,8 @@ function render({ preserveScroll = false, restoreFocus = null } = {}) {
   const scrollTop = panel.scrollTop;
   const scrollLeft = panel.scrollLeft;
   if (!preserveScroll) panel.scrollTop = 0;
-  if (state.workspaceView === 'brief') renderBrief(panel);
+  if (state.workspaceView === 'flow') renderFlow(panel);
+  else if (state.workspaceView === 'brief') renderBrief(panel);
   else if (state.workspaceView === 'roadmap') renderRoadmap(panel);
   else renderAudit(panel);
   if (preserveScroll) {
@@ -407,6 +409,7 @@ function render({ preserveScroll = false, restoreFocus = null } = {}) {
 
 export function setWorkspaceView(view) {
   if (!VIEWS.includes(view)) view = 'map';
+  if (view !== 'flow') stopFlow();
   if (view !== 'roadmap') roadmapSearchComposing = false;
   state.workspaceView = view;
   const panel = document.getElementById('product-workspace');

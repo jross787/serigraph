@@ -18,7 +18,7 @@ export const state = {
   connectFrom: null,   // node id while in connect mode
   pendingEdgeLabel: null, // branch label to apply when a connect completes
   presenting: false,
-  workspaceView: 'map', // map | brief | roadmap | audit
+  workspaceView: 'map', // map | flow | brief | roadmap | audit
 
   // Workbench modes are intentionally ephemeral. The document remains YAML;
   // the editor state should never make a map harder to move or review.

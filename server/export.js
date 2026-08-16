@@ -17,6 +17,8 @@ const MODULE_FILES = [
   'app/edit.js',
   'app/controller.js',
   'app/opportunity.js',
+  'app/flow-core.js',
+  'app/flow.js',
   'app/product.js',
   'app/ui.js',
   'app/present.js',
