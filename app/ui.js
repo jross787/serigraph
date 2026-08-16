@@ -900,13 +900,86 @@ function confirmDelete(node) {
       ? `This also deletes the ${n} node${n === 1 ? '' : 's'} nested inside it, plus any edges touching it.`
       : 'Any edges touching it are removed too.'),
     [{ label: 'Cancel' }, {
-      label: 'Delete', danger: true,
+      label: 'Delete', danger: true, primary: true,
       onClick: () => {
         hideDetail();
         ctrl.commit(() => edit.deleteNode(node.id), { select: null })
           .then((ok) => ok && toast(`Deleted “${node.label}”`));
       },
     }]);
+}
+
+function confirmDeleteEdge(index) {
+  const scope = state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children;
+  const e = scope?.edges?.[index];
+  if (!e) return;
+  const from = state.model.byId.get(e.from)?.label ?? e.from;
+  const to = state.model.byId.get(e.to)?.label ?? e.to;
+  modal('Delete this connection?',
+    h('p', { class: 'hint' }, `The arrow from “${from}” to “${to}” will be removed.`),
+    [{ label: 'Cancel' }, {
+      label: 'Delete', danger: true, primary: true,
+      onClick: () => ctrl.commit(() => edit.deleteEdge(state.scopeId, index))
+        .then((ok) => { if (ok) { ctrl.selectEdge(null); hideDetail(); toast('Connection deleted'); } }),
+    }]);
+}
+
+// Delete whatever is selected (node or edge), always behind a confirm.
+export function requestDelete() {
+  if (state.standalone || !state.model || state.presenting) return false;
+  if (state.selectedId) {
+    const node = state.model.byId.get(state.selectedId);
+    if (node) { confirmDelete(node); return true; }
+  }
+  if (state.selectedEdge != null) { confirmDeleteEdge(state.selectedEdge.index); return true; }
+  return false;
+}
+
+// ── right-click context menu ─────────────────────────────────────────
+let contextMenuEl = null;
+function closeNodeMenu() {
+  if (contextMenuEl) { contextMenuEl.remove(); contextMenuEl = null; }
+  document.removeEventListener('pointerdown', onMenuOutside, true);
+  document.removeEventListener('keydown', onMenuKey, true);
+  window.removeEventListener('blur', closeNodeMenu);
+}
+function onMenuOutside(ev) { if (contextMenuEl && !contextMenuEl.contains(ev.target)) closeNodeMenu(); }
+function onMenuKey(ev) { if (ev.key === 'Escape') { ev.stopPropagation(); closeNodeMenu(); } }
+
+// Open the Serigraph context menu for a node at screen coordinates.
+export function openNodeMenu(nodeId, x, y) {
+  const node = state.model?.byId.get(nodeId);
+  if (!node || state.presenting) return;
+  closeNodeMenu();
+  editMode = false;
+  automationMode = false;
+  armContextActions(nodeId);
+  ctrl.selectNode(nodeId);
+  const ro = state.standalone;
+  const freeform = isFreeform();
+  const run = (fn) => () => { closeNodeMenu(); fn(); };
+  const items = [
+    node.children ? h('button', { onClick: run(() => ctrl.diveInto(node.id)) }, 'Open') : null,
+    h('button', { onClick: run(() => navigator.clipboard?.writeText(ctrl.nodeUrl(node.id)).then(() => toast('Link copied'))) }, 'Copy link'),
+    ro ? null : h('button', { onClick: run(beginEdit) }, 'Edit'),
+    ro ? null : h('button', { onClick: run(() => beginConnect(node)) }, 'Connect'),
+    ro || freeform || node.type !== 'decision' ? null : h('button', { onClick: run(() => beginBranch(node)) }, 'Branch'),
+    ro ? null : h('button', { onClick: run(() => askAiAbout(node.id)) }, 'AI'),
+    ro || freeform ? null : h('button', { class: 'automate', onClick: run(() => beginAutomation(node)) }, 'Automate'),
+    ro || !node.children ? null : h('button', { onClick: run(() => addNodeDialog(node.id)) }, freeform ? 'Add item' : 'Add child'),
+    ro ? null : h('div', { class: 'context-menu-sep' }),
+    ro ? null : h('button', { class: 'danger', onClick: run(() => confirmDelete(node)) }, 'Delete'),
+  ].filter(Boolean);
+  const menu = h('div', { class: 'node-context-menu', role: 'menu' }, ...items);
+  contextMenuEl = menu;
+  document.getElementById('dialog-root').append(menu);
+  const mw = menu.offsetWidth || 160;
+  const mh = menu.offsetHeight || 200;
+  menu.style.left = `${Math.max(8, Math.min(window.innerWidth - mw - 8, x))}px`;
+  menu.style.top = `${Math.max(8, Math.min(window.innerHeight - mh - 8, y))}px`;
+  document.addEventListener('pointerdown', onMenuOutside, true);
+  document.addEventListener('keydown', onMenuKey, true);
+  window.addEventListener('blur', closeNodeMenu);
 }
 
 function beginEdit() {
@@ -979,17 +1052,19 @@ function renderContextActions(node) {
   if (!actions || contextActionsArmed !== node.id || editMode || automationMode || state.presenting) return hideContextActions();
   const ro = state.standalone;
   const freeform = isFreeform();
-  const more = h('details', { class: 'context-more' },
-    h('summary', { class: 'context-btn' }, 'More'),
-    h('div', { class: 'context-menu' },
-      node.children ? h('button', { onClick: () => addNodeDialog(node.id) }, freeform ? 'Add item' : 'Add child') : null,
-      node.links.map((l) => {
-        const href = safeUrl(l.url);
-        return href ? h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, l.label) : null;
-      }),
-      node.links.length ? h('button', { onClick: () => navigator.clipboard?.writeText(ctrl.nodeUrl(node.id)).then(() => toast('Link copied')) }, 'Copy deep link') : null,
-      !ro ? h('button', { class: 'danger', onClick: () => confirmDelete(node) },
-        freeform ? (node.isElement ? 'Remove or delete' : 'Delete group') : 'Delete step') : null));
+  const moreItems = [
+    node.children ? h('button', { onClick: () => addNodeDialog(node.id) }, freeform ? 'Add item' : 'Add child') : null,
+    ...node.links.map((l) => {
+      const href = safeUrl(l.url);
+      return href ? h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, l.label) : null;
+    }),
+    node.links.length ? h('button', { onClick: () => navigator.clipboard?.writeText(ctrl.nodeUrl(node.id)).then(() => toast('Link copied')) }, 'Copy deep link') : null,
+  ].filter(Boolean);
+  const more = moreItems.length
+    ? h('details', { class: 'context-more' },
+        h('summary', { class: 'context-btn' }, 'More'),
+        h('div', { class: 'context-menu' }, ...moreItems))
+    : null;
   const primary = [
     h('button', {
       class: 'context-btn',
@@ -1000,8 +1075,9 @@ function renderContextActions(node) {
     ro || freeform || node.type !== 'decision' ? null : h('button', { class: 'context-btn', onClick: () => beginBranch(node) }, 'Branch'),
     ro ? null : h('button', { class: 'context-btn', onClick: () => askAiAbout(node.id) }, 'AI'),
     ro || freeform ? null : h('button', { class: 'context-btn automate', onClick: () => beginAutomation(node) }, 'Automate'),
+    ro ? null : h('button', { class: 'context-btn danger', onClick: () => confirmDelete(node) }, 'Delete'),
   ].filter(Boolean);
-  actions.replaceChildren(...primary, more);
+  actions.replaceChildren(...primary, ...(more ? [more] : []));
   actions.hidden = false;
   requestAnimationFrame(positionContextActions);
 }

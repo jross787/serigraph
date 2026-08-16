@@ -1668,6 +1668,15 @@ function wirePointer() {
     ev.preventDefault();
   });
 
+  svg.addEventListener('contextmenu', (ev) => {
+    if (state.presenting || state.standalone || !state.model) return;
+    const nodeEl = ev.target.closest?.('.node');
+    if (nodeEl && currentLayer?.contains(nodeEl)) {
+      ev.preventDefault();
+      bus.emit('node-contextmenu', nodeEl.dataset.id, ev.clientX, ev.clientY);
+    }
+  });
+
   svg.addEventListener('wheel', (ev) => {
     ev.preventDefault();
     const rect = svg.getBoundingClientRect();
