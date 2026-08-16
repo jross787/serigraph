@@ -4,6 +4,7 @@ import * as YAML from '../vendor/yaml.js';
 
 export const MAP_MODES = ['process', 'freeform'];
 export const ROUTE_STYLES = ['curved', 'straight', 'angled', 'stepped'];
+export const EDGE_KINDS = ['api', 'file', 'manual', 'event'];
 export const PROCESS_NODE_TYPES = ['process', 'decision', 'system', 'role', 'artifact'];
 export const FREEFORM_NODE_TYPES = ['item', 'system', 'database', 'api', 'role', 'artifact'];
 export const NODE_TYPES = [...new Set([...PROCESS_NODE_TYPES, ...FREEFORM_NODE_TYPES])];
@@ -122,6 +123,16 @@ export function parseMap(source) {
       return { x: raw.x, y: raw.y };
     }
     err(path, `Node "${id}": "${field}:" must be a map of two numbers, e.g. ${field}: { x: 340, y: 120 }.`);
+    return null;
+  };
+
+  const normalizeFlowPosition = (raw, path, id) => {
+    if (raw == null) return null;
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)
+      && Number.isFinite(raw.col) && Number.isFinite(raw.row)) {
+      return { col: raw.col, row: raw.row };
+    }
+    err(path, `Node "${id}": "flowPosition:" must be a map of two numbers, e.g. flowPosition: { col: 3, row: 1 }.`);
     return null;
   };
 
@@ -283,6 +294,7 @@ export function parseMap(source) {
         err([...npath, 'note'], `Element "${id}" cannot have a shared note. Put "note:" on each placement.`);
       }
       const position = elementMode ? null : normalizePosition(raw.position, [...npath, 'position'], id);
+      const flowPosition = elementMode ? null : normalizeFlowPosition(raw.flowPosition, [...npath, 'flowPosition'], id);
 
       // optional cost block — human-vs-agent economics inputs (FORMAT.md).
       // Missing numbers stay null (unknown ≠ zero); negatives are errors.
@@ -432,6 +444,7 @@ export function parseMap(source) {
         systems,
         links,
         position,
+        flowPosition,
         cost,
         relations,
         review,
@@ -513,11 +526,25 @@ export function parseMap(source) {
       if (route != null && !ROUTE_STYLES.includes(route)) {
         err([...epath, 'route'], `Edge ${from} → ${to}: "route:" must be one of: ${ROUTE_STYLES.join(', ')}.`);
       }
+      const kind = raw.kind == null ? null : String(raw.kind);
+      if (kind != null && !EDGE_KINDS.includes(kind)) {
+        err([...epath, 'kind'], `Edge ${from} → ${to}: "kind:" must be one of: ${EDGE_KINDS.join(', ')}.`);
+      }
+      let issue = null;
+      if (raw.issue != null) {
+        if (typeof raw.issue === 'string') {
+          issue = raw.issue.trim() || null;
+        } else {
+          err([...epath, 'issue'], `Edge ${from} → ${to}: "issue:" must be a string.`);
+        }
+      }
       edges.push({
         from, to,
         label: typeof raw.label === 'string' ? raw.label : '',
         via: normalizePosition(raw.via, [...epath, 'via'], `${from} → ${to}`, 'via'),
         route: ROUTE_STYLES.includes(route) ? route : null,
+        kind: EDGE_KINDS.includes(kind) ? kind : null,
+        issue,
       });
     });
 
