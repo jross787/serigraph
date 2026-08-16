@@ -136,8 +136,8 @@ edges:
 ## 6. Verify the result
 
 1. Run `npm run validate` from the repository root.
-2. Start or reuse the local Serigraph server.
-3. Open `http://localhost:4700/#/map/<file-id>` in a browser.
+2. Start or reuse the local Serigraph server: `npm start`, or `node server/main.js --no-open` to skip the browser popup. Use `PORT=<n> npm start` if port 4700 is busy.
+3. Open `http://localhost:4700/#/map/<file-id>` in a browser. Deep-link a specific node with `http://localhost:4700/#/map/<file-id>/node/<node-id>`.
 4. Confirm the correct mode, node types, labels, edge directions, and readable layout.
 5. Check the browser console for errors.
 6. For freeform maps, confirm that process-only controls are hidden. For process maps, confirm that Add step, owner lanes, automation, and product views remain available.
