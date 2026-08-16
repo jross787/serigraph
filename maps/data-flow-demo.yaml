@@ -1,0 +1,144 @@
+# Order Data Flow — Integration Demo (seeded example)
+# An outside consultant's map of an order-to-fulfillment pipeline across a CRM,
+# an ERP, a warehouse system, and a finance export. Every integration handoff
+# names how the data moves (kind: api | file | manual | event); the two
+# confirmed problems are marked with issue:. Seeded demo data, not a client.
+name: Order Data Flow — Integration Demo
+description: How an order moves from CRM intake through validation, ERP sync, warehouse fulfillment, and the nightly finance export — and which two handoffs keep breaking.
+mode: process
+nodes:
+  - id: order-intake
+    type: process
+    label: Order intake
+    description: Sales reps enter new orders in the CRM during the customer call. About 2,200 orders a month.
+    owner: Sales team
+    systems: [ HubSpot ]
+    cost: { runs: 2200 }
+    flowPosition: { col: -0.25, row: 0.5 }
+
+  - id: crm
+    type: system
+    label: HubSpot CRM
+    description: Source of truth for new orders. Fires a webhook for each order marked ready to sync.
+    flowPosition: { col: 1, row: 1.25 }
+
+  - id: validate-order
+    type: process
+    label: Validate order
+    description: Integration middleware checks required fields, pricing, and the ship-to address before an order may sync. Failures land in a spreadsheet the ops analyst works each morning.
+    automation: automated
+
+  - id: erp-sync
+    type: process
+    label: Sync order to ERP
+    description: Validated orders post to the ERP one at a time over its REST API.
+    automation: automated
+    children:
+      nodes:
+        - id: erp-sync-map
+          type: process
+          label: Map order fields
+          description: CRM field names are translated to the ERP's order schema.
+        - id: erp-sync-post
+          type: process
+          label: Post order to ERP
+          description: The mapped order posts to the ERP REST API. A rejected post retries twice, then fails to the manual queue.
+        - id: erp-sync-confirm
+          type: process
+          label: Confirm ERP receipt
+          description: The ERP's order ID is written back to the CRM record so both systems carry the same reference.
+      edges:
+        - from: erp-sync-map
+          to: erp-sync-post
+          kind: api
+          label: mapped order
+        - from: erp-sync-post
+          to: erp-sync-confirm
+          kind: api
+          label: receipt acknowledged
+
+  - id: erp
+    type: system
+    label: NetSuite ERP
+    description: Source of truth for inventory allocation, invoicing, and the general ledger.
+
+  - id: wms
+    type: system
+    label: ShipEdge WMS
+    description: Warehouse management system. Picks, packs, and ships, then confirms each shipment back to the ERP by webhook.
+
+  - id: manual-reentry
+    type: process
+    label: Re-key failed orders
+    description: The ops analyst re-types failed orders from the error spreadsheet into the ERP by hand.
+    owner: Ops analyst
+    automation: manual
+
+  - id: reconcile
+    type: process
+    label: Weekly reconciliation
+    description: The ops analyst exports order reports from the CRM, ERP, and WMS and compares them line by line in a spreadsheet.
+    owner: Ops analyst
+    automation: manual
+    trigger: Monday 9am
+    cost: { runs: 4 }
+
+  - id: ops-analyst
+    type: role
+    label: Ops analyst
+    description: Owns the manual queue, re-keying, and the weekly reconciliation.
+    flowPosition: { col: 0.25, row: -1.5 }
+
+  - id: finance-export
+    type: artifact
+    label: Finance export file
+    description: Nightly CSV of shipped, invoiced orders for the finance team's accounting import.
+
+edges:
+  - from: order-intake
+    to: crm
+    kind: api
+    label: saves order
+  - from: crm
+    to: validate-order
+    kind: event
+    label: new order webhook
+  - from: validate-order
+    to: erp-sync
+    kind: api
+    label: approved orders
+  - from: validate-order
+    to: manual-reentry
+    kind: manual
+    label: failed orders
+  - from: erp-sync
+    to: erp
+    kind: api
+    label: posts order
+  - from: manual-reentry
+    to: erp
+    kind: manual
+    label: re-keys order
+    issue: Re-keyed orders receive new ERP order IDs, so CRM and ERP references no longer match and reconciliation takes longer.
+  # inferred: three missed-file incidents in May point to silent failure on ERP schema drift; the ERP team has not confirmed.
+  - from: erp
+    to: wms
+    kind: file
+    label: nightly order file
+    issue: The nightly CSV silently fails when the ERP schema drifts; the warehouse misses orders until a customer complains.
+  - from: wms
+    to: erp
+    kind: event
+    label: shipment webhook
+  - from: erp
+    to: finance-export
+    kind: file
+    label: nightly finance export
+  - from: ops-analyst
+    to: reconcile
+    kind: manual
+    label: reconciles weekly
+  - from: reconcile
+    to: manual-reentry
+    kind: manual
+    label: queues mismatches

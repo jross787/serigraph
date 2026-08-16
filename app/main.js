@@ -8,6 +8,7 @@ import * as edit from './edit.js';
 import * as workbench from './workbench.js';
 import * as productWorkspace from './product-workspace.js';
 import { togglePresent, exitPresent } from './present.js';
+import { flowShortcut } from './flow.js';
 
 // ── theme ────────────────────────────────────────────────────────────
 function initTheme() {
@@ -269,6 +270,7 @@ function wireKeyboard() {
     if (meta) return;
 
     if (ev.shiftKey && ev.key.toLowerCase() === 'p') { productWorkspace.setWorkspaceView('map'); togglePresent(); return; }
+    if (state.workspaceView === 'flow') { if (flowShortcut(ev)) ev.preventDefault(); return; }
     if (state.workspaceView !== 'map') return;
     if (workbench.shortcutTool(ev.key)) { ev.preventDefault(); return; }
 

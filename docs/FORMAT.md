@@ -191,6 +191,7 @@ Freeform hierarchy uses `relations` on shared elements. The supported types are 
   relations:                        # optional typed, document-wide references
     - to: cycle-time-objective
       type: supports
+  flowPosition: { col: 2, row: 1 }  # optional pin on the Flow view's ground grid
   children:                         # optional nested sub-map
     nodes:
       - id: credit-check
@@ -200,6 +201,8 @@ Freeform hierarchy uses `relations` on shared elements. The supported types are 
 ```
 
 All process-node fields except `id`, `type`, and `label` are optional. `planning` does not replace the node's visual `type`: a requirement can be drawn as a `process`, `artifact`, `system`, or whichever visual form best explains it.
+
+`flowPosition` pins a node to a `{ col, row }` cell on the Flow view's ground grid. It is optional, additive, and removable: add it to any node, and delete it to return the node to automatic Flow placement. Only the Flow view reads it; every other view ignores it.
 
 ## Visual node types
 
@@ -222,10 +225,22 @@ Use these exact lowercase strings. The app shows the process or freeform subset 
 - A Freeform group edge connects two placements in that group's `children.nodes` list. It names the shared element IDs from their `use` fields.
 - A top-level Freeform edge connects two groups.
 - Edges are directional. Put optional text in `label`.
+- `kind` states how data moves between the two nodes: `api` for an API call, `file` for a file transfer, `manual` for manual re-entry, or `event` for an event or webhook. Any other value is a validation error.
+- `issue` records a confirmed problem on the handoff, and the app renders it loudly. Write it as plain text; a blank value is ignored.
 - Process node IDs, Freeform element IDs, and Freeform group IDs are unique across the file. A Freeform `use` can repeat in different groups because it is a placement, not a new definition.
 - Use a typed relation when the relationship crosses Process scopes or describes Freeform item hierarchy.
 - Layout is automatic. A Process node or Freeform placement can have a fixed `position`.
 - When the app moves a Process node between scopes, it moves each affected edge to the nearest valid scope. It rewrites each endpoint to the node that represents that branch in the new scope. Self-loops and exact duplicates are removed.
+
+For example:
+
+```yaml
+edges:
+  - from: intake
+    to: underwrite
+    kind: manual          # api | file | manual | event
+    issue: Re-keyed from the quote PDF; typos confirmed in 3% of cases.
+```
 
 ## Pinned positions (optional)
 

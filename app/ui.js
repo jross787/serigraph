@@ -570,6 +570,7 @@ export function helpDialog() {
     ['double-click empty canvas', 'Create a node at that spot'],
     ['drag the background', 'Pan the canvas'],
     ['scroll · pinch', 'Pan · zoom'],
+    ...(freeform ? [] : [['Space (in Flow)', 'Pause or resume the moving payloads']]),
   ];
   const grid = h('div', { class: 'kbd-grid' });
   for (const [k, d] of rows) { grid.append(h('kbd', {}, k)); grid.append(h('span', {}, d)); }
