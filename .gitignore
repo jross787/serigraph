@@ -5,6 +5,7 @@ node_modules/
 maps/stress-*.yaml
 # local-only: client maps, recordings, build output, machine config
 maps/bug-intake.yaml
+.serigraph-trash/
 *.mp4
 dist/
 .env

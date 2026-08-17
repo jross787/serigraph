@@ -44,6 +44,7 @@ test('standalone export inlines everything and rewrites module specifiers', asyn
   const im = JSON.parse(mapJson);
   assert.ok(Object.keys(im.imports).length >= 13, 'all modules present in import map');
   assert.ok(im.imports['opsmap/app/workbench.js'], 'portable export includes the workbench');
+  assert.ok(im.imports['opsmap/app/workbench-sync.js'], 'portable export includes the inert Workbench sync module');
   assert.ok(im.imports['opsmap/app/product.js'], 'portable export includes product-planning intelligence');
   assert.ok(im.imports['opsmap/app/product-workspace.js'], 'portable export includes product-document views');
   for (const v of Object.values(im.imports)) assert.match(v, /^data:text\/javascript;base64,/);

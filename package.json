@@ -4,8 +4,12 @@
   "description": "Map how a business actually operates \u2014 a zoomable graph of nested, typed nodes backed by plain YAML files.",
   "type": "module",
   "private": true,
+  "bin": {
+    "serigraph": "tools/serigraph.mjs"
+  },
   "scripts": {
     "start": "node server/main.js",
+    "update": "node tools/serigraph.mjs update",
     "test": "node --test 'tests/**/*.test.js'",
     "validate": "node tools/validate.mjs"
   },

@@ -172,6 +172,16 @@ export async function loadProjects() {
   return state.projects;
 }
 
+export async function loadTrash() {
+  try {
+    state.trash = await api.listTrash();
+  } catch {
+    state.trash = [];
+  }
+  bus.emit('trash-listed');
+  return state.trash;
+}
+
 // parse source into state (doc + model + errors); no rendering
 function adoptSource(source) {
   const { doc, model, errors } = parseMap(source);

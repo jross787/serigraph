@@ -22,6 +22,22 @@ Use the map switcher, or open these seeded examples directly:
 >
 > The server listens on **localhost only** (client data stays on your machine — see [docs/DATA-HANDLING.md](docs/DATA-HANDLING.md)). To share on your network deliberately: `node server/main.js --lan`.
 
+## Update it
+
+Run this once from the Serigraph folder to add the `serigraph` command:
+
+```sh
+npm link
+```
+
+Then pull the latest version from GitHub with:
+
+```sh
+serigraph update
+```
+
+The update stops without changing files if the checkout has local work, is not on `main`, or cannot move forward cleanly. Use `serigraph update --check` to check for an update without applying it. You can also run `npm run update` from this folder without linking the command.
+
 ## Process maps and Freeform maps
 
 Choose a mode when you create a map:
@@ -30,6 +46,16 @@ Choose a mode when you create a map:
 - **Freeform** maps systems, databases, APIs, people, documents, and other items. One shared element can appear in several groups without copying its facts.
 
 Files without a `mode` field use Process mode. A populated map cannot switch modes because Process and Freeform files store their contents differently. Use the **Systems of Record** template to start a Freeform map.
+
+## Share through Workbench
+
+Open a map, choose **More actions → Share & sync**, and paste a Workbench document link. Use an edit link when Serigraph needs to publish changes.
+
+Serigraph adds one managed section to the Workbench document. That section contains the full YAML and a live map preview. Other document content stays in place. If the document already contains a different map, Serigraph asks which copy to keep.
+
+While the map is open, edits move in both directions. If the local and Workbench copies change before they can sync, Serigraph stops and asks which copy to keep. Removing the managed section from Workbench disconnects an unchanged local map instead of silently adding it again.
+
+An edit connection can create view, comment, suggest, or edit links for people and agents. Workbench enforces those permissions. Serigraph keeps the linked share key in this browser only; it never writes the key into YAML, the Workbench document, or a standalone export. See [Data handling](docs/DATA-HANDLING.md) before sharing a client map.
 
 ## One source, five useful views
 
@@ -64,6 +90,8 @@ The app boots to the [Projects home](http://localhost:4700/): one card per proje
 - [Serigraph Dogfood](http://localhost:4700/#/map/serigraph-dogfood/code-pipeline), Serigraph's own YAML → parse → validate → render → export pipeline mapped in Serigraph.
 
 To move a map, open its row's context menu in the map switcher and choose **Move to project…**, then pick a project or **Root (no project)**. Old links keep working: the server answers the old id with the new one and the app follows it.
+
+Use **Trash** on a project card, map tile, or map switcher row to remove it from the library. Serigraph moves the file or whole project folder into the local `.serigraph-trash/` folder. **Restore** returns it to the same path and stops if another map or project now uses that path. **Delete forever** removes it from disk and cannot be undone.
 
 ## Product documents
 
@@ -145,7 +173,7 @@ The complete schema, enums, validation rules, and examples are in [docs/FORMAT.m
 | **Delete shared element** | Remove the definition, all placements, and all connections after confirmation |
 | **Templates** | Insert a reusable block that matches the current map mode |
 | **Shift+P** | Enter presentation mode and walk through a Process flow |
-| **Share & export** | Copy a deep link or download a read-only HTML application that works offline |
+| **Share & sync** | Link the map to a Workbench document, create access links, copy a local deep link, or download a read-only standalone application |
 | **?** | Open the shortcut reference |
 
 ## For software agents

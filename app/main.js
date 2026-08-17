@@ -6,6 +6,7 @@ import * as canvas from './canvas.js';
 import * as ui from './ui.js';
 import * as edit from './edit.js';
 import * as workbench from './workbench.js';
+import { initWorkbenchSync } from './workbench-sync.js';
 import * as productWorkspace from './product-workspace.js';
 import { togglePresent, exitPresent } from './present.js';
 import { flowShortcut } from './flow.js';
@@ -368,6 +369,7 @@ async function boot() {
   canvas.initCanvas(document.getElementById('canvas'), document.querySelector('#minimap svg'));
   ui.initUI();
   workbench.initWorkbench();
+  initWorkbenchSync();
   productWorkspace.initProductWorkspace();
   wireCanvasEvents();
   wireKeyboard();
@@ -380,7 +382,7 @@ async function boot() {
     ui.toast('Could not reach the Serigraph server: ' + e.message, true);
     return;
   }
-  ctrl.loadProjects();
+  await Promise.all([ctrl.loadProjects(), ctrl.loadTrash()]);
 
   const route = ctrl.readHash();
   let mapId = route.mapId && state.maps.some((m) => m.id === route.mapId) ? route.mapId : null;
@@ -400,9 +402,17 @@ async function boot() {
   }
 
   ctrl.loadTemplates();
-  api.subscribe((event) => {
+  api.subscribe(async (event) => {
     if (event.type === 'maps-changed') ctrl.handleRemoteChange(event.ids ?? []);
     if (event.type === 'templates-changed') ctrl.loadTemplates();
+    if (event.type === 'library-changed') {
+      const openId = state.mapId;
+      await Promise.all([ctrl.loadMapList(), ctrl.loadProjects(), ctrl.loadTrash()]);
+      if (openId && !state.maps.some((map) => map.id === openId)) {
+        ctrl.goHome();
+        ui.toast('The open map was moved to Trash in another tab.');
+      }
+    }
   });
 }
 
