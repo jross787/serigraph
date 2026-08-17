@@ -25,6 +25,7 @@ const MODULE_FILES = [
   'app/ui.js',
   'app/present.js',
   'app/workbench.js',
+  'app/workbench-sync.js',
   'app/product-workspace.js',
   'app/main.js',
 ];

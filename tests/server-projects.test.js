@@ -67,13 +67,16 @@ after(() => {
   rmSync(work, { recursive: true, force: true });
 });
 
-test('boots with no maps/ or projects/ and lists nothing', async () => {
+test('boots with no library folders and lists nothing', async () => {
   const maps = await raw({ p: '/api/maps' });
   assert.equal(maps.status, 200);
   assert.deepEqual(JSON.parse(maps.body), []);
   const projects = await raw({ p: '/api/projects' });
   assert.equal(projects.status, 200);
   assert.deepEqual(JSON.parse(projects.body), []);
+  const trash = await raw({ p: '/api/trash' });
+  assert.equal(trash.status, 200);
+  assert.deepEqual(JSON.parse(trash.body), []);
 });
 
 test('POST /api/projects creates the folder and index; duplicate is 409', async () => {
@@ -328,4 +331,88 @@ test('"project" is a reserved project slug (keeps /export/project/<slug> unambig
   assert.equal(created.status, 400);
   const moved = await api('POST', '/api/maps/root-map/move', { project: 'project' });
   assert.equal(moved.status, 400);
+});
+
+test('map trash supports conflict-safe restore and permanent deletion', async () => {
+  const originalPath = path.join(work, 'maps', 'root-map.yaml');
+  const originalSource = readFileSync(originalPath, 'utf8');
+  const removed = await api('DELETE', '/api/maps/root-map');
+  assert.equal(removed.status, 200);
+  const first = JSON.parse(removed.body).item;
+  assert.equal(first.kind, 'map');
+  assert.equal(first.originalId, 'root-map');
+  assert.equal(first.name, 'Root Map');
+  assert.ok(!existsSync(originalPath), 'map is gone from its live location');
+
+  const listed = JSON.parse((await raw({ p: '/api/trash' })).body);
+  assert.ok(listed.some((item) => item.id === first.id && item.deletedAt));
+
+  writeFileSync(originalPath, 'name: Replacement\nnodes: []\nedges: []\n');
+  const conflict = await api('POST', `/api/trash/${first.id}/restore`, {});
+  assert.equal(conflict.status, 409);
+  assert.equal(readFileSync(originalPath, 'utf8'), 'name: Replacement\nnodes: []\nedges: []\n');
+  rmSync(originalPath);
+
+  const restored = await api('POST', `/api/trash/${first.id}/restore`, {});
+  assert.equal(restored.status, 200);
+  assert.equal(JSON.parse(restored.body).item.originalId, 'root-map');
+  assert.equal(readFileSync(originalPath, 'utf8'), originalSource);
+  assert.equal((await raw({ p: `/api/trash/${first.id}` })).status, 404);
+
+  const removedAgain = JSON.parse((await api('DELETE', '/api/maps/root-map')).body).item;
+  const deleted = await api('DELETE', `/api/trash/${removedAgain.id}`);
+  assert.equal(deleted.status, 200);
+  assert.ok(!existsSync(originalPath));
+  assert.equal((await api('POST', `/api/trash/${removedAgain.id}/restore`, {})).status, 404);
+});
+
+test('nested .yml map returns to the same project path', async () => {
+  const livePath = path.join(work, 'projects', 'atlas-logistics', 'legacy.yml');
+  const source = readFileSync(livePath, 'utf8');
+  const removed = await api('DELETE', '/api/maps/atlas-logistics/legacy');
+  assert.equal(removed.status, 200);
+  const item = JSON.parse(removed.body).item;
+  assert.equal(item.originalId, 'atlas-logistics/legacy');
+  assert.ok(!existsSync(livePath));
+
+  const restored = await api('POST', `/api/trash/${item.id}/restore`, {});
+  assert.equal(restored.status, 200);
+  assert.equal(JSON.parse(restored.body).item.originalId, 'atlas-logistics/legacy');
+  assert.equal(readFileSync(livePath, 'utf8'), source);
+  assert.ok(!existsSync(path.join(work, 'projects', 'atlas-logistics', 'legacy.yaml')));
+});
+
+test('project trash moves, restores, and permanently deletes the whole folder', async () => {
+  const projectPath = path.join(work, 'projects', 'atlas-logistics');
+  writeFileSync(path.join(projectPath, 'working-notes.txt'), 'not a map\n');
+  const removed = await api('DELETE', '/api/projects/atlas-logistics');
+  assert.equal(removed.status, 200);
+  const first = JSON.parse(removed.body).item;
+  assert.equal(first.kind, 'project');
+  assert.equal(first.originalSlug, 'atlas-logistics');
+  assert.equal(first.name, 'Atlas Logistics');
+  assert.equal(first.mapCount, 3);
+  assert.ok(!existsSync(projectPath));
+  const mapsAfterDelete = JSON.parse((await raw({ p: '/api/maps' })).body);
+  assert.ok(!mapsAfterDelete.some((map) => map.project?.slug === 'atlas-logistics'));
+
+  const replacement = await api('POST', '/api/projects', { name: 'Atlas Logistics' });
+  assert.equal(replacement.status, 201);
+  const conflict = await api('POST', `/api/trash/${first.id}/restore`, {});
+  assert.equal(conflict.status, 409);
+  rmSync(projectPath, { recursive: true });
+
+  const restored = await api('POST', `/api/trash/${first.id}/restore`, {});
+  assert.equal(restored.status, 200);
+  assert.equal(JSON.parse(restored.body).item.originalSlug, 'atlas-logistics');
+  assert.ok(existsSync(path.join(projectPath, 'order-flow.yaml')));
+  assert.ok(existsSync(path.join(projectPath, 'flagged.yaml')));
+  assert.ok(existsSync(path.join(projectPath, 'legacy.yml')));
+  assert.equal(readFileSync(path.join(projectPath, 'working-notes.txt'), 'utf8'), 'not a map\n');
+
+  const removedAgain = JSON.parse((await api('DELETE', '/api/projects/atlas-logistics')).body).item;
+  const deleted = await api('DELETE', `/api/trash/${removedAgain.id}`);
+  assert.equal(deleted.status, 200);
+  assert.ok(!existsSync(projectPath));
+  assert.ok(!JSON.parse((await raw({ p: '/api/trash' })).body).some((item) => item.id === removedAgain.id));
 });

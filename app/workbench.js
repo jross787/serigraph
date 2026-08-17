@@ -7,6 +7,7 @@ import { parseMap } from '../shared/model.js';
 import { buildHash } from './routes.js';
 import * as canvas from './canvas.js';
 import * as ctrl from './controller.js';
+import * as workbenchSync from './workbench-sync.js';
 import * as edit from './edit.js';
 import * as ui from './ui.js';
 import { ICONS } from './canvas.js';
@@ -400,14 +401,125 @@ async function copyText(text) {
 export function openShareDialog() {
   const nodeId = state.selectedId;
   const link = nodeId ? ctrl.nodeUrl(nodeId) : `${location.origin}${location.pathname}${buildHash({ mapId: state.mapId })}`;
-  const input = h('input', { class: 'f-input', value: link, readonly: '' });
   const item = state.model?.mode === 'freeform' ? 'item' : 'step';
-  makeDialog('Share & own this map', h('div', { class: 'share-stack' },
-    h('p', { class: 'hint' }, `A deep link opens the selected ${item} in context. The map source remains portable YAML.`),
-    h('div', { class: 'share-link' }, input, h('button', { class: 'd-btn primary', onClick: async () => { if (await copyText(link)) ui.toast('Link copied'); } }, 'Copy link')),
-    h('div', { class: 'share-actions' },
-      h('button', { class: 'd-btn', onClick: downloadYaml }, 'Download YAML'),
-      h('button', { class: 'd-btn', onClick: () => { if (state.mapId) window.location.href = `/export/${encodeURIComponent(state.mapId)}.html`; } }, 'Download standalone app'))));
+  const body = h('div', { class: 'share-stack' });
+  makeDialog('Share & sync', body);
+
+  const localSection = () => {
+    const input = h('input', { class: 'f-input', value: link, readonly: '' });
+    return h('section', { class: 'share-section' },
+      h('div', { class: 'share-section-head' }, h('h3', {}, 'Local link'), h('span', { class: 'access-badge' }, 'This computer')),
+      h('p', { class: 'hint' }, `A deep link opens the selected ${item} in context. The map source remains portable YAML.`),
+      h('div', { class: 'share-link' }, input,
+        h('button', { class: 'd-btn primary', onClick: async () => { if (await copyText(link)) ui.toast('Link copied'); } }, 'Copy link')),
+      h('div', { class: 'share-actions' },
+        h('button', { class: 'd-btn', onClick: downloadYaml }, 'Download YAML'),
+        h('button', { class: 'd-btn', onClick: () => { if (state.mapId) window.location.href = `/export/${encodeURIComponent(state.mapId)}.html`; } }, 'Download standalone app')));
+  };
+
+  const renderShareResult = (container, share) => {
+    const input = h('input', { class: 'f-input', value: share.url, readonly: '' });
+    container.replaceChildren(
+      h('p', { class: 'hint' }, `${share.role[0].toUpperCase()}${share.role.slice(1)} link ready.`),
+      h('div', { class: 'share-link' }, input,
+        h('button', { class: 'd-btn primary', onClick: async () => { if (await copyText(share.url)) ui.toast('Workbench link copied'); } }, 'Copy link')),
+      h('button', {
+        class: 'd-btn agent-link-button',
+        onClick: async () => { if (await copyText(share.agentUrl)) ui.toast('Workbench agent link copied'); },
+      }, 'Copy agent link'));
+  };
+
+  const connectedSection = (connection) => {
+    const result = h('div', { class: 'workbench-share-result' });
+    const role = h('select', { class: 'f-input workbench-role', 'aria-label': 'Workbench access' },
+      h('option', { value: 'view' }, 'Can view'),
+      h('option', { value: 'comment' }, 'Can comment'),
+      h('option', { value: 'suggest' }, 'Can suggest'),
+      h('option', { value: 'edit' }, 'Can edit'));
+    const stateLabel = connection.conflict ? 'Needs a choice' : connection.syncing ? 'Syncing' : 'Connected';
+    return h('section', { class: `share-section workbench-sync-card${connection.conflict ? ' conflict' : ''}` },
+      h('div', { class: 'share-section-head' },
+        h('h3', {}, 'Workbench sync'),
+        h('span', { class: 'access-badge' }, `${connection.role} access`)),
+      h('p', { class: 'workbench-doc-name' }, connection.title || connection.docId),
+      h('p', { class: 'hint' }, `${stateLabel}. The share key stays in this browser and is never written into the YAML or Workbench document.`),
+      connection.conflict
+        ? h('div', { class: 'workbench-choice' },
+          h('p', {}, connection.remoteMissing
+            ? 'The map section was removed from Workbench after the local map changed.'
+            : 'The local and Workbench copies both changed. Choose which map to keep.'),
+          h('div', { class: 'share-actions' },
+            connection.remoteMissing
+              ? h('button', { class: 'd-btn', onClick: () => { workbenchSync.disconnectWorkbench('Kept the local map and disconnected Workbench.'); render(); } }, 'Keep local only')
+              : h('button', { class: 'd-btn', onClick: async () => { if (await workbenchSync.useWorkbenchCopy()) render(); } }, 'Use Workbench copy'),
+            connection.role === 'edit'
+              ? h('button', { class: 'd-btn primary', onClick: async () => { if (await workbenchSync.sendLocalCopy()) render(); } }, 'Publish local copy')
+              : null))
+        : null,
+      h('div', { class: 'share-actions' },
+        h('button', { class: 'd-btn', onClick: () => window.open(connection.url, '_blank', 'noopener,noreferrer') }, 'Open Workbench'),
+        h('button', { class: 'd-btn', onClick: async () => { await workbenchSync.syncNow(); render(); } }, 'Sync now')),
+      h('button', { class: 'd-btn disconnect-workbench', onClick: () => { workbenchSync.disconnectWorkbench(); render(); } }, 'Disconnect'),
+      connection.role === 'edit'
+        ? h('div', { class: 'workbench-share-maker' },
+          h('h4', {}, 'Create a Workbench link'),
+          h('p', { class: 'hint' }, 'Workbench enforces the selected access level for people and agents.'),
+          h('div', { class: 'share-link' }, role,
+            h('button', {
+              class: 'd-btn primary',
+              onClick: async () => {
+                try { renderShareResult(result, await api.createWorkbenchShare(connection.url, role.value)); }
+                catch (error) { ui.toast(`Could not create link: ${error.message}`, true); }
+              },
+            }, 'Create link')),
+          result)
+        : null);
+  };
+
+  const unlinkedSection = (pending = null, priorUrl = '') => {
+    const input = h('input', {
+      class: 'f-input',
+      type: 'url',
+      value: priorUrl,
+      placeholder: 'https://workbench.md/d/…?key=…',
+      autocomplete: 'off',
+      spellcheck: 'false',
+      'aria-label': 'Workbench share link',
+    });
+    const connect = async (strategy = 'match') => {
+      const url = input.value.trim();
+      if (!url) return;
+      try {
+        const info = pending?.url === url ? pending.info : await workbenchSync.inspectLink(url);
+        const result = await workbenchSync.connectLink(url, info, strategy);
+        if (result.needsChoice) render({ url, info: result.info });
+        else render();
+      } catch (error) {
+        ui.toast(`Could not link Workbench: ${error.message}`, true);
+      }
+    };
+    return h('section', { class: 'share-section workbench-sync-card' },
+      h('div', { class: 'share-section-head' }, h('h3', {}, 'Workbench sync'), h('span', { class: 'access-badge' }, 'Private by default')),
+      h('p', { class: 'hint' }, 'Link this map to a Workbench document. Workbench supplies view, comment, suggest, and edit permissions while Serigraph keeps the YAML portable.'),
+      h('div', { class: 'share-link' }, input,
+        h('button', { class: 'd-btn primary', onClick: () => connect() }, 'Link')),
+      pending
+        ? h('div', { class: 'workbench-choice' },
+          h('p', {}, 'That document already contains a different Serigraph map.'),
+          h('div', { class: 'share-actions' },
+            h('button', { class: 'd-btn', onClick: () => connect('pull') }, 'Use Workbench map'),
+            pending.info.role === 'edit'
+              ? h('button', { class: 'd-btn primary', onClick: () => connect('push') }, 'Publish this map')
+              : null))
+        : null);
+  };
+
+  function render(pending = null) {
+    body.replaceChildren(localSection(), ...(state.standalone ? [] : [state.workbench
+      ? connectedSection(state.workbench)
+      : unlinkedSection(pending, pending?.url || '')]));
+  }
+  render();
 }
 
 export function downloadYaml() {

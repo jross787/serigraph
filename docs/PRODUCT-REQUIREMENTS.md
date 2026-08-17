@@ -390,7 +390,7 @@ Release only when:
 | Planning metadata makes YAML intimidating | Local-first advantage weakens | Optional fields, sensible UI defaults, templates, concise format docs |
 | Generic diagram parity distracts from the wedge | Roadmap loses differentiation | Prioritize capture, live truth, traceability, automation, and outcomes |
 | Cross-scope relations become visual noise | Map loses calmness | Keep relations out of layout and reveal them contextually |
-| Whole-file last-write-wins limits collaboration | Conflicting edits can overwrite | Keep v1.1 local-first; make cloud identity/conflict handling an explicit later platform project |
+| Whole-file sync cannot merge simultaneous edits | Conflicting edits could overwrite | Workbench sync compares both copies and requires an explicit choice; field-level real-time collaboration remains a later platform project |
 | Dogfood artifacts become stale | Product documentation loses credibility | Artifact tests and release checklist enforce current shipped IDs and roadmap count |
 
 ## Roadmap

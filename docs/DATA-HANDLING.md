@@ -7,11 +7,9 @@ run with nothing leaving at all.
 
 ## The default posture: nothing leaves
 
-Everything except the ✨ Import feature is pure local computation. Maps,
-economics, exports, search, presentation mode — all of it runs offline
-forever, with no account, no telemetry, and no network calls. If no LLM
-provider is configured, the Import button explains itself and the app is
-otherwise fully functional.
+Maps, economics, exports, search, and presentation mode run locally with no account or telemetry. Serigraph contacts a remote service only when you start a network feature: transcript import, the AI assistant, or Workbench sync. If you do not use those features, no map or transcript content leaves the machine.
+
+Trash is local too. Moving a map or project to Trash moves it into `.serigraph-trash/` inside the Serigraph folder. Restore moves it back to its original path. Delete forever removes it from disk.
 
 ## The server binds to localhost only
 
@@ -44,7 +42,19 @@ if that matters for a client engagement, use `OPSMAP_LLM_CMD` with a local
 model — **the fully-local path is a first-class provider, not a fallback**,
 and an air-gapped machine can run the entire product including import.
 
-## Keys stay server-side
+## What Workbench sync sends
+
+Workbench sync starts only after you paste a Workbench document link into **Share & sync**. The browser sends that link to the local Serigraph server. The server forwards its share key to `workbench.md` in an `X-Share-Key` request header.
+
+The first link uploads the full map YAML and a generated live preview into one marked section of the Workbench document. Later syncs download the full Workbench Markdown so Serigraph can preserve content outside that section, then write the full document back with only the marked section changed. The local server therefore processes other text in that Workbench document while it syncs.
+
+While the linked map is open, the local server keeps a long-poll request open for Workbench change events. A remote map edit updates the local YAML file. A local Serigraph edit updates the marked Workbench section. If both copies change, Serigraph stops and asks which copy to keep.
+
+The linked share key is stored in this browser's local storage. It is not written into the map, the Workbench document, or a standalone export. **Disconnect** removes that saved link from Serigraph. It does not remove the Workbench section or revoke links already created. Revoke those links in Workbench.
+
+View, comment, and suggest links cannot publish map changes from Serigraph. An edit link can publish changes and create new view, comment, suggest, or edit links for people or agents. Anyone who holds one of those links gets its Workbench access, so handle it like a password.
+
+## Model-provider keys stay server-side
 
 API keys and CLI sessions live in the server process environment. No key is
 ever sent to the browser, written into a map, or embedded in an export —

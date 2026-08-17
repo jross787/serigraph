@@ -15,6 +15,13 @@ import { callLLM, resolveProvider, callTranscription } from './llm.js';
 import { importTranscript, ImportError } from './importer.js';
 import { chatEdit, ChatError } from './chat.js';
 import { readSettings, writeSettings } from './settings.js';
+import {
+  WorkbenchError,
+  createWorkbenchShare,
+  inspectWorkbench,
+  pushWorkbench,
+  watchWorkbench,
+} from './workbench-sync.js';
 
 // overridable so tests can boot the server against a temp workspace
 const ROOT = process.env.OPSMAP_ROOT
@@ -37,6 +44,7 @@ try {
 const MAPS_DIR = path.join(ROOT, 'maps');
 const TEMPLATES_DIR = path.join(ROOT, 'templates');
 const PROJECTS_DIR = path.join(ROOT, 'projects');
+const TRASH_DIR = path.join(ROOT, '.serigraph-trash');
 const DEFAULT_PORT = Number(process.env.PORT) || 4700;
 const NO_OPEN = process.argv.includes('--no-open') || process.env.OPSMAP_NO_OPEN === '1';
 // maps hold confidential client operations data: serve localhost-only unless
@@ -65,6 +73,16 @@ const SLUG_RE = /^[A-Za-z0-9._-]+$/;
 const ID_RE = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)?$/;
 const safeSlug = (slug) => typeof slug === 'string' && slug.length < 200 && SLUG_RE.test(slug) && !slug.includes('..');
 const safeId = (id) => typeof id === 'string' && id.length < 200 && ID_RE.test(id) && !id.includes('..');
+const TRASH_ID_RE = /^(map|project)-[a-z0-9-]+$/;
+const safeTrashId = (id) => typeof id === 'string' && id.length < 240 && TRASH_ID_RE.test(id);
+let trashCounter = 0;
+
+class TrashError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
 
 function json(res, status, data) {
   const body = JSON.stringify(data);
@@ -214,6 +232,172 @@ async function projectMetaFor(slug) {
   return { index, slug, name, maps: await mapSummaries(path.join(PROJECTS_DIR, slug), { slug, name }) };
 }
 
+function nextTrashId(kind) {
+  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').toLowerCase();
+  const sequence = (trashCounter++).toString(36);
+  return `${kind}-${stamp}-${process.pid.toString(36)}-${sequence}`;
+}
+
+function trashEntryPath(id) {
+  return path.join(TRASH_DIR, id);
+}
+
+function validTrashMetadata(metadata, id) {
+  if (!metadata || metadata.id !== id || !['map', 'project'].includes(metadata.kind)) return false;
+  if (typeof metadata.name !== 'string' || typeof metadata.deletedAt !== 'string') return false;
+  if (metadata.kind === 'map') {
+    return safeId(metadata.originalId) && ['.yaml', '.yml'].includes(metadata.extension);
+  }
+  return safeSlug(metadata.originalSlug);
+}
+
+async function readTrashEntry(id) {
+  if (!safeTrashId(id)) throw new TrashError(400, 'invalid trash id');
+  const entry = trashEntryPath(id);
+  try {
+    const metadata = JSON.parse(await fs.readFile(path.join(entry, 'entry.json'), 'utf8'));
+    if (!validTrashMetadata(metadata, id) || !existsSync(path.join(entry, 'payload'))) throw new Error('invalid entry');
+    return { entry, payload: path.join(entry, 'payload'), metadata };
+  } catch {
+    throw new TrashError(404, `no trash item "${id}"`);
+  }
+}
+
+async function listTrash() {
+  let entries;
+  try { entries = await fs.readdir(TRASH_DIR, { withFileTypes: true }); }
+  catch { return []; }
+  const items = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !safeTrashId(entry.name)) continue;
+    try {
+      const item = await readTrashEntry(entry.name);
+      items.push(item.metadata);
+    } catch { /* skip incomplete or manually damaged entries */ }
+  }
+  return items.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
+}
+
+async function moveIntoTrash(source, metadata) {
+  await fs.mkdir(TRASH_DIR, { recursive: true });
+  const destination = trashEntryPath(metadata.id);
+  const pending = path.join(TRASH_DIR, `.${metadata.id}.tmp`);
+  await fs.mkdir(pending);
+  let moved = false;
+  try {
+    await fs.writeFile(path.join(pending, 'entry.json'), `${JSON.stringify(metadata, null, 2)}\n`, 'utf8');
+    await fs.rename(source, path.join(pending, 'payload'));
+    moved = true;
+    await fs.rename(pending, destination);
+    return metadata;
+  } catch (error) {
+    let safeToClean = !moved;
+    if (moved) {
+      try {
+        await fs.mkdir(path.dirname(source), { recursive: true });
+        await fs.rename(path.join(pending, 'payload'), source);
+        safeToClean = true;
+      } catch { /* keep the payload in the pending trash folder */ }
+    }
+    if (safeToClean) {
+      try { await fs.rm(pending, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
+    throw error;
+  }
+}
+
+async function trashMap(id, file) {
+  let name = id;
+  try {
+    const { model } = parseMap(await fs.readFile(file, 'utf8'));
+    if (model?.name) name = model.name;
+  } catch { /* preserve invalid maps too */ }
+  const metadata = {
+    id: nextTrashId('map'),
+    kind: 'map',
+    name,
+    originalId: id,
+    extension: path.extname(file),
+    deletedAt: new Date().toISOString(),
+    mapCount: 1,
+  };
+  const item = await moveIntoTrash(file, metadata);
+  fileHashes.delete(file);
+  return item;
+}
+
+async function trashProject(slug) {
+  const source = path.join(PROJECTS_DIR, slug);
+  const index = await readProjectIndex(source);
+  let mapCount = 0;
+  for (const file of await listDir(source)) {
+    if (/\.ya?ml$/.test(file) && !PROJECT_INDEX_RE.test(file)) mapCount++;
+  }
+  const metadata = {
+    id: nextTrashId('project'),
+    kind: 'project',
+    name: index.name ?? slug,
+    originalSlug: slug,
+    deletedAt: new Date().toISOString(),
+    mapCount,
+  };
+  unwatchProjectDir(slug);
+  try {
+    const item = await moveIntoTrash(source, metadata);
+    for (const file of fileHashes.keys()) {
+      if (file.startsWith(source + path.sep)) fileHashes.delete(file);
+    }
+    return item;
+  } catch (error) {
+    watchProjectDir(slug);
+    throw error;
+  }
+}
+
+function restoredMapPath(metadata) {
+  const slash = metadata.originalId.indexOf('/');
+  const dir = slash === -1
+    ? MAPS_DIR
+    : path.join(PROJECTS_DIR, metadata.originalId.slice(0, slash));
+  const base = slash === -1 ? metadata.originalId : metadata.originalId.slice(slash + 1);
+  return path.join(dir, base + metadata.extension);
+}
+
+async function restoreTrashItem(id) {
+  const { entry, payload, metadata } = await readTrashEntry(id);
+  let target;
+  if (metadata.kind === 'map') {
+    if (await resolveMapPath(metadata.originalId)) {
+      throw new TrashError(409, `a map named "${metadata.originalId}" already exists`);
+    }
+    if (metadata.originalId.includes('/')) {
+      const project = metadata.originalId.slice(0, metadata.originalId.indexOf('/'));
+      if (!existsSync(path.join(PROJECTS_DIR, project))) {
+        throw new TrashError(409, `restore project "${project}" before restoring this map`);
+      }
+    } else {
+      await fs.mkdir(MAPS_DIR, { recursive: true });
+    }
+    target = restoredMapPath(metadata);
+  } else {
+    target = path.join(PROJECTS_DIR, metadata.originalSlug);
+    if (existsSync(target)) {
+      throw new TrashError(409, `a project named "${metadata.originalSlug}" already exists`);
+    }
+    await fs.mkdir(PROJECTS_DIR, { recursive: true });
+  }
+  await fs.rename(payload, target);
+  await fs.rm(entry, { recursive: true, force: true });
+  if (metadata.kind === 'project') watchProjectDir(metadata.originalSlug);
+  return metadata;
+}
+
+async function permanentlyDeleteTrashItem(id) {
+  const { entry, metadata } = await readTrashEntry(id);
+  await fs.rm(entry, { recursive: true, force: false });
+  return metadata;
+}
+
 // ---------------------------------------------------------------- SSE
 const sseClients = new Set();
 function broadcast(event) {
@@ -241,29 +425,37 @@ async function primeHashes() {
 }
 
 function watchDir(dir, onChange) {
-  if (!existsSync(dir)) return;
+  if (!existsSync(dir)) return null;
   let watcher;
   try {
     watcher = watch(dir, (eventType, filename) => {
       if (filename && /\.ya?ml$/.test(filename)) onChange(filename);
     });
-  } catch { return; } // fs.watch unsupported — SSE degrades gracefully
-  // watcher errors arrive asynchronously (e.g. EMFILE under fd pressure) and
-  // must never take the server down — live reload just stops
+  } catch { return null; } // fs.watch unsupported - live reload degrades gracefully
+  // watcher errors arrive asynchronously and must never take the server down
   watcher.on('error', (e) => {
     console.warn(`[serigraph] file watcher for ${path.basename(dir)} stopped (${e.code ?? e.message}); live reload off, server unaffected`);
     try { watcher.close(); } catch { /* already closed */ }
   });
+  return watcher;
 }
 
-// project folders come and go at runtime — start a watcher the first time
-// the server touches one
-const watchedProjects = new Set();
+// Project folders come and go at runtime. Keep their watchers addressable so
+// moving a project to Trash does not leave a watcher attached to the payload.
+const watchedProjects = new Map();
 function watchProjectDir(slug) {
   if (watchedProjects.has(slug)) return;
-  watchedProjects.add(slug);
   const dir = path.join(PROJECTS_DIR, slug);
-  watchDir(dir, (filename) => scheduleMapChange(dir, filename));
+  const watcher = watchDir(dir, (filename) => scheduleMapChange(dir, filename));
+  if (watcher) watchedProjects.set(slug, watcher);
+}
+
+function unwatchProjectDir(slug) {
+  const watcher = watchedProjects.get(slug);
+  if (watcher) {
+    try { watcher.close(); } catch { /* already closed */ }
+  }
+  watchedProjects.delete(slug);
 }
 
 // create projects/<slug>/ and a minimal index when either is missing, and
@@ -315,6 +507,63 @@ async function handleApi(req, res, url) {
     return json(res, 415, { error: 'Content-Type must be application/json' });
   }
   const parts = url.pathname.split('/').filter(Boolean); // ['api', ...]
+  if (parts[1] === 'workbench' && req.method === 'POST') {
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON body' }); }
+    try {
+      if (parts[2] === 'inspect' && parts.length === 3) {
+        return json(res, 200, await inspectWorkbench(body?.url));
+      }
+      if (parts[2] === 'push' && parts.length === 3) {
+        if (typeof body?.source !== 'string') return json(res, 400, { error: 'body must include source' });
+        const result = await pushWorkbench(body?.url, body.source, {
+          baseVersion: body.baseVersion ?? null,
+          baseSource: typeof body.baseSource === 'string' ? body.baseSource : null,
+        });
+        return json(res, 200, result);
+      }
+      if (parts[2] === 'share' && parts.length === 3) {
+        return json(res, 200, await createWorkbenchShare(body?.url, body?.role));
+      }
+      if (parts[2] === 'events' && parts.length === 3) {
+        return json(res, 200, await watchWorkbench(body?.url, body?.since ?? 'latest'));
+      }
+    } catch (e) {
+      if (!(e instanceof WorkbenchError)) throw e;
+      return json(res, e.status, {
+        error: e.message,
+        ...(e.currentVersion ? { currentVersion: e.currentVersion } : {}),
+        ...(Object.prototype.hasOwnProperty.call(e, 'remoteSource')
+          ? { remoteSource: e.remoteSource, remoteMissing: e.remoteSource === null }
+          : {}),
+        ...(e.errors?.length ? { errors: e.errors } : {}),
+      });
+    }
+  }
+
+  if (parts[1] === 'trash') {
+    if (parts.length === 2 && req.method === 'GET') return json(res, 200, await listTrash());
+    if (parts.length >= 3) {
+      const id = decodeURIComponent(parts[2]);
+      if (!safeTrashId(id)) return json(res, 400, { error: 'invalid trash id' });
+      try {
+        if (parts.length === 4 && parts[3] === 'restore' && req.method === 'POST') {
+          const item = await restoreTrashItem(id);
+          broadcast({ type: 'library-changed' });
+          return json(res, 200, { item });
+        }
+        if (parts.length === 3 && req.method === 'DELETE') {
+          const item = await permanentlyDeleteTrashItem(id);
+          broadcast({ type: 'library-changed' });
+          return json(res, 200, { item });
+        }
+      } catch (error) {
+        if (error instanceof TrashError) return json(res, error.status, { error: error.message });
+        throw error;
+      }
+    }
+  }
+
 
   if (parts[1] === 'maps' && parts.length === 2) {
     if (req.method === 'GET') {
@@ -380,6 +629,13 @@ async function handleApi(req, res, url) {
       return json(res, 200, { id: newId, project });
     }
 
+    if (req.method === 'DELETE') {
+      if (!file) return json(res, 404, { error: `no map "${id}"` });
+      const item = await trashMap(id, file);
+      broadcast({ type: 'library-changed' });
+      return json(res, 200, { item });
+    }
+
     if (req.method === 'GET') {
       if (file) {
         const source = await fs.readFile(file, 'utf8');
@@ -412,6 +668,16 @@ async function handleApi(req, res, url) {
       // because the fetched source matches what it already has
       return json(res, 200, { ok: true });
     }
+  }
+
+  if (parts[1] === 'projects' && parts.length === 3 && req.method === 'DELETE') {
+    const slug = decodeURIComponent(parts[2]);
+    if (!safeSlug(slug)) return json(res, 400, { error: 'invalid project slug' });
+    const source = path.join(PROJECTS_DIR, slug);
+    if (!existsSync(source)) return json(res, 404, { error: `no project "${slug}"` });
+    const item = await trashProject(slug);
+    broadcast({ type: 'library-changed' });
+    return json(res, 200, { item });
   }
 
   if (parts[1] === 'projects' && parts.length === 2) {

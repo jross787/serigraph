@@ -5,6 +5,7 @@ export const state = {
   maps: [],            // [{id, name, description, nodeCount, invalid, project, hasFlags, hasIssues}]
   projects: [],        // [{slug, name, mapCount}]
   templates: [],       // [{id, name, description, nodeCount, source}]
+  trash: [],           // [{id, kind, name, originalId|originalSlug, deletedAt, mapCount}]
 
   mapId: null,
   source: '',          // current YAML source (authoritative)
@@ -30,6 +31,7 @@ export const state = {
 
   undoStack: [],       // previous sources
   redoStack: [],
+  workbench: null,       // active Workbench link metadata; the share key stays browser-local
 };
 
 // The project slug of the open map, or null for a root map / no map.

@@ -215,6 +215,15 @@ function openMapMenu(anchor) {
           moveMapDialog(m);
         },
       }, 'Move'));
+      row.append(h('span', {
+        class: 'mi-trash',
+        title: 'Move to Trash',
+        onClick: (ev) => {
+          ev.stopPropagation();
+          closeMenus();
+          moveToTrashDialog('map', m);
+        },
+      }, 'Trash'));
     }
     return row;
   };
@@ -283,7 +292,7 @@ function mapTile(m, index) {
   const tag = index ? mapProjectTag(index, mapSlug) : null;
   const isCurrent = m.id === state.mapId;
   const readOnlySibling = state.standalone && !isCurrent;
-  return h('button', {
+  const tile = h('button', {
     class: 'proj-tile',
     ...(readOnlySibling ? { disabled: '', title: 'Read-only in this export' } : { title: dot.label }),
     onClick: () => { if (!readOnlySibling) ctrl.openMap(m.id); },
@@ -293,6 +302,14 @@ function mapTile(m, index) {
     h('span', { class: `proj-dot ${dot.cls}` })),
   h('span', { class: 'proj-tile-name' }, m.name || mapSlug),
   h('span', { class: 'proj-tile-meta' }, `${m.mode === 'freeform' ? 'Freeform' : 'Process'} · ${m.nodeCount ?? 0} nodes`));
+  if (state.standalone) return tile;
+  return h('div', { class: 'proj-tile-wrap' }, tile,
+    h('button', {
+      class: 'proj-tile-trash',
+      title: `Move ${m.name || mapSlug} to Trash`,
+      'aria-label': `Move ${m.name || mapSlug} to Trash`,
+      onClick: () => moveToTrashDialog('map', m),
+    }, 'Trash'));
 }
 
 function renderHome() {
@@ -329,6 +346,7 @@ function renderHome() {
         : 'A project is a folder of maps that belong to one engagement.')),
     state.standalone ? null : h('div', { class: 'proj-head-actions' },
       homeFilter ? h('button', { class: 'd-btn', onClick: () => { homeFilter = null; renderHome(); } }, '‹ All projects') : null,
+      h('button', { class: 'd-btn', onClick: () => openTrashDialog() }, `Trash${state.trash.length ? ` (${state.trash.length})` : ''}`),
       h('button', { class: 'd-btn', onClick: () => newProjectDialog() }, '+ New project'),
       h('button', { class: 'd-btn primary', onClick: () => newMapDialog() }, '+ New map')));
 
@@ -348,7 +366,17 @@ function renderHome() {
     body.append(h('article', { class: 'proj-card' },
       h('header', { class: 'proj-card-head' },
         h('h2', {}, index?.name ?? slug),
-        h('span', { class: 'proj-count' }, `${maps.length} map${maps.length === 1 ? '' : 's'}`)),
+        h('div', { class: 'proj-card-actions' },
+          h('span', { class: 'proj-count' }, `${maps.length} map${maps.length === 1 ? '' : 's'}`),
+          state.standalone ? null : h('button', {
+            class: 'proj-card-trash',
+            title: `Move ${index?.name ?? slug} to Trash`,
+            onClick: () => moveToTrashDialog('project', {
+              slug,
+              name: index?.name ?? slug,
+              mapCount: maps.length,
+            }),
+          }, 'Trash'))),
       index?.description ? h('p', { class: 'proj-desc' }, index.description) : null,
       h('div', { class: 'proj-tiles' }, tiles.length
         ? tiles.map((m) => mapTile(m, index))
@@ -419,6 +447,118 @@ function moveMapDialog(mapSummary) {
   modal(`Move “${mapSummary.name || mapSummary.id}”`, list, [{ label: 'Cancel' }]);
 }
 
+async function refreshLibrary() {
+  await Promise.all([ctrl.loadMapList(), ctrl.loadProjects(), ctrl.loadTrash()]);
+  renderHome();
+}
+
+function moveToTrashDialog(kind, resource) {
+  const isProject = kind === 'project';
+  const name = resource.name || resource.id || resource.slug;
+  const count = resource.mapCount ?? 0;
+  const detail = isProject
+    ? `This moves the project and its ${count} map${count === 1 ? '' : 's'} to Trash.`
+    : 'This moves the map file to Trash.';
+  modal(`Move “${name}” to Trash?`, h('div', { class: 'trash-confirm' },
+    h('p', {}, detail),
+    h('p', { class: 'hint' }, 'You can restore it from the Trash window.')), [
+    { label: 'Cancel' },
+    {
+      label: 'Move to Trash',
+      danger: true,
+      onClick: async () => {
+        try {
+          if (isProject) await api.trashProject(resource.slug);
+          else await api.trashMap(resource.id);
+          if (state.mapId === resource.id
+            || (isProject && state.mapId?.startsWith(`${resource.slug}/`))) {
+            ctrl.goHome();
+          }
+          if (isProject && homeFilter === resource.slug) homeFilter = null;
+          await refreshLibrary();
+          toast(`Moved “${name}” to Trash`);
+        } catch (error) {
+          toast(`Could not move to Trash: ${error.message}`, true);
+        }
+      },
+    },
+  ]);
+}
+
+function trashLocation(item) {
+  return item.kind === 'project'
+    ? `Project folder: ${item.originalSlug}`
+    : `Map file: ${item.originalId}`;
+}
+
+function deleteForeverDialog(item, refresh) {
+  const contents = item.kind === 'project'
+    ? ` and its ${item.mapCount} map${item.mapCount === 1 ? '' : 's'}`
+    : '';
+  modal(`Delete “${item.name}” forever?`, h('div', { class: 'trash-confirm' },
+    h('p', {}, `This permanently deletes the ${item.kind}${contents}.`),
+    h('p', { class: 'hint danger-copy' }, 'This cannot be undone.')), [
+    { label: 'Cancel' },
+    {
+      label: 'Delete forever',
+      danger: true,
+      onClick: async () => {
+        try {
+          await api.deleteTrash(item.id);
+          await ctrl.loadTrash();
+          refresh();
+          renderHome();
+          toast(`Permanently deleted “${item.name}”`);
+        } catch (error) {
+          toast(`Could not delete item: ${error.message}`, true);
+        }
+      },
+    },
+  ]);
+}
+
+function openTrashDialog() {
+  const body = h('div', { class: 'trash-list' });
+  const render = () => {
+    if (!state.trash.length) {
+      body.replaceChildren(h('div', { class: 'trash-empty' },
+        h('strong', {}, 'Trash is empty'),
+        h('p', {}, 'Maps and projects moved here will stay until you restore or permanently delete them.')));
+      return;
+    }
+    body.replaceChildren(...state.trash.map((item) => {
+      const deleted = new Date(item.deletedAt);
+      const when = Number.isNaN(deleted.getTime()) ? item.deletedAt : deleted.toLocaleString();
+      return h('article', { class: 'trash-row' },
+        h('div', { class: 'trash-row-copy' },
+          h('span', { class: `trash-kind ${item.kind}` }, item.kind),
+          h('strong', {}, item.name),
+          h('span', {}, trashLocation(item)),
+          h('small', {}, `Moved ${when}`)),
+        h('div', { class: 'trash-row-actions' },
+          h('button', {
+            class: 'd-btn',
+            onClick: async () => {
+              try {
+                await api.restoreTrash(item.id);
+                await refreshLibrary();
+                render();
+                toast(`Restored “${item.name}”`);
+              } catch (error) {
+                toast(`Could not restore item: ${error.message}`, true);
+              }
+            },
+          }, 'Restore'),
+          h('button', {
+            class: 'd-btn danger-outline',
+            onClick: () => deleteForeverDialog(item, render),
+          }, 'Delete forever')));
+    }));
+  };
+  render();
+  modal('Trash', body, [{ label: 'Close' }]);
+}
+
 // ── dialogs ──────────────────────────────────────────────────────────
 function modal(title, body, actions) {
   const root = document.getElementById('dialog-root');
@@ -432,6 +572,7 @@ function modal(title, body, actions) {
   associateFieldLabels(dialog);
   const backdrop = h('div', { class: 'dialog-backdrop', onPointerdown: (ev) => { if (ev.target === backdrop) close(); } }, dialog);
   const onKey = (ev) => {
+    if (root.lastElementChild !== backdrop) return;
     if (ev.key === 'Escape') { ev.stopPropagation(); close(); }
     if (ev.key === 'Enter' && !ev.shiftKey && ev.target.tagName !== 'TEXTAREA') {
       const primary = actions.find((x) => x.primary);
@@ -2480,6 +2621,7 @@ export function initUI() {
   });
   bus.on('maps-listed', () => { renderSwitcher(); if (!state.mapId) renderHome(); });
   bus.on('projects-listed', () => { if (!state.mapId) renderHome(); });
+  bus.on('trash-listed', () => { if (!state.mapId) renderHome(); });
   bus.on('templates-loaded', () => {
     if (!document.getElementById('templates-panel').hidden) renderTemplates();
   });

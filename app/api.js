@@ -1,5 +1,5 @@
 // Server API. In standalone-export mode everything is read-only and local.
-import { state } from './state.js';
+import { state, bus } from './state.js';
 
 async function jfetch(url, opts) {
   const res = await fetch(url, opts);
@@ -11,6 +11,7 @@ async function jfetch(url, opts) {
       : data?.error || res.statusText;
     const err = new Error(detail);
     err.status = res.status;
+    err.data = data;
     throw err;
   }
   return data;
@@ -46,16 +47,66 @@ export const api = {
       body: JSON.stringify({ project }),
     });
   },
+  async listTrash() {
+    if (state.standalone) return [];
+    return jfetch('/api/trash');
+  },
+  async trashMap(id) {
+    return jfetch(`/api/maps/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+  async trashProject(slug) {
+    return jfetch(`/api/projects/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+  },
+  async restoreTrash(id) {
+    return jfetch(`/api/trash/${encodeURIComponent(id)}/restore`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+  },
+  async deleteTrash(id) {
+    return jfetch(`/api/trash/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
   async getMap(id) {
     if (state.standalone) return { id: window.OPSMAP_STANDALONE.id, source: window.OPSMAP_STANDALONE.source };
     return jfetch(`/api/maps/${encodeURIComponent(id)}`);
   },
   async saveMap(id, source) {
     if (state.standalone) throw new Error('This is a read-only export — edits are disabled.');
-    return jfetch(`/api/maps/${encodeURIComponent(id)}`, {
+    const result = await jfetch(`/api/maps/${encodeURIComponent(id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ source }),
+    });
+    bus.emit('map-saved', { id, source });
+    return result;
+  },
+  async inspectWorkbench(url) {
+    return jfetch('/api/workbench/inspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+  },
+  async pushWorkbench(url, source, baseVersion = null, baseSource = null) {
+    return jfetch('/api/workbench/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, source, baseVersion, baseSource }),
+    });
+  },
+  async createWorkbenchShare(url, role) {
+    return jfetch('/api/workbench/share', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, role }),
+    });
+  },
+  async watchWorkbench(url, since = 'latest') {
+    return jfetch('/api/workbench/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, since }),
     });
   },
   async createMap(name, mode = 'process', project = null) {
