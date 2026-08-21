@@ -29,9 +29,11 @@ export const state = {
   probePath: null,
   ownerLanes: false,
 
-  undoStack: [],       // previous sources
-  redoStack: [],
-  workbench: null,       // active Workbench link metadata; the share key stays browser-local
+  undoStack: [],       // [{source, label}] actions available to undo
+  redoStack: [],       // [{source, label}] actions available to redo
+  saveStatus: 'idle',  // idle | saving | saved | error
+  saveError: '',
+  workbench: null,     // active Workbench link metadata; the share key stays browser-local
 };
 
 // The project slug of the open map, or null for a root map / no map.

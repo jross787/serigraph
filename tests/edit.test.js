@@ -512,3 +512,97 @@ edges: []
   assert.match(out, /elements:\n\s+- id: shared/);
   assert.match(out, /nodes:\n\s+- id: landscape/);
 });
+
+test('duplicateNode copies a subtree and rewrites only its internal references', () => {
+  load(`
+name: Duplicate process
+nodes:
+  - id: group
+    type: process
+    label: Group
+    cost:
+      runs: 8
+      human: { minutes: 5, rate: 70 }
+    planning:
+      type: requirement
+      dependsOn: [child-a]
+    relations:
+      - { to: child-b, type: supports }
+    children:
+      nodes:
+        - id: child-a
+          type: process
+          label: Child A
+        - id: child-b
+          type: process
+          label: Child B
+      edges:
+        - { from: child-a, to: child-b, label: hands off }
+  - id: outside
+    type: process
+    label: Outside
+edges:
+  - { from: group, to: outside, label: leaves group }
+`);
+
+  const duplicateId = edit.duplicateNode('group', { position: { x: 200, y: 150 } });
+  const { out, model } = reserialize();
+  const original = model.byId.get('group');
+  const copy = model.byId.get(duplicateId);
+
+  assert.equal(duplicateId, 'group-copy');
+  assert.equal(copy.label, 'Group copy');
+  assert.deepEqual(copy.position, { x: 200, y: 150 });
+  assert.deepEqual(copy.cost, original.cost);
+  assert.deepEqual(copy.planning.dependsOn, ['child-a-copy']);
+  assert.deepEqual(copy.relations, [{ to: 'child-b-copy', type: 'supports' }]);
+  assert.ok(model.byId.has('child-a-copy'));
+  assert.ok(model.byId.has('child-b-copy'));
+  assert.deepEqual(copy.children.edges.map(({ from, to, label }) => ({ from, to, label })),
+    [{ from: 'child-a-copy', to: 'child-b-copy', label: 'hands off' }]);
+  assert.equal(model.root.edges.length, 1, 'external connection is not duplicated');
+  for (const derived of ['ownerId:', 'isElement:', 'isPlacement:', 'stats:']) {
+    assert.ok(!out.includes(derived), `derived field omitted: ${derived}`);
+  }
+});
+
+test('duplicateElement copies its definition and one placement without derived fields', () => {
+  load(`
+name: Duplicate freeform item
+mode: freeform
+elements:
+  - id: data-team
+    type: role
+    label: Data Team
+  - id: looker
+    type: system
+    label: Looker
+    owners:
+      - { to: data-team, role: technical }
+nodes:
+  - id: analytics
+    type: item
+    label: Analytics
+    children:
+      nodes:
+        - use: looker
+          note: Interactive dashboards
+          position: { x: 20, y: 30 }
+      edges: []
+edges: []
+`);
+
+  const duplicateId = edit.duplicateElement('looker', 'analytics', { position: { x: 90, y: 110 } });
+  const { out, model } = reserialize();
+
+  assert.equal(duplicateId, 'looker-copy');
+  assert.equal(model.elementById.get(duplicateId).label, 'Looker copy');
+  assert.deepEqual(model.elementById.get(duplicateId).owners, [{ to: 'data-team', role: 'technical' }]);
+  assert.equal(model.placementByKey.get(`analytics\u0000${duplicateId}`).note, 'Interactive dashboards');
+  assert.deepEqual(model.placementByKey.get(`analytics\u0000${duplicateId}`).position, { x: 90, y: 110 });
+  assert.equal(model.placementsByElement.get('looker').length, 1);
+  assert.equal(model.placementsByElement.get(duplicateId).length, 1);
+  for (const derived of ['ownerId:', 'isElement:', 'isPlacement:', 'placementKey:', 'stats:']) {
+    assert.ok(!out.includes(derived), `derived field omitted: ${derived}`);
+  }
+});

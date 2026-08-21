@@ -41,7 +41,10 @@ function wireCanvasEvents() {
       state.pendingEdgeLabel = null;
       canvas.paintSelection();
       if (from === id) { ui.toast('Connect cancelled'); return; }
-      ctrl.commit(() => edit.addEdge(state.scopeId, { from, to: id, label }))
+      ctrl.commit(
+        () => edit.addEdge(state.scopeId, { from, to: id, label }),
+        { historyLabel: 'add connection' },
+      )
         .then((ok) => {
           if (!ok) return;
           const scope = state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children;
@@ -90,13 +93,19 @@ function wireCanvasEvents() {
   // a finished node drag pins the node where it was dropped
   bus.on('node-moved', (id, pos) => {
     if (state.presenting || state.standalone) return;
-    ctrl.commit(() => edit.setNodePosition(id, pos))
+    ctrl.commit(
+      () => edit.setNodePosition(id, pos),
+      { historyLabel: `move “${state.model?.byId.get(id)?.label ?? id}”` },
+    )
       .then((ok) => { if (!ok) canvas.refreshScope(state.model); });
   });
 
   bus.on('unpin-request', (id) => {
     if (state.presenting || state.standalone) return;
-    ctrl.commit(() => edit.clearNodePosition(id))
+    ctrl.commit(
+      () => edit.clearNodePosition(id),
+      { historyLabel: `release “${state.model?.byId.get(id)?.label ?? id}” to automatic layout` },
+    )
       .then((ok) => { if (ok) ui.toast('Released — back to auto-layout'); });
   });
 
@@ -107,7 +116,7 @@ function wireCanvasEvents() {
     ctrl.commit(() => {
       edit.setEdgeVia(state.scopeId, index, via);
       if (style) edit.setEdgeRoute(state.scopeId, index, style);
-    }).then((ok) => { if (!ok) canvas.refreshScope(state.model); });
+    }, { historyLabel: 'route connection' }).then((ok) => { if (!ok) canvas.refreshScope(state.model); });
   });
 
   bus.on('unroute-request', (index) => {
@@ -115,7 +124,7 @@ function wireCanvasEvents() {
     ctrl.commit(() => {
       edit.clearEdgeVia(state.scopeId, index);
       edit.setEdgeRoute(state.scopeId, index, null);
-    }).then((ok) => { if (ok) ui.toast('Released — back to automatic routing'); });
+    }, { historyLabel: 'release connection to automatic routing' }).then((ok) => { if (ok) ui.toast('Released — back to automatic routing'); });
   });
 
   // re-nesting suffix: "· 2 edges re-linked · 1 edge removed"
@@ -138,7 +147,7 @@ function wireCanvasEvents() {
       res = isPlacement
         ? edit.movePlacement(id, fromOwnerId, containerId)
         : edit.moveNode(id, containerId);
-    }, { select: null })
+    }, { select: null, historyLabel: `move “${nodeLabel}” into “${contLabel}”` })
       .then((ok) => {
         if (!ok) { canvas.refreshScope(state.model); return; }
         ui.toast(`Moved “${nodeLabel}” into “${contLabel}”${edgeFate(res)}`);
@@ -167,7 +176,7 @@ function wireCanvasEvents() {
       res = isPlacement
         ? edit.movePlacement(id, fromOwnerId, targetOwnerId)
         : edit.moveNode(id, targetOwnerId);
-    }, { select: null })
+    }, { select: null, historyLabel: `move “${nodeLabel}” out to “${targetLabel}”` })
       .then((ok) => {
         if (!ok) { canvas.refreshScope(state.model); return; }
         ui.toast(`Moved “${nodeLabel}” out to “${targetLabel}”${edgeFate(res)}`);
@@ -184,7 +193,10 @@ function wireCanvasEvents() {
     if (state.presenting || state.standalone) return;
     const label = state.pendingEdgeLabel ?? null;
     state.pendingEdgeLabel = null;
-    ctrl.commit(() => edit.addEdge(state.scopeId, { from, to, label }))
+    ctrl.commit(
+      () => edit.addEdge(state.scopeId, { from, to, label }),
+      { historyLabel: 'add connection' },
+    )
       .then((ok) => {
         if (!ok) return;
         const scope = state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children;
@@ -273,6 +285,7 @@ function wireKeyboard() {
 
     if (meta && !ev.shiftKey && ev.key.toLowerCase() === 'z') { ev.preventDefault(); ctrl.undo(); return; }
     if (meta && ev.shiftKey && ev.key.toLowerCase() === 'z') { ev.preventDefault(); ctrl.redo(); return; }
+    if (meta && !ev.shiftKey && ev.key.toLowerCase() === 'd') { ev.preventDefault(); ui.duplicateSelection(); return; }
     if (meta) return;
 
     if (ev.shiftKey && ev.key.toLowerCase() === 'p') { productWorkspace.setWorkspaceView('map'); togglePresent(); return; }
@@ -325,25 +338,13 @@ function wireToolbar() {
   const on = (id, fn) => document.getElementById(id)?.addEventListener('click', fn);
   on('btn-search', ui.openSearch);
   on('btn-templates', () => { productWorkspace.setWorkspaceView('map'); ui.toggleTemplates(); });
-  on('btn-add-node', () => { productWorkspace.setWorkspaceView('map'); ui.addNodeDialog(state.scopeId); });
   on('btn-economics', () => { productWorkspace.setWorkspaceView('map'); ui.toggleEconomics(); });
-  on('btn-import', () => { productWorkspace.setWorkspaceView('map'); ui.importDialog(); });
-  on('btn-import-file', () => { productWorkspace.setWorkspaceView('map'); workbench.importMapFile(); });
-  on('btn-export-file', workbench.downloadYaml);
   on('btn-ai', () => { productWorkspace.setWorkspaceView('map'); ui.toggleChat(); });
   on('btn-ai-settings', workbench.aiSettingsDialog);
   bus.on('ai-settings-request', workbench.aiSettingsDialog);
   on('btn-present', () => { productWorkspace.setWorkspaceView('map'); togglePresent(); });
   on('btn-theme', toggleTheme);
   on('btn-help', ui.helpDialog);
-  on('btn-export', () => {
-    if (state.mapId) window.location.href = `/export/${encodeURIComponent(state.mapId)}.html`;
-  });
-  on('btn-share', workbench.openShareDialog);
-  on('btn-history', workbench.openHistory);
-  on('zoom-in', () => canvas.zoomBy(1.3));
-  on('zoom-out', () => canvas.zoomBy(0.77));
-  on('zoom-fit', () => canvas.fit());
   for (const button of document.querySelectorAll('.utility-popover button')) {
     button.addEventListener('click', () => { const menu = button.closest('details'); if (menu) menu.open = false; });
   }

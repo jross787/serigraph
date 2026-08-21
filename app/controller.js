@@ -53,6 +53,46 @@ function scopeForNode(nodeId, preferredScopeId = state.scopeId) {
   return model.byId.get(nodeId)?.ownerId ?? null;
 }
 
+function setSaveStatus(status, error = '') {
+  state.saveStatus = status;
+  state.saveError = error;
+  bus.emit('save-status', status, error);
+}
+
+async function saveMapSource(source) {
+  setSaveStatus('saving');
+  try {
+    const result = await api.saveMap(state.mapId, source);
+    setSaveStatus('saved');
+    return result;
+  } catch (error) {
+    setSaveStatus('error', error.message);
+    throw error;
+  }
+}
+
+function cleanHistoryLabel(label) {
+  const value = String(label || '').trim();
+  return value || 'edit map';
+}
+
+function revisionLabel(label) {
+  const value = cleanHistoryLabel(label);
+  return value[0].toUpperCase() + value.slice(1);
+}
+
+function historyEntry(source, label) {
+  return { source, label: cleanHistoryLabel(label) };
+}
+
+function entrySource(entry) {
+  return typeof entry === 'string' ? entry : entry.source;
+}
+
+function entryLabel(entry) {
+  return typeof entry === 'string' ? 'edit map' : cleanHistoryLabel(entry.label);
+}
+
 export function nodeUrl(nodeId) {
   const ownerId = scopeForNode(nodeId);
   const inScope = state.model?.mode === 'freeform' && state.model.elementById?.has(nodeId) && ownerId != null;
@@ -103,6 +143,7 @@ export async function openMap(mapId, { nodeId = null, inId = null, replace = fal
   state.undoStack = [];
   state.redoStack = [];
   adoptSource(source);
+  setSaveStatus(state.standalone ? 'idle' : 'saved');
   bus.emit('map-opened');
 
   if (!state.model) {
@@ -152,6 +193,7 @@ export function goHome({ push = true } = {}) {
   state.scopeId = null;
   state.selectedId = null;
   state.selectedEdge = null;
+  setSaveStatus('idle');
   if (push && location.hash !== '#/') {
     squelchHash = true;
     location.hash = '#/';
@@ -226,6 +268,7 @@ export function listRevisions() {
 export async function restoreRevision(revision) {
   if (!revision?.source || state.standalone) return false;
   const before = state.source;
+  const label = `restore ${revision.label || 'revision'}`;
   const { errors } = parseMap(revision.source);
   if (errors.length) {
     bus.emit('toast', 'That revision is no longer valid.', true);
@@ -233,15 +276,16 @@ export async function restoreRevision(revision) {
   }
   adoptSource(revision.source);
   try {
-    await api.saveMap(state.mapId, revision.source);
+    await saveMapSource(revision.source);
   } catch (e) {
     adoptSource(before);
     refreshView();
     bus.emit('toast', 'Restore failed: ' + e.message, true);
     return false;
   }
-  state.undoStack.push(before);
+  state.undoStack.push(historyEntry(before, label));
   state.redoStack = [];
+  recordRevision(revision.source, revisionLabel(label));
   refreshView();
   bus.emit('toast', `Restored ${revision.label || 'a revision'}`);
   return true;
@@ -253,6 +297,7 @@ export async function restoreRevision(revision) {
 export async function applySource(after, label = 'AI edit') {
   if (state.standalone || typeof after !== 'string' || !after.trim()) return false;
   const before = state.source;
+  const action = cleanHistoryLabel(label);
   const { errors } = parseMap(after);
   if (errors.length) {
     bus.emit('toast', 'The proposed map is invalid — not applied. ' + errors[0].message, true);
@@ -261,16 +306,16 @@ export async function applySource(after, label = 'AI edit') {
   if (after === before) return true;
   adoptSource(after);
   try {
-    await api.saveMap(state.mapId, after);
+    await saveMapSource(after);
   } catch (e) {
     adoptSource(before);
     refreshView();
     bus.emit('toast', 'Save failed: ' + e.message, true);
     return false;
   }
-  state.undoStack.push(before);
+  state.undoStack.push(historyEntry(before, action));
   state.redoStack = [];
-  recordRevision(after, label);
+  recordRevision(after, revisionLabel(action));
   refreshView();
   return true;
 }
@@ -285,9 +330,10 @@ export async function loadAiSettings(force = false) {
 
 // ── the edit pipeline ────────────────────────────────────────────────
 // commit(() => { ...mutate state.doc via edit.js... })
-export async function commit(mutator, { select = undefined } = {}) {
+export async function commit(mutator, { select = undefined, historyLabel = 'edit map' } = {}) {
   if (state.standalone) { bus.emit('toast', 'This is a read-only export.', true); return false; }
   const before = state.source;
+  const action = cleanHistoryLabel(historyLabel);
   let after;
   try {
     mutator();
@@ -307,13 +353,13 @@ export async function commit(mutator, { select = undefined } = {}) {
     return false;
   }
 
-  state.undoStack.push(before);
+  state.undoStack.push(historyEntry(before, action));
   if (state.undoStack.length > 80) state.undoStack.shift();
   state.redoStack = [];
   adoptSource(after);
 
   try {
-    await api.saveMap(state.mapId, after);
+    await saveMapSource(after);
   } catch (e) {
     state.undoStack.pop();
     adoptSource(before);
@@ -322,7 +368,7 @@ export async function commit(mutator, { select = undefined } = {}) {
     return false;
   }
 
-  recordRevision(after);
+  recordRevision(after, revisionLabel(action));
 
   if (select !== undefined) state.selectedId = select;
   refreshView();
@@ -330,25 +376,31 @@ export async function commit(mutator, { select = undefined } = {}) {
 }
 
 export async function undo() {
-  if (!state.undoStack.length) { bus.emit('toast', 'Nothing to undo'); return; }
-  const prev = state.undoStack.pop();
-  state.redoStack.push(state.source);
-  adoptSource(prev);
-  try { await api.saveMap(state.mapId, prev); } catch { /* keep local */ }
-  recordRevision(prev, 'Undo');
+  if (!state.undoStack.length) { bus.emit('toast', 'Nothing to undo'); return false; }
+  const previous = state.undoStack.pop();
+  const source = entrySource(previous);
+  const label = entryLabel(previous);
+  state.redoStack.push(historyEntry(state.source, label));
+  adoptSource(source);
+  try { await saveMapSource(source); } catch { /* keep the local undo and show the failed save state */ }
+  recordRevision(source, `Undo ${label}`);
   refreshView();
-  bus.emit('toast', 'Undone');
+  bus.emit('toast', `Undid ${label}`);
+  return true;
 }
 
 export async function redo() {
-  if (!state.redoStack.length) { bus.emit('toast', 'Nothing to redo'); return; }
+  if (!state.redoStack.length) { bus.emit('toast', 'Nothing to redo'); return false; }
   const next = state.redoStack.pop();
-  state.undoStack.push(state.source);
-  adoptSource(next);
-  try { await api.saveMap(state.mapId, next); } catch { /* keep local */ }
-  recordRevision(next, 'Redo');
+  const source = entrySource(next);
+  const label = entryLabel(next);
+  state.undoStack.push(historyEntry(state.source, label));
+  adoptSource(source);
+  try { await saveMapSource(source); } catch { /* keep the local redo and show the failed save state */ }
+  recordRevision(source, `Redo ${label}`);
   refreshView();
-  bus.emit('toast', 'Redone');
+  bus.emit('toast', `Redid ${label}`);
+  return true;
 }
 
 // After any model change: keep the user's place if it still exists.
@@ -401,6 +453,7 @@ export async function handleRemoteChange(ids) {
   adoptSource(payload.source);
   state.undoStack = [];
   state.redoStack = [];
+  setSaveStatus(state.model ? 'saved' : 'error', state.model ? '' : 'Map file has errors');
   refreshView();
   bus.emit('toast', state.model ? 'Map updated from file' : 'Map file has errors — see details', !state.model);
 }

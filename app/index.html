@@ -52,18 +52,12 @@
         <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M18.5 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z" fill="currentColor"/></svg>
         <span>AI</span>
       </button>
-      <button id="btn-add-node" class="tb-btn primary" title="Add a node (N)"><span aria-hidden="true">＋</span> <span id="btn-add-node-label">Add step</span></button>
       <details class="utility-menu">
         <summary class="tb-btn icon-btn" title="More actions" aria-label="More actions">•••</summary>
         <div class="utility-popover">
           <button id="btn-templates" class="menu-item" title="Template library">Templates</button>
-          <button id="btn-import" class="menu-item" title="New map from a meeting transcript">Import transcript</button>
-          <button id="btn-import-file" class="menu-item" title="Open a Serigraph YAML file from disk">Import file…</button>
-          <button id="btn-export-file" class="menu-item" title="Download this map as a YAML file">Export file</button>
           <button id="btn-ai-settings" class="menu-item" title="Provider, key, and models for the AI assistant">AI settings</button>
           <button id="btn-economics" class="menu-item" title="Compare human and agent cost">Economics</button>
-          <button id="btn-share" class="menu-item" title="Link Workbench, copy a deep link, or export the map">Share & sync</button>
-          <button id="btn-history" class="menu-item" title="Restore a local revision">Revision recovery</button>
           <button id="btn-theme" class="menu-item" title="Toggle theme">Toggle appearance</button>
           <button id="btn-help" class="menu-item" title="Keyboard shortcuts (?)">Keyboard shortcuts</button>
         </div>
@@ -77,17 +71,12 @@
       <section id="product-workspace" hidden aria-label="Product document"></section>
       <section id="projects-home" hidden aria-label="Projects"></section>
       <svg id="canvas" tabindex="0" role="application" aria-label="Map canvas"></svg>
-      <nav id="tool-rail" aria-label="Map tools"></nav>
+      <nav id="tool-rail" aria-label="Map editing toolbar"></nav>
       <div id="tool-flyout" hidden></div>
       <div id="context-actions" hidden aria-label="Selected item actions"></div>
       <div id="scenario-preview" hidden aria-live="polite"></div>
       <aside id="probe-panel" hidden aria-live="polite"></aside>
       <aside id="review-tray" hidden aria-label="Review trail"></aside>
-      <div id="zoombar">
-        <button id="zoom-out" title="Zoom out (−)">−</button>
-        <button id="zoom-fit" title="Fit to view (0)">⛶</button>
-        <button id="zoom-in" title="Zoom in (+)">+</button>
-      </div>
       <div id="palette" hidden></div>
       <div id="moveout-bar" hidden></div>
       <div id="economics" hidden></div>
