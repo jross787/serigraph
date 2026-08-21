@@ -4,6 +4,7 @@ import { isMap, isSeq } from '../vendor/yaml.js';
 import { ancestryOf, scopeOf } from '../shared/model.js';
 import { stripFlagComments } from '../shared/provenance.js';
 import { state } from './state.js';
+import { getLayout } from './canvas.js';
 
 // ── locating things in the YAML document ─────────────────────────────
 // Returns the YAML path (e.g. ['nodes', 2, 'children', 'nodes', 0]) of the
@@ -131,7 +132,7 @@ function isNodeRecord(value) {
     && typeof value.label === 'string';
 }
 
-function collectCloneIds(value, ids, taken) {
+export function collectCloneIds(value, ids, taken) {
   if (Array.isArray(value)) {
     for (const item of value) collectCloneIds(item, ids, taken);
     return;
@@ -145,7 +146,7 @@ function collectCloneIds(value, ids, taken) {
   for (const child of Object.values(value)) collectCloneIds(child, ids, taken);
 }
 
-function remapCloneReferences(value, ids, parentKey = '') {
+export function remapCloneReferences(value, ids, parentKey = '') {
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
       if (parentKey === 'dependsOn' && ids.has(value[i])) value[i] = ids.get(value[i]);
@@ -289,6 +290,62 @@ export function duplicateNode(nodeId, { position = null } = {}) {
   flowPositions(created);
   sequence.items.splice(sourcePath.at(-1) + 1, 0, created);
   return ids.get(nodeId);
+}
+
+// Copy nodes (with their whole subtrees) into plain, YAML-free objects for
+// the clipboard. A selection that contains a node and its descendant keeps
+// only the ancestor — its copy already carries the descendant. Pinned
+// positions shift so the selection's min corner sits at {0,0}; paste adds
+// its own offset on top.
+export function copyNodesPlain(ids) {
+  const model = state.model;
+  if (!model) return [];
+  const wanted = new Set((ids ?? []).filter((id) => model.byId.has(id)));
+  const topmost = [...wanted].filter((id) =>
+    !ancestryOf(model, id).slice(0, -1).some((a) => wanted.has(a)));
+  const plain = [];
+  for (const id of topmost) {
+    const p = findNodePath(state.doc, id);
+    const node = p ? state.doc.getIn(p, true)?.toJSON?.() : null;
+    if (isNodeRecord(node)) plain.push(node);
+  }
+  const pinned = plain.filter((n) => n.position);
+  if (pinned.length) {
+    const minX = Math.min(...pinned.map((n) => Number(n.position.x) || 0));
+    const minY = Math.min(...pinned.map((n) => Number(n.position.y) || 0));
+    for (const n of pinned) {
+      n.position = { x: (Number(n.position.x) || 0) - minX, y: (Number(n.position.y) || 0) - minY };
+    }
+  }
+  return plain;
+}
+
+// Paste plain nodes (from copyNodesPlain) into the scope owned by ownerId
+// (null = root). Every internal id — node ids, edge endpoints, relations,
+// owners, dependsOn — is remapped to a fresh id so the paste never collides
+// with the source or an earlier paste. offset shifts each pasted root's
+// pinned position. Returns the new root ids.
+export function pasteNodesPlain(plainNodes, ownerId, offset = null) {
+  const doc = state.doc;
+  const scope = ensureScope(doc, ownerId ?? null);
+  if (!scope) throw new Error(`can't find node "${ownerId}" in the file`);
+  const roots = (plainNodes ?? []).filter(isNodeRecord).map((n) => structuredClone(n));
+  const ids = new Map();
+  const taken = new Set();
+  for (const root of roots) collectCloneIds(root, ids, taken);
+  for (const root of roots) {
+    remapCloneReferences(root, ids);
+    if (offset && root.position) {
+      root.position = {
+        x: Math.round((Number(root.position.x) || 0) + offset.x),
+        y: Math.round((Number(root.position.y) || 0) + offset.y),
+      };
+    }
+    const created = doc.createNode(root);
+    flowPositions(created);
+    doc.addIn(scope.nodesPath, created);
+  }
+  return roots.map((root) => root.id);
 }
 
 export function addElement(fields) {
@@ -440,6 +497,58 @@ export function clearNodePosition(nodeId, ownerId = state.scopeId) {
     : findNodePath(doc, nodeId);
   if (!p) throw new Error(`node "${nodeId}" not found in this group`);
   if (doc.getIn([...p, 'position'], true)) doc.deleteIn([...p, 'position']);
+}
+
+// Align (or evenly distribute) several nodes in the scope on screen. Reads
+// the current layout boxes and writes pinned positions through the usual
+// position path, so the result survives reload. 'dist-h'/'dist-v' keep the
+// two extreme nodes fixed and space the rest evenly between them. Fewer
+// than 2 ids (3 for the dist modes) is a no-op.
+export function alignNodes(ids, mode) {
+  const layout = getLayout();
+  if (!layout || !state.model) return;
+  const boxes = [...new Set(ids ?? [])]
+    .map((id) => layout.nodes.find((n) => n.id === id))
+    .filter(Boolean);
+  const need = mode === 'dist-h' || mode === 'dist-v' ? 3 : 2;
+  if (boxes.length < need) return;
+
+  const minX = Math.min(...boxes.map((n) => n.x));
+  const maxX = Math.max(...boxes.map((n) => n.x + n.w));
+  const minY = Math.min(...boxes.map((n) => n.y));
+  const maxY = Math.max(...boxes.map((n) => n.y + n.h));
+  // target top-left per node; the axis a mode does not touch stays put
+  const targets = new Map(boxes.map((n) => [n.id, { x: n.x, y: n.y }]));
+
+  if (mode === 'left') for (const n of boxes) targets.get(n.id).x = minX;
+  else if (mode === 'right') for (const n of boxes) targets.get(n.id).x = maxX - n.w;
+  else if (mode === 'top') for (const n of boxes) targets.get(n.id).y = minY;
+  else if (mode === 'bottom') for (const n of boxes) targets.get(n.id).y = maxY - n.h;
+  else if (mode === 'hcenter') for (const n of boxes) targets.get(n.id).x = (minX + maxX - n.w) / 2;
+  else if (mode === 'vcenter') for (const n of boxes) targets.get(n.id).y = (minY + maxY - n.h) / 2;
+  else if (mode === 'dist-h' || mode === 'dist-v') {
+    const horizontal = mode === 'dist-h';
+    const lead = (n) => (horizontal ? n.x : n.y);
+    const span = (n) => (horizontal ? n.w : n.h);
+    const sorted = [...boxes].sort((a, b) => (lead(a) + span(a) / 2) - (lead(b) + span(b) / 2));
+    const first = sorted[0], last = sorted[sorted.length - 1], inner = sorted.slice(1, -1);
+    const room = lead(last) - lead(first) - span(first) - inner.reduce((s, n) => s + span(n), 0);
+    const gap = room / (sorted.length - 1);
+    let cursor = lead(first) + span(first) + gap;
+    for (const n of inner) {
+      const t = targets.get(n.id);
+      if (horizontal) t.x = cursor; else t.y = cursor;
+      cursor += span(n) + gap;
+    }
+  } else {
+    throw new Error(`unknown align mode "${mode}"`);
+  }
+
+  for (const n of boxes) {
+    const t = targets.get(n.id);
+    if (t.x === n.x && t.y === n.y) continue; // already there
+    setNodePosition(n.id, { x: t.x + n.w / 2, y: t.y + n.h / 2 }, layout.ownerId ?? null);
+  }
 }
 
 // Pin a node on the Flow view's ground grid: flowPosition is the node's
@@ -748,6 +857,19 @@ export function deleteNode(nodeId) {
   cleanupScope(doc, ownerId);
 }
 
+// Delete several nodes at once, each with the same semantics as a single
+// delete (subtree, cross-scope references, and touching edges included).
+// Ancestors win: when the set contains a node and its descendant, the
+// ancestor's delete already removes the descendant's whole subtree.
+export function bulkRemoveNodes(ids) {
+  const model = state.model;
+  if (!model) return;
+  const wanted = new Set((ids ?? []).filter((id) => model.byId.has(id)));
+  const topmost = [...wanted].filter((id) =>
+    !ancestryOf(model, id).slice(0, -1).some((a) => wanted.has(a)));
+  for (const id of topmost) deleteNode(id);
+}
+
 // ── re-nesting ───────────────────────────────────────────────────────
 // Move a node (with its entire subtree) into another scope.
 // targetOwnerId is a container node id, or null for the root scope.
@@ -908,6 +1030,42 @@ export function deleteEdge(ownerId, index) {
   const scope = ensureScope(doc, ownerId, { create: false });
   if (!scope) throw new Error('scope not found');
   doc.deleteIn([...scope.edgesPath, index]);
+}
+
+// state.selectedEdge is { scopeId, index }: the edge's slot in its scope's
+// edges list. Resolves to the edge's YAML map so edits keep its comments.
+function findEdgeItem(doc, { scopeId, index }) {
+  const scope = ensureScope(doc, scopeId ?? null, { create: false });
+  if (!scope) throw new Error('scope not found');
+  const item = doc.getIn([...scope.edgesPath, index], true);
+  if (!isMap(item)) throw new Error('edge not found');
+  return item;
+}
+
+// Swap an edge's direction in place; label, route, via, and comments stay.
+export function reverseEdge(edgeRef) {
+  const item = findEdgeItem(state.doc, edgeRef);
+  const from = item.get('from');
+  item.set('from', item.get('to'));
+  item.set('to', from);
+}
+
+// Point an edge at different endpoints. Both must be sibling nodes of the
+// edge's scope; every other key on the edge is preserved.
+export function rewireEdge(edgeRef, { from, to }) {
+  const scope = scopeOf(state.model, edgeRef?.scopeId ?? null);
+  const siblings = new Set((scope?.nodes ?? []).map((n) => n.id));
+  if (!siblings.has(from)) throw new Error(`"${from}" is not in this scope`);
+  if (!siblings.has(to)) throw new Error(`"${to}" is not in this scope`);
+  const item = findEdgeItem(state.doc, edgeRef);
+  item.set('from', from);
+  item.set('to', to);
+}
+
+// Set or clear an edge's label; empty text removes the key. Same semantics
+// as updateEdge, addressed by the { scopeId, index } selection shape.
+export function updateEdgeLabel({ scopeId, index }, label) {
+  updateEdge(scopeId ?? null, index, { label });
 }
 
 // Pin an edge's route: via is a point in the scope's layout coordinates that

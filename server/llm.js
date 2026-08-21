@@ -29,6 +29,22 @@ const chatModel = (kind) => {
 };
 const voiceModel = () => process.env.OPSMAP_VOICE_MODEL || 'whisper-1';
 
+// every spawned child (the claude probe, CLI completions, OPSMAP_LLM_CMD) is
+// tracked so the server's SIGINT/SIGTERM path can kill stragglers on shutdown
+const spawnedChildren = new Set();
+function trackChild(child) {
+  spawnedChildren.add(child);
+  const drop = () => spawnedChildren.delete(child);
+  child.on('close', drop);
+  child.on('error', drop);
+  return child;
+}
+
+export function killLlmChildren() {
+  for (const child of spawnedChildren) { try { child.kill('SIGKILL'); } catch { /* already gone */ } }
+  spawnedChildren.clear();
+}
+
 let cliAvailable = null; // lazily probed, cached
 async function hasClaudeCli() {
   if (cliAvailable != null) return cliAvailable;
@@ -36,7 +52,7 @@ async function hasClaudeCli() {
     let done = false;
     const finish = (v) => { if (!done) { done = true; resolve(v); } };
     try {
-      const p = spawn('claude', ['--version'], { stdio: ['ignore', 'ignore', 'ignore'] });
+      const p = trackChild(spawn('claude', ['--version'], { stdio: ['ignore', 'ignore', 'ignore'] }));
       const t = setTimeout(() => { p.kill('SIGKILL'); finish(false); }, 8000);
       p.on('exit', (code) => { clearTimeout(t); finish(code === 0); });
       p.on('error', () => { clearTimeout(t); finish(false); });
@@ -68,7 +84,12 @@ export async function resolveProvider() {
 export async function callLLM({ system, prompt }) {
   const provider = await resolveProvider();
   if (!provider) {
-    throw new Error('No LLM provider configured. Open AI settings in the app, or add a key to .env.');
+    // the import route passes code+hint through to the browser, which renders
+    // the hint verbatim in the import dialog — keep the three setup paths named
+    const error = new Error('No LLM provider configured.');
+    error.code = 'llm-no-provider';
+    error.hint = 'Add ANTHROPIC_API_KEY to a .env file in the Serigraph folder (see .env.example), log in to the claude CLI (run `claude` once), or set OPSMAP_LLM_CMD to a local model command — then restart Serigraph.';
+    throw error;
   }
   if (provider.kind === 'misconfigured') {
     throw new Error(`AI settings picked "${provider.model}" but its key isn't set — check AI settings.`);
@@ -86,11 +107,11 @@ export async function callLLM({ system, prompt }) {
 // its stdin, read the completion from stdout. e.g. OPSMAP_LLM_CMD="ollama run llama3.1"
 async function callCmd({ system, prompt }) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.env.OPSMAP_LLM_CMD, {
+    const child = trackChild(spawn(process.env.OPSMAP_LLM_CMD, {
       shell: true,
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: process.env.TMPDIR || '/tmp',
-    });
+    }));
     let out = '', errOut = '', settled = false;
     const finish = (fn, v) => { if (!settled) { settled = true; clearTimeout(timer); fn(v); } };
     const timer = setTimeout(() => {
@@ -266,10 +287,10 @@ async function callCli({ system, prompt, model }) {
   return new Promise((resolve, reject) => {
     const args = ['-p', '--output-format', 'text', '--model', model, '--tools', ''];
     if (system) args.push('--append-system-prompt', system);
-    const child = spawn('claude', args, {
+    const child = trackChild(spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: process.env.TMPDIR || '/tmp',
-    });
+    }));
     let out = '', errOut = '';
     let settled = false;
     const finish = (fn, v) => { if (!settled) { settled = true; clearTimeout(timer); fn(v); } };

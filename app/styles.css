@@ -3545,3 +3545,171 @@ body[data-workspace-view="flow"] #breadcrumbs { display: flex !important; }
   .flow-pulse { display: none; }
   .flow-edge-label { transition: none; }
 }
+
+/* ─── Print ─────────────────────────────────────────────────────────
+   Print the map, not the app: the banner, rails, panels, and every
+   transient popover stay off the page; the stage takes the full page
+   on a white sheet. */
+@media print {
+  #topbar,
+  #tool-rail,
+  #tool-flyout,
+  #palette,
+  #context-actions,
+  #scenario-preview,
+  #probe-panel,
+  #review-tray,
+  #moveout-bar,
+  #economics,
+  #present-hud,
+  #zoombar,
+  .zoom-menu,
+  #minimap,
+  #canvas-msg,
+  #detail,
+  #templates-panel,
+  #chat-dock,
+  #search-overlay,
+  #dialog-root,
+  #toasts,
+  .rename-popover,
+  .marquee-box { display: none !important; }
+
+  /* The stage already fills the viewport; on paper that is the full page. */
+  body { background: #ffffff; }
+  #stage,
+  :root[data-theme="dark"] #stage { background: #ffffff; }
+
+  /* Node and edge colors survive the printer's ink-saving path. */
+  #stage, #stage * {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* A dark screen theme still prints dark-on-light. These re-declare the
+     theme's own light palette values so g.node text and strokes stay
+     legible on the white page. */
+  :root, :root[data-theme="dark"] {
+    --bg: #ffffff;
+    --grid-dot: #d8d4cb;
+    --surface: #ffffff;
+    --surface-2: #f0eee7;
+    --border: #dedbd2;
+    --border-strong: #b9b6ad;
+    --ink: #1d2022;
+    --muted: #606568;
+    --faint: #696f6d;
+    --accent: #315cf3;
+    --sel: #315cf3;
+    --node-fill: #ffffff;
+    --node-ink: #202326;
+    --node-sub: #6d7274;
+    --edge: #8f9699;
+    --edge-label-bg: #ffffff;
+    --c-process: #315cf3;  --c-process-bg: #e9edff;
+    --c-decision: #ba7416; --c-decision-bg: #fbf0df;
+    --c-system: #7654be;   --c-system-bg: #f0ecfb;
+    --c-role: #23795c;     --c-role-bg: #e8f3ed;
+    --c-artifact: #63707b; --c-artifact-bg: #edf0f2;
+    --c-item: #516173;     --c-item-bg: #edf1f5;
+    --c-database: #0b7f86; --c-database-bg: #e4f5f5;
+    --c-api: #bd4157;      --c-api-bg: #fbeaec;
+  }
+}
+
+/* ─── Polish pass components ──────────────────────────────────────── */
+/* Marquee multi-select: the shift+drag rubber band drawn on the canvas. */
+.marquee-box {
+  fill: color-mix(in srgb, var(--sel) 12%, transparent);
+  stroke: var(--sel);
+  stroke-width: 1.2;
+  stroke-dasharray: 5 4;
+  pointer-events: none;
+}
+
+/* Multi-select members wear the accent ring without taking primary selection. */
+g.node.multi-selected .sel-ring { opacity: .55; }
+g.node.multi-selected .shape { stroke: var(--sel); stroke-width: 2; }
+
+/* Keyboard focus on a node is a clear outline; mouse clicks stay quiet. */
+g.node:focus { outline: none; }
+g.node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The collapse toggle hides the minimap but stays beside it. */
+#minimap.minimap-collapsed { display: none; }
+
+/* Zoom menu: the popover list behind the tool rail's percentage button. */
+.zoom-menu {
+  position: absolute;
+  z-index: 40;
+  display: grid;
+  min-width: 128px;
+  padding: 5px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  box-shadow: var(--shadow-2);
+}
+.zoom-menu button {
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font: 590 12px var(--font);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.zoom-menu button:hover { background: var(--surface-2); }
+
+/* Rename popover: the floating label input at a node's screen position. */
+.rename-popover {
+  position: fixed;
+  z-index: 80;
+  min-width: 150px;
+  margin: 0;
+  padding: 7px 10px;
+  border: 1.5px solid var(--accent);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-2);
+  font: 600 13px var(--font);
+  outline: none;
+}
+
+/* Edge rewire: the From and To selects share one row in the edge panel. */
+.edge-rewire { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.edge-rewire select { min-width: 0; }
+
+/* Recent searches: clickable chips above an empty search result list. */
+.search-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 2px; }
+.search-chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  padding: 4px 11px;
+  font: 550 12px var(--font);
+  cursor: pointer;
+}
+.search-chip:hover { background: var(--surface); border-color: var(--border-strong); color: var(--ink); }
+
+/* Hint box: amber setup guidance inside the import dialog. */
+.hint-box {
+  margin: 10px 0;
+  padding: 10px 13px;
+  border: 1px solid color-mix(in srgb, var(--c-decision) 42%, var(--border));
+  border-radius: 9px;
+  background: var(--c-decision-bg);
+  color: var(--ink);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.hint-box strong { color: var(--c-decision); }
+.hint-box code { font-family: var(--mono); font-size: 11.5px; }
+.hint-box ul { margin: 6px 0 0; padding-left: 18px; }
