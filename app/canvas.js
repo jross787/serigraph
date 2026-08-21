@@ -1,6 +1,7 @@
-// The map canvas: SVG rendering, camera (pan/zoom), semantic-zoom dive/rise
-// transitions, selection visuals, connect-mode, drag gestures (move/pin,
-// re-nest, connect-by-port), and the minimap.
+// The map canvas: SVG rendering, camera (pan/zoom, pinch, per-map
+// persistence), semantic-zoom dive/rise transitions, selection visuals and
+// marquee multi-select, connect-mode, drag gestures (move/pin, re-nest,
+// connect-by-port), full-canvas SVG export, and the minimap.
 import { bus, state } from './state.js';
 import { ancestryOf } from '../shared/model.js';
 import { nodeCost, compactMoney } from '../shared/cost.js';
@@ -44,6 +45,45 @@ let camerasResetPending = false;
 export function resetScopeCameras() {
   scopeCameras.clear();
   camerasResetPending = true;
+}
+
+// ── per-map camera persistence ───────────────────────────────────────
+// The camera is stored once per map (opsmap.camera.<mapId>) so a reopened
+// map returns to where the user left it. A node deep link in the hash skips
+// the restore: openMap passes focusId to showScope, which fits the node.
+let pendingMapCamera = null; // consumed by the first showScope after map-opened
+let cameraSaveTimer = 0;
+
+function savedCameraKey() {
+  return state.mapId ? `opsmap.camera.${state.mapId}` : null;
+}
+
+function readSavedCamera() {
+  const key = savedCameraKey();
+  if (!key) return null;
+  try {
+    const c = JSON.parse(localStorage.getItem(key) || 'null');
+    if (!c || !Number.isFinite(c.x) || !Number.isFinite(c.y) || !Number.isFinite(c.k)) return null;
+    return { x: c.x, y: c.y, k: Math.min(3, Math.max(0.02, c.k)) };
+  } catch {
+    return null;
+  }
+}
+
+// debounced: camera changes stream in per-frame during pans and animations
+function scheduleCameraSave() {
+  const key = savedCameraKey();
+  if (!key) return;
+  clearTimeout(cameraSaveTimer);
+  cameraSaveTimer = setTimeout(() => {
+    try {
+      localStorage.setItem(key, JSON.stringify({
+        x: Math.round(camera.x * 100) / 100,
+        y: Math.round(camera.y * 100) / 100,
+        k: Math.round(camera.k * 1000) / 1000,
+      }));
+    } catch { /* storage blocked or full — the camera just won't persist */ }
+  }, 300);
 }
 
 // Motion is deliberately a little springy rather than merely slow. The map
@@ -100,8 +140,18 @@ export function initCanvas(svgEl, minimapSvg) {
   measure();
 
   moveOutBar = document.getElementById('moveout-bar');
+  // Pointer Events drive pan and pinch on touch; the browser must not
+  // hijack them for its own scroll/zoom gestures.
+  svg.style.touchAction = 'none';
   wirePointer();
   wireMinimap();
+  wireNodeKeyboard();
+  wireMinimapToggle();
+  bus.on('map-opened', () => {
+    pendingMapCamera = readSavedCamera();
+    syncMinimapToggleVisibility();
+  });
+  bus.on('view-changed', syncMinimapToggleVisibility);
 }
 
 // ── move-out drop bar (shown while dragging a node inside a sub-map) ──
@@ -142,6 +192,8 @@ function applyCamera() {
   svg.classList.toggle('canvas-overview', camera.k < 0.58);
   updateMinimapView();
   bus.emit('camera-changed', camera);
+  scheduleCameraSave();
+  syncMinimapToggleVisibility();
 }
 
 export const getCamera = () => ({ ...camera });
@@ -313,16 +365,80 @@ export function focusOn(nodeId, ms = 380) {
 
 const layoutBounds = (l) => ({ x: l.x ?? 0, y: l.y ?? 0, w: l.w, h: l.h });
 
-export function fit(ms = 420) {
+export function fitView(ms = 420) {
   if (!currentLayout) return;
   const target = fitCamera(layoutBounds(currentLayout.minimapLayout ?? currentLayout));
   return ms ? animateCamera(target, ms) : setCamera(target);
+}
+
+// kept for existing callers; the fit logic lives in fitView
+export function fit(ms = 420) {
+  return fitView(ms);
+}
+
+// jump to an absolute zoom level, anchored at the viewport center
+export function zoomTo(k, ms = 240) {
+  const target = Math.min(3, Math.max(0.04, k));
+  const cx = vw / 2, cy = vh / 2;
+  const wp = screenToWorld(cx, cy);
+  return animateCamera({ k: target, x: cx - wp.x * target, y: cy - wp.y * target }, ms);
 }
 
 export function zoomBy(factor, cx = vw / 2, cy = vh / 2) {
   const k = Math.min(3, Math.max(0.04, camera.k * factor));
   const wp = screenToWorld(cx, cy);
   return animateCamera({ k, x: cx - wp.x * k, y: cy - wp.y * k }, 240);
+}
+
+// Serialize the canvas to a standalone SVG string for export. The clone is
+// neutralized — camera transform removed, viewBox baked to the full content
+// bounds (every scope level, not just the current viewport), cursor and
+// pointer-event styles stripped — so the file renders the same anywhere.
+export function getCanvasSvgString() {
+  if (!state.model || !svg) return null;
+  const clone = svg.cloneNode(true);
+  clone.removeAttribute('class');
+  clone.removeAttribute('tabindex');
+  clone.setAttribute('xmlns', SVG);
+
+  // content returns to plain world coordinates
+  clone.querySelector('#viewport')?.removeAttribute('transform');
+  const dots = clone.querySelector('#griddots');
+  if (dots) {
+    dots.setAttribute('x', 0);
+    dots.setAttribute('y', 0);
+    dots.setAttribute('width', 26);
+    dots.setAttribute('height', 26);
+  }
+  for (const nodeEl of clone.querySelectorAll('*')) {
+    if (nodeEl.style?.cursor) nodeEl.style.cursor = '';
+    if (nodeEl.style?.pointerEvents) nodeEl.style.pointerEvents = '';
+  }
+
+  // union every scope's layout bounds (each in its own coordinates), plus
+  // the on-screen sibling context layout when one exists
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const include = (b) => {
+    if (!b || !Number.isFinite(b.w) || b.w <= 0 || b.h <= 0) return;
+    minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
+    maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + b.h);
+  };
+  const scopeIds = [null];
+  for (const [id, node] of state.model.byId) if (node.children) scopeIds.push(id);
+  for (const ownerId of scopeIds) {
+    try { include(layoutBounds(layoutScope(state.model, ownerId))); } catch { /* skip an unlayoutable scope */ }
+  }
+  if (currentLayout?.minimapLayout) include(layoutBounds(currentLayout.minimapLayout));
+  const bounds = Number.isFinite(minX)
+    ? { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
+    : { ...screenToWorld(0, 0), w: (vw || 800) / camera.k, h: (vh || 600) / camera.k };
+  const pad = 48;
+  const bx = Math.floor(bounds.x - pad), by = Math.floor(bounds.y - pad);
+  const bw = Math.ceil(bounds.w + pad * 2), bh = Math.ceil(bounds.h + pad * 2);
+  clone.setAttribute('viewBox', `${bx} ${by} ${bw} ${bh}`);
+  clone.setAttribute('width', bw);
+  clone.setAttribute('height', bh);
+  return new XMLSerializer().serializeToString(clone);
 }
 
 function stopPanMotion({ snap = false } = {}) {
@@ -454,8 +570,11 @@ function buildNode(n) {
   const node = n.node;
   const isContainer = !!node.children;
   const g = el('g', { transform: `translate(${n.x},${n.y})` },
-    `node t-${node.type}${isContainer ? ' container' : ''}${state.selectedId === node.id ? ' selected' : ''}`);
+    `node t-${node.type}${isContainer ? ' container' : ''}${state.selectedId === node.id ? ' selected' : ''}${state.selectionIds.has(node.id) ? ' multi-selected' : ''}`);
   g.dataset.id = node.id;
+  g.setAttribute('tabindex', '0');
+  g.setAttribute('role', 'button');
+  g.setAttribute('aria-label', `${node.label} (${node.type})`);
 
   // selection ring
   const ringPad = 5;
@@ -1098,13 +1217,17 @@ export function showScope(model, ownerId, { transition = null, focusId = null } 
   renderMinimapNodes(layout);
   const saved = scopeCameras.get(ownerId ?? null);
   if (focusId) {
+    // a node deep link bypasses the stored camera: fit the node instead
     setCamera(fitCamera(layoutBounds(layout)));
     focusOn(focusId, 0);
+  } else if (pendingMapCamera) {
+    setCamera(pendingMapCamera);
   } else if (saved) {
     setCamera(saved);
   } else {
     setCamera(scopeEntryCamera(model, ownerId, layout));
   }
+  pendingMapCamera = null;
   return Promise.resolve(true);
 }
 
@@ -1296,6 +1419,7 @@ export function paintSelection() {
   }
   for (const g of currentLayer.querySelectorAll('.node')) {
     g.classList.toggle('selected', g.dataset.id === state.selectedId);
+    g.classList.toggle('multi-selected', state.selectionIds.has(g.dataset.id));
     g.classList.toggle('connect-target', !!state.connectFrom && g.dataset.id !== state.connectFrom);
     g.classList.toggle('probe-node', probeNodes.has(g.dataset.id));
     g.classList.toggle('probe-dimmed', probeNodes.size > 0 && !probeNodes.has(g.dataset.id));
@@ -1310,6 +1434,12 @@ export function paintSelection() {
     g.classList.toggle('focus-dimmed', probeNodes.size === 0 && !!selected && e?.edge.from !== selected && e?.edge.to !== selected);
   }
   svg.classList.toggle('connecting', !!state.connectFrom);
+  // focus follows the selection for keyboard users, but only when focus is
+  // already inside the canvas — never steal it from panel inputs or dialogs
+  if (state.selectedId && svg.contains(document.activeElement)
+    && document.activeElement?.dataset?.id !== state.selectedId) {
+    currentLayer.querySelector(`.node[data-id="${CSS.escape(state.selectedId)}"]`)?.focus({ preventScroll: true });
+  }
 }
 
 export function setProbePath(path = null) {
@@ -1377,6 +1507,26 @@ function wirePointer() {
   let nodeDrag = null; // { ln, el, ox, oy, active, dropInto, moveOut } while a node is grabbed
   let connectDrag = null; // { fromId, fromLn, ghost, targetId, active } while dragging from a port
   let edgeDrag = null; // { le, el, active, via } while an edge is being re-routed
+  let marquee = null; // { x0, y0, x1, y1, rect } in world coords during shift+drag
+  const activePointers = new Map(); // pointerId -> client {x, y}; two or more = pinch
+  let pinch = null; // { dist, midWorld, k } anchors for the two-pointer gesture
+
+  // marquee selection: shift+drag from empty canvas. Commit adds every node
+  // whose box intersects; Escape/cancel passes commit = false.
+  const finishMarquee = (commit) => {
+    const box = marquee;
+    marquee = null;
+    if (!box) return;
+    box.rect.remove();
+    if (!commit || !currentLayout) return;
+    const x1 = Math.min(box.x0, box.x1), y1 = Math.min(box.y0, box.y1);
+    const x2 = Math.max(box.x0, box.x1), y2 = Math.max(box.y0, box.y1);
+    for (const ln of currentLayout.nodes) {
+      if (ln.x < x2 && ln.x + ln.w > x1 && ln.y < y2 && ln.y + ln.h > y1) state.selectionIds.add(ln.id);
+    }
+    paintSelection();
+    bus.emit('selection-changed');
+  };
 
   // live preview while an edge is being dragged: bend the route through the
   // pointer in the edge's own style — commit writes the via
@@ -1425,10 +1575,29 @@ function wirePointer() {
   svg.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0) return;
     stopPanMotion({ snap: true });
+    activePointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (activePointers.size >= 2) {
+      // a second finger turns the gesture into a pinch: drop any
+      // single-pointer drag and zoom/pan around the pair's midpoint
+      if (!pinch) {
+        if (down && svg.hasPointerCapture?.(down.pointerId)) {
+          try { svg.releasePointerCapture(down.pointerId); } catch { /* not held */ }
+        }
+        clearDrag();
+      }
+      const [a, b] = [...activePointers.values()];
+      pinch = {
+        dist: Math.hypot(b.x - a.x, b.y - a.y) || 1,
+        midWorld: worldAt((a.x + b.x) / 2, (a.y + b.y) / 2),
+        k: camera.k,
+      };
+      try { svg.setPointerCapture(ev.pointerId); } catch { /* stale pointer */ }
+      return;
+    }
     // remember the real pressed element: with pointer capture active the
     // browser retargets pointerup/click to the <svg>, so hit-testing must
     // use this, never ev.target of the up event.
-    down = { px: ev.clientX, py: ev.clientY, cam: { ...camera }, target: ev.target, pointerId: ev.pointerId };
+    down = { px: ev.clientX, py: ev.clientY, cam: { ...camera }, target: ev.target, pointerId: ev.pointerId, shiftMarquee: false };
     moved = false;
     // grabbing a port draws an edge; grabbing a node moves the node;
     // grabbing the background pans
@@ -1456,6 +1625,8 @@ function wirePointer() {
           if (le) edgeDrag = { le, el: edgeEl, active: false, via: null };
         }
       }
+      // shift+drag from empty canvas draws a marquee selection box
+      if (!nodeDrag && !edgeDrag && ev.shiftKey && state.model) down.shiftMarquee = true;
     }
   });
   const clearDrag = () => {
@@ -1473,16 +1644,37 @@ function wirePointer() {
     edgeDrag = null;
     if (revertEdgeDrag && state.model) refreshScope(state.model);
     revertNodeDrag();
+    if (marquee) finishMarquee(false);
     down = null; moved = false;
   };
   // releases outside the svg (uncaptured non-drag presses) must not leave a
   // stale drag state that pans on buttonless hover — but only OUR pointer's
   // primary-button release counts, or chords/multi-touch swallow clicks
   window.addEventListener('pointerup', (ev) => {
+    activePointers.delete(ev.pointerId);
     if (down && !moved && ev.pointerId === down.pointerId && ev.button === 0) clearDrag();
+  });
+  window.addEventListener('pointercancel', (ev) => {
+    activePointers.delete(ev.pointerId);
+    if (pinch && activePointers.size < 2) pinch = null;
   });
 
   svg.addEventListener('pointermove', (ev) => {
+    if (activePointers.has(ev.pointerId)) activePointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (pinch) {
+      if (activePointers.size >= 2) {
+        // scale around the pair's midpoint; the world point under the start
+        // midpoint tracks the current midpoint, which also gives two-finger pan
+        const [a, b] = [...activePointers.values()];
+        const rect = svg.getBoundingClientRect();
+        const mx = (a.x + b.x) / 2 - rect.left;
+        const my = (a.y + b.y) / 2 - rect.top;
+        const dist = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+        const k = Math.min(3, Math.max(0.04, pinch.k * (dist / pinch.dist)));
+        setCamera({ k, x: mx - pinch.midWorld.x * k, y: my - pinch.midWorld.y * k });
+      }
+      return;
+    }
     if (!down) return;
     if ((ev.buttons & 1) === 0) { clearDrag(); return; }
     const dx = ev.clientX - down.px, dy = ev.clientY - down.py;
@@ -1505,6 +1697,10 @@ function wirePointer() {
         edgeDrag.active = true;
         svg.classList.add('edge-dragging');
         edgeDrag.el.closest('.bundle')?.classList.add('open'); // keep the fan-out still while dragging
+      } else if (down.shiftMarquee) {
+        const w0 = worldAt(down.px, down.py);
+        marquee = { x0: w0.x, y0: w0.y, x1: w0.x, y1: w0.y, rect: el('rect', {}, 'marquee-box') };
+        viewport.appendChild(marquee.rect);
       } else {
         svg.classList.add('panning');
       }
@@ -1551,6 +1747,14 @@ function wirePointer() {
           if (nodeDrag.moveOut) nodeDrag.dropInto = null;
         }
         setDropHighlight(nodeDrag.dropInto);
+      } else if (marquee) {
+        const w = worldAt(ev.clientX, ev.clientY);
+        marquee.x1 = w.x;
+        marquee.y1 = w.y;
+        marquee.rect.setAttribute('x', Math.min(marquee.x0, w.x));
+        marquee.rect.setAttribute('y', Math.min(marquee.y0, w.y));
+        marquee.rect.setAttribute('width', Math.abs(w.x - marquee.x0));
+        marquee.rect.setAttribute('height', Math.abs(w.y - marquee.y0));
       } else {
         springPanTo({ ...camera, x: down.cam.x + dx, y: down.cam.y + dy });
       }
@@ -1558,6 +1762,22 @@ function wirePointer() {
   });
   svg.addEventListener('pointerup', (ev) => {
     if (ev.button !== 0) return; // a chord's secondary release must not end the press
+    activePointers.delete(ev.pointerId);
+    if (pinch) {
+      if (activePointers.size >= 2) {
+        // a finger lifted but the pinch continues: re-anchor on the
+        // remaining pair so the view doesn't jump
+        const [a, b] = [...activePointers.values()];
+        pinch = {
+          dist: Math.hypot(b.x - a.x, b.y - a.y) || 1,
+          midWorld: worldAt((a.x + b.x) / 2, (a.y + b.y) / 2),
+          k: camera.k,
+        };
+      } else {
+        pinch = null; // the surviving finger must be lifted and pressed again
+      }
+      return;
+    }
     svg.classList.remove('panning');
     svg.classList.remove('dragging-node');
     svg.classList.remove('connect-dragging');
@@ -1575,6 +1795,10 @@ function wirePointer() {
     }
     down = null; moved = false;
     if (wasDrag || !target) {
+      if (marquee) {
+        finishMarquee(true);
+        return;
+      }
       if (finishedEdgeDrag) {
         if (finishedEdgeDrag.via) {
           // dragging a straight edge bends it — the via only makes sense curved
@@ -1627,19 +1851,47 @@ function wirePointer() {
     const dive = target.closest?.('[data-dive]');
     if (dive) { bus.emit('dive-request', dive.dataset.dive); return; }
     const nodeEl = target.closest?.('.node');
-    if (nodeEl) { bus.emit('node-click', nodeEl.dataset.id, ev); return; }
+    if (nodeEl) {
+      if (ev.shiftKey && !state.presenting && !state.standalone) {
+        // shift+click toggles the node in the multi-selection without clearing it
+        const id = nodeEl.dataset.id;
+        if (state.selectionIds.has(id)) state.selectionIds.delete(id);
+        else state.selectionIds.add(id);
+        paintSelection();
+        bus.emit('selection-changed');
+        return;
+      }
+      // a plain click returns to single selection and clears the set
+      if (state.selectionIds.size) {
+        state.selectionIds.clear();
+        paintSelection();
+        bus.emit('selection-changed');
+      }
+      bus.emit('node-click', nodeEl.dataset.id, ev);
+      return;
+    }
     const edgeEl = target.closest?.('.edge');
     if (edgeEl) { bus.emit('edge-click', Number(edgeEl.dataset.index)); return; }
     // tap on a cable sheath toggles the fan-out (touch has no hover)
     const bundleEl = target.closest?.('.bundle');
     if (bundleEl) { bundleEl.classList.toggle('open'); return; }
+    // a single click on empty canvas clears any marquee selection
+    if (state.selectionIds.size) {
+      state.selectionIds.clear();
+      paintSelection();
+      bus.emit('selection-changed');
+    }
     bus.emit('bg-click');
   });
-  svg.addEventListener('pointercancel', clearDrag);
+  svg.addEventListener('pointercancel', (ev) => {
+    activePointers.delete(ev.pointerId);
+    pinch = null;
+    clearDrag();
+  });
 
   // Escape during a node/connect drag cancels it (and must not also rise a scope)
   document.addEventListener('keydown', (ev) => {
-    if (ev.key !== 'Escape' || (!nodeDrag?.active && !connectDrag?.active && !edgeDrag?.active)) return;
+    if (ev.key !== 'Escape' || (!nodeDrag?.active && !connectDrag?.active && !edgeDrag?.active && !marquee)) return;
     ev.preventDefault();
     ev.stopPropagation();
     if (down && svg.hasPointerCapture?.(down.pointerId)) {
@@ -1658,7 +1910,17 @@ function wirePointer() {
     }
     const nodeEl = ev.target.closest?.('.node');
     if (nodeEl) {
-      bus.emit('node-dblclick', nodeEl.dataset.id);
+      const node = state.model?.byId.get(nodeEl.dataset.id);
+      if (node && !node.children && !state.presenting && !state.standalone) {
+        // leaf double-click opens the rename popover; containers dive as before
+        const r = nodeScreenRect(node.id);
+        bus.emit('node-rename-request', {
+          id: node.id,
+          screen: r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null,
+        });
+      } else {
+        bus.emit('node-dblclick', nodeEl.dataset.id);
+      }
     } else if (state.presenting || state.standalone || state.connectFrom || !state.model) {
       fit();
     } else {
@@ -1688,6 +1950,19 @@ function wirePointer() {
       springPanTo({ ...base, x: base.x - ev.deltaX, y: base.y - ev.deltaY });
     }
   }, { passive: false });
+}
+
+// ── keyboard access ──────────────────────────────────────────────────
+// A focused node behaves like a click target: Enter/Space selects it.
+function wireNodeKeyboard() {
+  svg.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    const nodeEl = ev.target?.closest?.('.node');
+    if (!nodeEl || !currentLayer?.contains(nodeEl)) return;
+    ev.preventDefault(); // Space would scroll the page
+    ev.stopPropagation();
+    bus.emit('node-click', nodeEl.dataset.id, ev);
+  });
 }
 
 // ── minimap ──────────────────────────────────────────────────────────
@@ -1737,4 +2012,64 @@ function wireMinimap() {
   mmSvg.addEventListener('pointerdown', (ev) => { dragging = true; mmSvg.setPointerCapture(ev.pointerId); moveTo(ev); });
   mmSvg.addEventListener('pointermove', (ev) => { if (dragging) moveTo(ev); });
   mmSvg.addEventListener('pointerup', () => { dragging = false; });
+}
+
+// ── minimap collapse toggle ──────────────────────────────────────────
+// The button lives outside #minimap: collapsing hides that box entirely
+// (display:none via the minimap-collapsed class), so the control that
+// brings it back must be a sibling, not a child.
+let minimapBox = null;
+let minimapToggle = null;
+
+function readMinimapHidden() {
+  try { return localStorage.getItem('opsmap.minimapHidden') === '1'; } catch { return false; }
+}
+
+function setMinimapCollapsed(collapsed) {
+  minimapBox?.classList.toggle('minimap-collapsed', collapsed);
+  try { localStorage.setItem('opsmap.minimapHidden', collapsed ? '1' : '0'); } catch { /* storage blocked */ }
+  if (minimapToggle) {
+    minimapToggle.textContent = collapsed ? '+' : '-';
+    minimapToggle.title = collapsed ? 'Show minimap' : 'Hide minimap';
+    minimapToggle.setAttribute('aria-label', minimapToggle.title);
+    minimapToggle.setAttribute('aria-pressed', collapsed ? 'true' : 'false');
+  }
+}
+
+// shown only while an actual map canvas is on screen
+function syncMinimapToggleVisibility() {
+  if (!minimapToggle) return;
+  const show = !!state.mapId && !state.presenting && state.workspaceView === 'map';
+  const display = show ? '' : 'none';
+  if (minimapToggle.style.display !== display) minimapToggle.style.display = display;
+}
+
+function wireMinimapToggle() {
+  minimapBox = document.getElementById('minimap');
+  if (!minimapBox?.parentElement || !mmSvg) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'minimap-toggle';
+  Object.assign(btn.style, {
+    position: 'absolute',
+    right: '20px',
+    bottom: '140px',
+    zIndex: '11',
+    width: '20px',
+    height: '20px',
+    padding: '0',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    background: 'var(--surface)',
+    color: 'var(--muted)',
+    fontSize: '12px',
+    lineHeight: '1',
+    cursor: 'pointer',
+    display: 'none',
+  });
+  btn.addEventListener('click', () => setMinimapCollapsed(!minimapBox.classList.contains('minimap-collapsed')));
+  minimapBox.parentElement.appendChild(btn);
+  minimapToggle = btn;
+  setMinimapCollapsed(readMinimapHidden());
+  syncMinimapToggleVisibility();
 }

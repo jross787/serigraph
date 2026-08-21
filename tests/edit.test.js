@@ -606,3 +606,329 @@ edges: []
     assert.ok(!out.includes(derived), `derived field omitted: ${derived}`);
   }
 });
+
+test('reverseEdge swaps endpoints and keeps label, kind, and comments', () => {
+  load(`
+name: Edge ops
+nodes:
+  - id: a
+    type: process
+    label: A
+  - id: b
+    type: process
+    label: B
+  - id: box
+    type: process
+    label: Box
+    children:
+      nodes:
+        - id: inner-a
+          type: process
+          label: Inner A
+        - id: inner-b
+          type: process
+          label: Inner B
+      edges:
+        # route inside the box
+        - from: inner-a
+          to: inner-b
+          label: internal
+edges:
+  # cross the boundary
+  - from: a
+    to: b
+    label: forward
+    kind: manual
+`);
+  edit.reverseEdge({ scopeId: null, index: 0 });
+  edit.reverseEdge({ scopeId: 'box', index: 0 });
+  const { out, model } = reserialize();
+  assert.deepEqual(model.root.edges.map(({ from, to, label, kind }) => ({ from, to, label, kind })),
+    [{ from: 'b', to: 'a', label: 'forward', kind: 'manual' }]);
+  assert.deepEqual(
+    model.byId.get('box').children.edges.map(({ from, to, label }) => ({ from, to, label })),
+    [{ from: 'inner-b', to: 'inner-a', label: 'internal' }]);
+  assert.ok(out.includes('# cross the boundary'), 'root edge comment survived');
+  assert.ok(out.includes('# route inside the box'), 'nested edge comment survived');
+});
+
+test('rewireEdge validates endpoints against the scope and preserves other keys', () => {
+  load(`
+name: Edge ops
+nodes:
+  - id: a
+    type: process
+    label: A
+  - id: b
+    type: process
+    label: B
+  - id: box
+    type: process
+    label: Box
+    children:
+      nodes:
+        - id: inner-a
+          type: process
+          label: Inner A
+        - id: inner-b
+          type: process
+          label: Inner B
+      edges:
+        - from: inner-a
+          to: inner-b
+          label: internal
+edges:
+  - from: a
+    to: b
+    label: forward
+    kind: manual
+`);
+  edit.rewireEdge({ scopeId: null, index: 0 }, { from: 'b', to: 'box' });
+  let { model } = reserialize();
+  assert.deepEqual(model.root.edges.map(({ from, to, label, kind }) => ({ from, to, label, kind })),
+    [{ from: 'b', to: 'box', label: 'forward', kind: 'manual' }], 'label and kind kept');
+
+  // inner-a lives inside box, so it is not a sibling at the root scope
+  assert.throws(() => edit.rewireEdge({ scopeId: null, index: 0 }, { from: 'a', to: 'inner-a' }),
+    /"inner-a" is not in this scope/);
+  assert.throws(() => edit.rewireEdge({ scopeId: null, index: 0 }, { from: 'ghost', to: 'a' }),
+    /"ghost" is not in this scope/);
+  // a is a root node, so it is not a sibling inside box
+  assert.throws(() => edit.rewireEdge({ scopeId: 'box', index: 0 }, { from: 'inner-a', to: 'a' }),
+    /"a" is not in this scope/);
+
+  ({ model } = reserialize());
+  assert.deepEqual(model.root.edges.map(({ from, to }) => ({ from, to })),
+    [{ from: 'b', to: 'box' }], 'rejected rewires leave the edge alone');
+  assert.deepEqual(model.byId.get('box').children.edges.map(({ from, to }) => ({ from, to })),
+    [{ from: 'inner-a', to: 'inner-b' }], 'rejected rewires leave the nested edge alone');
+});
+
+test('updateEdgeLabel sets a label and empty text removes the key', () => {
+  load(`
+name: Labels
+nodes:
+  - id: a
+    type: process
+    label: A
+  - id: b
+    type: process
+    label: B
+edges:
+  - from: a
+    to: b
+`);
+  assert.equal(state.model.root.edges[0].label, '');
+  edit.updateEdgeLabel({ scopeId: null, index: 0 }, 'approved');
+  let { out, model } = reserialize();
+  assert.equal(model.root.edges[0].label, 'approved');
+  assert.ok(out.includes('label: approved'));
+
+  state.model = model;
+  edit.updateEdgeLabel({ scopeId: null, index: 0 }, '');
+  ({ out, model } = reserialize());
+  assert.equal(model.root.edges[0].label, '');
+  const edgeBlock = out.slice(out.indexOf('\nedges:'));
+  assert.ok(!edgeBlock.includes('label:'), 'empty text deletes the label key');
+});
+
+test('bulkRemoveNodes deletes subtrees once and cleans edges and dependencies', () => {
+  load(`
+name: Bulk remove
+nodes:
+  - id: group
+    type: process
+    label: Group
+    children:
+      nodes:
+        - id: inner
+          type: process
+          label: Inner
+      edges: []
+  - id: keeper
+    type: process
+    label: Keeper
+    planning:
+      type: requirement
+      dependsOn: [group, inner]
+  - id: also-kept
+    type: process
+    label: Also kept
+edges:
+  - { from: group, to: keeper, label: hands off }
+  - { from: keeper, to: also-kept }
+`);
+  // descendant listed first, unknown id mixed in: order and ghosts do not matter
+  edit.bulkRemoveNodes(['inner', 'group', 'ghost']);
+  const { out, model } = reserialize();
+  assert.ok(!model.byId.has('group'));
+  assert.ok(!model.byId.has('inner'), 'descendant removed with the ancestor, exactly once');
+  assert.deepEqual(model.root.edges.map(({ from, to }) => ({ from, to })),
+    [{ from: 'keeper', to: 'also-kept' }], 'edges touching the subtree removed, others kept');
+  assert.deepEqual(model.byId.get('keeper').planning.dependsOn, []);
+  assert.ok(!out.includes('dependsOn:'), 'emptied dependency list dropped from the file');
+});
+
+test('bulkRemoveNodes with no known ids is a no-op', () => {
+  const before = state.doc.toString();
+  edit.bulkRemoveNodes([]);
+  edit.bulkRemoveNodes();
+  edit.bulkRemoveNodes(['ghost']);
+  assert.equal(state.doc.toString(), before);
+  reserialize();
+});
+
+test('copyNodesPlain zeroes positions to the min corner and includes subtrees', () => {
+  load(`
+name: Copy
+nodes:
+  - id: cell
+    type: process
+    label: Cell
+    position: { x: 300, y: 200 }
+    children:
+      nodes:
+        - id: nucleus
+          type: process
+          label: Nucleus
+      edges: []
+  - id: loose
+    type: process
+    label: Loose
+    position: { x: 40, y: 120 }
+edges: []
+`);
+  const plain = edit.copyNodesPlain(['cell', 'nucleus', 'loose', 'ghost']);
+  assert.equal(plain.length, 2, 'ancestor covers its descendant, unknown id ignored');
+  const cell = plain.find((n) => n.id === 'cell');
+  const loose = plain.find((n) => n.id === 'loose');
+  assert.deepEqual(cell.position, { x: 260, y: 80 }, 'shifted so the selection min corner sits at 0,0');
+  assert.deepEqual(loose.position, { x: 0, y: 0 });
+  assert.equal(cell.children.nodes[0].id, 'nucleus', 'subtree copied with the root');
+
+  const { model } = reserialize();
+  assert.deepEqual(model.byId.get('cell').position, { x: 300, y: 200 }, 'copy does not move the source');
+});
+
+test('pasteNodesPlain remaps every internal id and never mutates its input', () => {
+  load(`
+name: Paste
+nodes:
+  - id: cell
+    type: process
+    label: Cell
+    position: { x: 300, y: 200 }
+    planning:
+      type: requirement
+      dependsOn: [nucleus]
+    relations:
+      - { to: nucleus, type: supports }
+    children:
+      nodes:
+        - id: nucleus
+          type: process
+          label: Nucleus
+        - id: membrane
+          type: process
+          label: Membrane
+      edges:
+        - { from: nucleus, to: membrane, label: transports }
+  - id: host
+    type: process
+    label: Host
+edges:
+  - { from: cell, to: host, label: lives in }
+`);
+  const plain = edit.copyNodesPlain(['cell']);
+  const snapshot = JSON.stringify(plain);
+
+  const firstIds = edit.pasteNodesPlain(plain, null, { x: 50, y: 40 });
+  assert.deepEqual(firstIds, ['cell-copy']);
+  assert.equal(JSON.stringify(plain), snapshot, 'input clipboard is not mutated');
+
+  let { model } = reserialize();
+  const copy = model.byId.get('cell-copy');
+  assert.ok(copy);
+  assert.equal(copy.ownerId, null, 'pasted at the root scope');
+  assert.deepEqual(copy.position, { x: 50, y: 40 }, 'zeroed position shifted by the paste offset');
+  assert.deepEqual(copy.planning.dependsOn, ['nucleus-copy']);
+  assert.deepEqual(copy.relations, [{ to: 'nucleus-copy', type: 'supports' }]);
+  assert.deepEqual(copy.children.nodes.map((n) => n.id), ['nucleus-copy', 'membrane-copy']);
+  assert.deepEqual(copy.children.edges.map(({ from, to, label }) => ({ from, to, label })),
+    [{ from: 'nucleus-copy', to: 'membrane-copy', label: 'transports' }]);
+  assert.deepEqual(model.byId.get('cell').planning.dependsOn, ['nucleus'], 'source subtree untouched');
+  assert.equal(model.root.edges.length, 1, 'edge outside the copied subtree is not duplicated');
+
+  // a second paste from the same clipboard mints fresh ids again
+  state.model = model;
+  const secondIds = edit.pasteNodesPlain(plain, null, { x: 5, y: 5 });
+  assert.deepEqual(secondIds, ['cell-copy-2']);
+  ({ model } = reserialize());
+  assert.ok(model.byId.has('cell-copy-2'));
+  assert.ok(model.byId.has('nucleus-copy-2'));
+  assert.equal(model.byId.get('cell-copy-2').children.edges.length, 1);
+});
+
+test('pasteNodesPlain drops copies into a nested scope', () => {
+  load(`
+name: Nested paste
+nodes:
+  - id: cell
+    type: process
+    label: Cell
+    position: { x: 10, y: 20 }
+    children:
+      nodes:
+        - id: nucleus
+          type: process
+          label: Nucleus
+      edges: []
+  - id: host
+    type: process
+    label: Host
+edges: []
+`);
+  const plain = edit.copyNodesPlain(['cell']);
+  const ids = edit.pasteNodesPlain(plain, 'host', { x: 7, y: 3 });
+  assert.deepEqual(ids, ['cell-copy']);
+  const { model } = reserialize();
+  assert.equal(model.byId.get('cell-copy').ownerId, 'host', 'pasted under the target container');
+  assert.deepEqual(model.byId.get('cell-copy').position, { x: 7, y: 3 });
+  assert.equal(model.byId.get('host').stats.childCount, 1);
+  assert.equal(model.byId.get('nucleus-copy').ownerId, 'cell-copy', 'subtree pasted with the root');
+});
+
+test('collectCloneIds and remapCloneReferences are usable on their own', () => {
+  const clone = {
+    id: 'a', type: 'process', label: 'A',
+    planning: { type: 'requirement', dependsOn: ['b', 'intake'] },
+    relations: [{ to: 'b', type: 'supports' }],
+    children: {
+      nodes: [{ id: 'b', type: 'process', label: 'B' }],
+      edges: [{ from: 'b', to: 'a', label: 'up' }],
+    },
+  };
+  const ids = new Map();
+  edit.collectCloneIds(clone, ids, new Set());
+  assert.deepEqual([...ids.entries()], [['a', 'a-copy'], ['b', 'b-copy']]);
+
+  edit.remapCloneReferences(clone, ids);
+  assert.equal(clone.id, 'a-copy');
+  assert.equal(clone.children.nodes[0].id, 'b-copy');
+  assert.deepEqual(clone.children.edges[0], { from: 'b-copy', to: 'a-copy', label: 'up' });
+  assert.deepEqual(clone.planning.dependsOn, ['b-copy', 'intake'], 'only internal ids remapped');
+  assert.deepEqual(clone.relations, [{ to: 'b-copy', type: 'supports' }]);
+});
+
+test('alignNodes guards no-op without a rendered canvas', () => {
+  // getLayout() only returns boxes after the browser canvas renders a scope,
+  // so in Node every call hits the early-return guard. The unknown-mode throw
+  // and the alignment math run only with a live layout and are not reachable
+  // here — same canvas boundary the other tests already respect.
+  const before = state.doc.toString();
+  edit.alignNodes([], 'left');
+  edit.alignNodes(['intake'], 'left');
+  edit.alignNodes(['intake', 'qualify'], 'dist-h');
+  assert.equal(state.doc.toString(), before);
+  reserialize();
+});

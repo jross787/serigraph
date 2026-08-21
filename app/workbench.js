@@ -67,7 +67,21 @@ const TOOL_ICONS = {
   fit: 'M7 4H4v3m9-3h3v3M7 16H4v-3m9 3h3v-3',
   more: 'M4 10h.01M10 10h.01M16 10h.01',
   help: 'M8 7a2.3 2.3 0 1 1 3.5 2c-1.2.8-1.5 1.3-1.5 2M10 15h.01M10 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16',
+  align: 'M4 3v14M8 6h9M8 10h5M8 14h8',
 };
+
+const ZOOM_LEVELS = [50, 75, 100, 150, 200];
+
+const ALIGN_MODES = [
+  ['left', 'Align left'],
+  ['right', 'Align right'],
+  ['top', 'Align top'],
+  ['bottom', 'Align bottom'],
+  ['hcenter', 'Align horizontal centers'],
+  ['vcenter', 'Align vertical centers'],
+  ['dist-h', 'Distribute horizontally'],
+  ['dist-v', 'Distribute vertically'],
+];
 
 const TOOL_GROUPS = [
   [
@@ -123,6 +137,46 @@ function toolById(id) {
 }
 
 let rail;
+let zoomMenu = null;
+
+// multi-select members plus the anchored single selection, deduped
+function effectiveSelectionIds() {
+  const ids = [...state.selectionIds];
+  if (state.selectedId && !state.selectionIds.has(state.selectedId)) ids.push(state.selectedId);
+  return ids;
+}
+
+function closeZoomMenu() {
+  zoomMenu?.remove();
+  zoomMenu = null;
+}
+
+function openZoomMenu(anchor) {
+  if (zoomMenu) { closeZoomMenu(); return; }
+  if (!state.model || !anchor) return;
+  const current = Math.round((canvas.getCamera().k || 1) * 100);
+  const menu = h('div', { class: 'zoom-menu', role: 'menu', 'aria-label': 'Zoom' },
+    h('button', { type: 'button', role: 'menuitem', onClick: () => { closeZoomMenu(); canvas.fitView(); } }, 'Fit'),
+    ZOOM_LEVELS.map((percent) => h('button', {
+      type: 'button',
+      role: 'menuitem',
+      'aria-current': percent === current ? 'true' : null,
+      onClick: () => { closeZoomMenu(); canvas.zoomTo(percent / 100); },
+    }, `${percent}%`)));
+  document.body.append(menu);
+  const rect = anchor.getBoundingClientRect();
+  menu.style.top = `${rect.bottom + 6}px`;
+  menu.style.left = `${Math.max(8, Math.min(window.innerWidth - menu.offsetWidth - 8, rect.left + rect.width / 2 - menu.offsetWidth / 2))}px`;
+  zoomMenu = menu;
+}
+
+function alignSelection(mode, target) {
+  closeToolbarMenu(target);
+  const ids = effectiveSelectionIds();
+  if (ids.length < 2) return;
+  const noun = state.model?.mode === 'freeform' ? 'items' : 'steps';
+  ctrl.commit(() => edit.alignNodes(ids, mode), { historyLabel: `align ${ids.length} ${noun}` });
+}
 
 function closeFlyout() {
   document.getElementById('tool-flyout')?.replaceChildren();
@@ -148,23 +202,38 @@ function refreshRail() {
   }
   document.getElementById('canvas')?.setAttribute('data-tool', state.activeTool);
 
+  const selectionCount = effectiveSelectionIds().length;
   const disabled = {
-    duplicate: !hasNode,
-    delete: !canEdit || (!state.selectedId && state.selectedEdge == null),
+    duplicate: !hasNode || selectionCount > 1,
+    delete: !canEdit || (!selectionCount && state.selectedEdge == null),
     undo: !canEdit || !state.undoStack.length,
     redo: !canEdit || !state.redoStack.length,
     history: !state.mapId || state.standalone,
     'import-transcript': state.standalone,
     'import-file': state.standalone,
+    'export-png': !state.mapId,
+    'export-svg': !state.mapId,
     'export-yaml': !state.mapId,
     'export-html': !state.mapId,
     share: !state.mapId,
     'zoom-out': !state.model,
     'zoom-fit': !state.model,
     'zoom-in': !state.model,
+    'zoom-menu': !state.model,
   };
   for (const button of rail.querySelectorAll('[data-action]')) {
     button.disabled = !!disabled[button.dataset.action];
+  }
+
+  const deleteLabel = selectionCount > 1 ? `Delete ${selectionCount}` : 'Delete';
+  for (const button of rail.querySelectorAll('[data-action="delete"]')) {
+    const label = button.querySelector('.toolbar-button-label');
+    if (label) label.textContent = deleteLabel;
+    button.setAttribute('aria-label', deleteLabel);
+    button.title = `${deleteLabel} · Delete or Backspace`;
+  }
+  for (const menu of rail.querySelectorAll('.align-menu')) {
+    menu.hidden = !canEdit || selectionCount < 2;
   }
 
   const undoLabel = stackLabel(state.undoStack);
@@ -623,6 +692,72 @@ export function downloadYaml() {
   ui.toast('YAML downloaded');
 }
 
+function downloadBlob(blob, filename, message) {
+  const href = URL.createObjectURL(blob);
+  const anchor = h('a', { href, download: filename });
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 0);
+  ui.toast(message);
+}
+
+export function downloadSvg() {
+  const svgString = canvas.getCanvasSvgString();
+  if (!svgString || !state.mapId) return;
+  const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+  downloadBlob(blob, `${state.mapId.replace(/\//g, '-')}.svg`, 'SVG downloaded');
+}
+
+// Rasterize the exported SVG at 2x on a white background. OffscreenCanvas
+// keeps the work off the DOM; a plain canvas is the fallback.
+async function rasterizePng(svgString) {
+  const [, , boxWidth, boxHeight] = (/viewBox="([^"]*)"/.exec(svgString)?.[1] ?? '').split(/\s+/).map(Number);
+  let source = svgString;
+  if (boxWidth && boxHeight && !/<svg[^>]*\swidth=/.test(source)) {
+    source = source.replace('<svg', `<svg width="${boxWidth}" height="${boxHeight}"`);
+  }
+  const href = URL.createObjectURL(new Blob([source], { type: 'image/svg+xml;charset=utf-8' }));
+  try {
+    const image = new Image();
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = () => reject(new Error('The map image could not be rendered.'));
+      image.src = href;
+    });
+    const width = boxWidth || image.naturalWidth;
+    const height = boxHeight || image.naturalHeight;
+    if (!width || !height) throw new Error('The map image has no size.');
+    const scale = 2;
+    const pixelWidth = Math.max(1, Math.round(width * scale));
+    const pixelHeight = Math.max(1, Math.round(height * scale));
+    const target = typeof OffscreenCanvas === 'function'
+      ? new OffscreenCanvas(pixelWidth, pixelHeight)
+      : Object.assign(document.createElement('canvas'), { width: pixelWidth, height: pixelHeight });
+    const ctx = target.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, pixelWidth, pixelHeight);
+    ctx.drawImage(image, 0, 0, pixelWidth, pixelHeight);
+    if (typeof target.convertToBlob === 'function') return target.convertToBlob({ type: 'image/png' });
+    return await new Promise((resolve, reject) => {
+      target.toBlob((png) => (png ? resolve(png) : reject(new Error('PNG encoding failed.'))), 'image/png');
+    });
+  } finally {
+    URL.revokeObjectURL(href);
+  }
+}
+
+export async function downloadPng() {
+  const svgString = canvas.getCanvasSvgString();
+  if (!svgString || !state.mapId) return;
+  try {
+    const blob = await rasterizePng(svgString);
+    downloadBlob(blob, `${state.mapId.replace(/\//g, '-')}.png`, 'PNG downloaded');
+  } catch {
+    ui.toast('Could not render the map image.', true);
+  }
+}
+
 // Import a Serigraph YAML source as a new map. The source is validated
 // before anything is written; a name collision gets a numeric suffix.
 export async function importMapSource(filename, source) {
@@ -789,6 +924,7 @@ export function completeConnect() {
 // keyboard handler so pointer and keyboard flows cannot get out of sync.
 export function cancelTool() {
   closeFlyout();
+  closeZoomMenu();
   closeReview();
   setTool('select');
 }
@@ -801,12 +937,23 @@ function runToolbarAction(action, target) {
   closeToolbarMenu(target);
   switch (action) {
     case 'duplicate': ui.duplicateSelection(); break;
-    case 'delete': ui.requestDelete(); break;
+    case 'delete': {
+      const ids = effectiveSelectionIds();
+      if (ids.length > 1) {
+        const noun = state.model?.mode === 'freeform' ? 'items' : 'steps';
+        ctrl.commit(() => edit.bulkRemoveNodes(ids), { historyLabel: `delete ${ids.length} ${noun}` });
+      } else {
+        ui.requestDelete();
+      }
+      break;
+    }
     case 'undo': ctrl.undo(); break;
     case 'redo': ctrl.redo(); break;
     case 'history': openHistory(); break;
     case 'import-transcript': ui.importDialog(); break;
     case 'import-file': importMapFile(); break;
+    case 'export-png': downloadPng(); break;
+    case 'export-svg': downloadSvg(); break;
     case 'export-yaml': downloadYaml(); break;
     case 'export-html':
       if (state.mapId) window.location.href = `/export/${encodeURIComponent(state.mapId)}.html`;
@@ -815,6 +962,7 @@ function runToolbarAction(action, target) {
     case 'zoom-out': canvas.zoomBy(0.77); break;
     case 'zoom-fit': canvas.fit(); break;
     case 'zoom-in': canvas.zoomBy(1.3); break;
+    case 'zoom-menu': openZoomMenu(target); break;
     case 'help': ui.helpDialog(); break;
     default: break;
   }
@@ -900,9 +1048,18 @@ function renderRail() {
     toolbarMenuAction('import-transcript', 'Meeting transcript', 'note'),
   ], 'toolbar-wide');
   const exportMenu = toolbarMenu('Export', 'export', [
+    toolbarMenuAction('export-png', 'PNG image', 'export'),
+    toolbarMenuAction('export-svg', 'SVG file', 'export'),
     toolbarMenuAction('export-yaml', 'Serigraph YAML file', 'export'),
     toolbarMenuAction('export-html', 'Standalone HTML app', 'export'),
   ], 'toolbar-wide');
+  const alignMenu = toolbarMenu('Align', 'align', ALIGN_MODES.map(([mode, label]) =>
+    h('button', {
+      class: 'toolbar-menu-item',
+      'data-align': mode,
+      title: label,
+      onClick: (event) => alignSelection(mode, event.currentTarget),
+    }, svgIcon(TOOL_ICONS.align), h('span', {}, label))), 'align-menu');
   const moreMenu = toolbarMenu('More', 'more', [
     ...secondaryTools.map(toolbarMenuTool),
     secondaryTools.length ? h('div', { class: 'toolbar-menu-separator' }) : null,
@@ -927,6 +1084,7 @@ function renderRail() {
     h('div', { class: 'tool-separator' }),
     toolbarActionButton('duplicate', 'Duplicate', 'duplicate', { shortcut: '⌘D' }),
     toolbarActionButton('delete', 'Delete', 'delete', { shortcut: 'Delete or Backspace', danger: true }),
+    alignMenu,
     h('div', { class: 'tool-separator' }),
     toolbarActionButton('undo', 'Undo', 'undo', { shortcut: '⌘Z' }),
     toolbarActionButton('redo', 'Redo', 'redo', { shortcut: '⌘⇧Z' }),
@@ -941,10 +1099,11 @@ function renderRail() {
       toolbarActionButton('zoom-out', 'Zoom out', 'zoomOut', { shortcut: '−' }),
       h('button', {
         class: 'zoom-level',
-        'data-action': 'zoom-fit',
-        title: 'Fit map to screen · 0',
-        'aria-label': 'Fit map to screen',
-        onClick: (event) => runToolbarAction('zoom-fit', event.currentTarget),
+        'data-action': 'zoom-menu',
+        title: 'Zoom options',
+        'aria-label': 'Zoom options',
+        'aria-haspopup': 'menu',
+        onClick: (event) => runToolbarAction('zoom-menu', event.currentTarget),
       }, h('span', { 'data-zoom-level': '' }, '100%')),
       toolbarActionButton('zoom-in', 'Zoom in', 'zoomIn', { shortcut: '+' })),
     moreMenu,
@@ -963,10 +1122,11 @@ export function initWorkbench() {
     const zoom = `${Math.round((canvas.getCamera().k || 1) * 100)}%`;
     for (const label of rail?.querySelectorAll('[data-zoom-level]') ?? []) label.textContent = zoom;
   });
-  bus.on('view-changed', () => { closeFlyout(); closeReview(); setTool('select'); renderRail(); });
+  bus.on('view-changed', () => { closeFlyout(); closeZoomMenu(); closeReview(); setTool('select'); renderRail(); });
   document.addEventListener('pointerdown', (event) => {
     const flyout = document.getElementById('tool-flyout');
     if (flyout && !flyout.hidden && !flyout.contains(event.target) && !rail?.contains(event.target)) closeFlyout();
+    if (zoomMenu && !zoomMenu.contains(event.target) && !event.target.closest('.zoom-level')) closeZoomMenu();
     if (!rail?.contains(event.target)) {
       for (const menu of rail?.querySelectorAll('details[open]') ?? []) menu.removeAttribute('open');
     }

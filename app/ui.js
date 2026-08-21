@@ -14,6 +14,7 @@ import * as edit from './edit.js';
 import * as canvas from './canvas.js';
 import { ICONS } from './canvas.js';
 import { opportunityDefaults, calculateOpportunity, assessOpportunity } from './opportunity.js';
+import { disconnectWorkbenchLink, useWorkbenchCopy, sendLocalCopy } from './workbench-sync.js';
 
 let fieldId = 0;
 
@@ -573,8 +574,10 @@ function openTrashDialog() {
 }
 
 // ── dialogs ──────────────────────────────────────────────────────────
+const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 function modal(title, body, actions) {
   const root = document.getElementById('dialog-root');
+  const returnFocus = document.activeElement;
   const dialog = h('div', { class: 'dialog', role: 'dialog', 'aria-label': title },
     h('h2', {}, title), body,
     h('div', { class: 'dialog-actions' }, actions.map((a) =>
@@ -587,15 +590,31 @@ function modal(title, body, actions) {
   const onKey = (ev) => {
     if (root.lastElementChild !== backdrop) return;
     if (ev.key === 'Escape') { ev.stopPropagation(); close(); }
+    if (ev.key === 'Tab') {
+      // keep Tab / Shift+Tab cycling inside the dialog until it closes
+      const focusable = [...dialog.querySelectorAll(FOCUSABLE)]
+        .filter((el) => !el.disabled && el.getClientRects().length > 0);
+      if (!focusable.length) { ev.preventDefault(); return; }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const leaving = ev.shiftKey
+        ? ev.target === first || !dialog.contains(ev.target)
+        : ev.target === last || !dialog.contains(ev.target);
+      if (leaving) { ev.preventDefault(); (ev.shiftKey ? last : first).focus(); }
+    }
     if (ev.key === 'Enter' && !ev.shiftKey && ev.target.tagName !== 'TEXTAREA') {
       const primary = actions.find((x) => x.primary);
       if (primary) { ev.preventDefault(); ev.stopPropagation(); const r = primary.onClick?.(); if (r !== false) close(); }
     }
   };
-  function close() { document.removeEventListener('keydown', onKey, true); backdrop.remove(); }
+  function close() {
+    document.removeEventListener('keydown', onKey, true);
+    backdrop.remove();
+    if (returnFocus?.isConnected && typeof returnFocus.focus === 'function') returnFocus.focus();
+  }
   document.addEventListener('keydown', onKey, true);
   root.append(backdrop);
-  dialog.querySelector('input, textarea')?.focus();
+  (dialog.querySelector('input, textarea') ?? dialog.querySelector('.dialog-actions button'))?.focus();
   return close;
 }
 
@@ -946,6 +965,8 @@ export function helpDialog() {
     ['Esc', 'Zoom back out or close a panel'],
     ['Delete / Backspace', freeform ? 'Delete the selected item' : 'Delete the selected node'],
     ['⌘D / Ctrl+D', freeform ? 'Duplicate the selected item' : 'Duplicate the selected node'],
+    ['⌘C / ⌘V', freeform ? 'Copy / paste the selected items' : 'Copy / paste the selected nodes'],
+    ['F2', freeform ? 'Rename the selected item' : 'Rename the selected node'],
     ['← ↑ ↓ →', 'Move selection between nodes'],
     ['V / H', 'Select / pan'],
     ['N / C', freeform ? 'Add an item / connect items' : 'Add a unit / connect steps'],
@@ -960,6 +981,8 @@ export function helpDialog() {
     ['drag from the palette', 'Drop a new node where you release it'],
     ['double-click empty canvas', 'Create a node at that spot'],
     ['drag the background', 'Pan the canvas'],
+    ['Shift+click', freeform ? 'Add or remove an item in the selection' : 'Add or remove a node in the selection'],
+    ['Shift+drag', freeform ? 'Draw a box to select every item inside' : 'Draw a box to select every node inside'],
     ['scroll · pinch', 'Pan · zoom'],
     ...(freeform ? [] : [['Space (in Flow)', 'Pause or resume the moving payloads']]),
   ];
@@ -1937,13 +1960,56 @@ function renderEdgeDetail(panel) {
   const from = state.model.byId.get(e.from), to = state.model.byId.get(e.to);
 
   const freeform = isFreeform();
-  const label = h('input', { class: 'f-input', placeholder: freeform ? 'e.g. reads customer data' : 'e.g. approved / declined', value: e.label ?? '' });
+  // The label commits on blur (Enter blurs) — no Save click, panel stays open.
+  const label = h('input', {
+    class: 'f-input',
+    placeholder: freeform ? 'e.g. reads customer data' : 'e.g. approved / declined',
+    value: e.label ?? '',
+    readonly: state.standalone ? '' : null,
+  });
+  const commitLabel = () => {
+    const cur = state.selectedEdge;
+    if (state.standalone || !cur || cur.scopeId !== sel.scopeId || cur.index !== sel.index) return;
+    if (label.value === (e.label ?? '')) return;
+    ctrl.commit(() => edit.updateEdgeLabel(cur, label.value));
+  };
+  label.addEventListener('blur', commitLabel);
+  label.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); label.blur(); } });
+
+  // From/To rewire row: every sibling node of this scope, plus Reverse.
+  const siblings = scope?.nodes ?? [];
+  const endpointSelect = (current, aria) => {
+    const select = h('select', {
+      class: 'f-select', 'aria-label': aria, disabled: state.standalone ? '' : null,
+    }, ...siblings.map((n) => h('option', { value: n.id }, n.label || n.id)));
+    if (!siblings.some((n) => n.id === current)) select.append(h('option', { value: current }, current));
+    select.value = current;
+    return select;
+  };
+  const fromSel = endpointSelect(e.from, 'From');
+  const toSel = endpointSelect(e.to, 'To');
+  const rewire = () => {
+    const next = { from: fromSel.value, to: toSel.value };
+    if (next.from === e.from && next.to === e.to) return;
+    ctrl.commit(() => edit.rewireEdge(sel, next)).then((ok) => { if (ok) renderEdgeDetail(panel); });
+  };
+  fromSel.addEventListener('change', rewire);
+  toSel.addEventListener('change', rewire);
+
   const head = h('div', { class: 'panel-head' },
     h('div', { class: 'titles' },
       h('span', { class: 'type-pill t-artifact' }, freeform ? '→ connection' : '→ edge'),
       h('h2', {}, `${from?.label ?? e.from} → ${to?.label ?? e.to}`)),
     h('button', { class: 'panel-close', onClick: () => { ctrl.selectEdge(null); panel.hidden = true; } }, '✕'));
   const body = h('div', { class: 'panel-body' },
+    h('div', { class: 'panel-section' },
+      h('h3', {}, 'Connection'),
+      h('div', { class: 'edge-rewire' }, fromSel, h('span', {}, '→'), toSel,
+        h('button', {
+          class: 'pa-btn', title: 'Swap the direction',
+          disabled: state.standalone ? '' : null,
+          onClick: () => ctrl.commit(() => edit.reverseEdge(sel)).then((ok) => { if (ok) renderEdgeDetail(panel); }),
+        }, '⇄ Reverse'))),
     h('div', { class: 'f-field' }, h('label', {}, freeform ? 'Connection label' : 'Label (what flows / the outcome)'), label));
 
   // route style: automatic, or a pinned shape the user drags around on the canvas
@@ -1995,9 +2061,6 @@ function renderEdgeDetail(panel) {
   panel.replaceChildren(head, body);
   if (!state.standalone) {
     panel.append(h('div', { class: 'panel-actions' },
-      h('button', {
-        class: 'pa-btn', onClick: () => ctrl.commit(() => edit.updateEdge(state.scopeId, sel.index, { label: label.value })).then((ok) => ok && toast('Saved')),
-      }, 'Save label'),
       h('button', {
         class: 'pa-btn danger',
         onClick: () => { panel.hidden = true; ctrl.commit(() => edit.deleteEdge(state.scopeId, sel.index)).then((ok) => { if (ok) { ctrl.selectEdge(null); toast('Edge deleted'); } }); },
@@ -2265,7 +2328,7 @@ export async function importDialog() {
 
   let transcript = '';
 
-  function renderPaste() {
+  function renderPaste(importError = null) {
     const ta = h('textarea', {
       class: 'f-textarea import-ta',
       placeholder: 'Paste the meeting / discovery-call transcript here…',
@@ -2275,9 +2338,15 @@ export async function importDialog() {
     const counter = h('span', { class: 'import-count' }, '');
     ta.addEventListener('input', () => { counter.textContent = ta.value.trim() ? `${ta.value.trim().length.toLocaleString()} chars` : ''; });
 
-    const providerLine = status.available
-      ? h('p', { class: 'hint' }, `The transcript is sent to your configured model (${status.provider}: ${status.model}) from the local server — steps, decisions, roles, systems, and artifacts come back as a map you review before anything is saved.`)
-      : h('p', { class: 'hint import-unavailable' }, `⚠ Transcript import is disabled — no model is configured. ${status.hint ?? ''}`);
+    // A derive that failed with llm-no-provider replaces the provider line
+    // with the three ways to point the server at a model.
+    const providerLine = importError?.data?.code === 'llm-no-provider'
+      ? h('div', { class: 'hint-box' },
+        h('strong', {}, 'No model provider is configured. '),
+        'Pick one setup path, then try again: add ANTHROPIC_API_KEY to a .env file next to the server, as .env.example shows, log in with the claude CLI, or set OPSMAP_LLM_CMD to a command that prints the reply.')
+      : status.available
+        ? h('p', { class: 'hint' }, `The transcript is sent to your configured model (${status.provider}: ${status.model}) from the local server — steps, decisions, roles, systems, and artifacts come back as a map you review before anything is saved.`)
+        : h('p', { class: 'hint import-unavailable' }, `⚠ Transcript import is disabled — no model is configured. ${status.hint ?? ''}`);
 
     dialog.replaceChildren(
       h('h2', {}, '✨ New map from transcript'),
@@ -2297,8 +2366,8 @@ export async function importDialog() {
               .then((result) => { if (!closed) renderReview(result); })
               .catch((e) => {
                 if (closed) return;
-                renderPaste();
-                toast(e.message, true);
+                renderPaste(e);
+                if (e?.data?.code !== 'llm-no-provider') toast(e.message, true);
               });
           },
         }, 'Derive the map')));
@@ -2513,19 +2582,68 @@ function renderTemplates() {
   panel.replaceChildren(head, list);
 }
 
+// ── rename popover (F2 / double-click a leaf node) ───────────────────
+// canvas.js and main.js emit node-rename-request with the node's screen
+// position; when no position is reachable the popover opens centered.
+let renamePopover = null; // { finish } of the open popover, if any
+
+function openRenamePopover({ id, screen } = {}) {
+  const node = state.model?.byId.get(id);
+  if (!node || state.standalone) return;
+  renamePopover?.finish(true); // a second request commits the open one, like blur
+  const input = h('input', { class: 'rename-popover', value: node.label, 'aria-label': `Rename ${node.label}` });
+  input.style.position = 'fixed';
+  input.style.left = `${Math.round(screen?.x ?? window.innerWidth / 2)}px`;
+  input.style.top = `${Math.round(screen?.y ?? window.innerHeight / 2)}px`;
+  input.style.transform = 'translate(-50%, -50%)';
+  input.style.zIndex = '60';
+  let done = false;
+  const finish = (commitIt) => {
+    if (done) return;
+    done = true;
+    renamePopover = null;
+    input.remove();
+    const label = input.value.trim();
+    if (commitIt && label && label !== node.label) ctrl.commit(() => edit.updateNode(id, { label }));
+  };
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); ev.stopPropagation(); finish(true); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+  renamePopover = { finish };
+  document.body.append(input);
+  input.focus();
+  input.select();
+}
+
 // ── search palette ───────────────────────────────────────────────────
+const RECENT_SEARCHES_KEY = 'opsmap.recentSearches';
+function readRecentSearches() {
+  try {
+    const list = JSON.parse(localStorage.getItem(RECENT_SEARCHES_KEY) || '[]');
+    return Array.isArray(list) ? list.filter((q) => typeof q === 'string' && q.trim()).slice(0, 5) : [];
+  } catch { return []; }
+}
+function pushRecentSearch(query) {
+  const q = query.trim();
+  if (!q) return;
+  const list = [q, ...readRecentSearches().filter((x) => x !== q)].slice(0, 5);
+  try { localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(list)); } catch { /* browser storage is optional */ }
+}
 export function openSearch() {
   if (!state.model) return;
   const overlay = document.getElementById('search-overlay');
   overlay.hidden = false;
 
   const input = h('input', { placeholder: 'Search nodes by name, id, or description…', 'aria-label': 'Search nodes' });
+  const chips = h('div', { class: 'search-chips', hidden: '' });
   const results = h('div', { class: 'palette-results' });
   const foot = h('div', { class: 'palette-foot' },
     h('span', {}, h('kbd', {}, '↑'), h('kbd', {}, '↓'), ' navigate'),
     h('span', {}, h('kbd', {}, '↵'), ' open'),
     h('span', {}, h('kbd', {}, 'esc'), ' close'));
-  const pal = h('div', { class: 'palette' }, input, results, foot);
+  const pal = h('div', { class: 'palette' }, input, chips, results, foot);
   overlay.replaceChildren(pal);
 
   const all = [...state.model.byId.values()];
@@ -2548,6 +2666,13 @@ export function openSearch() {
 
   function update() {
     const q = input.value.trim().toLowerCase();
+    // with an empty query, offer the recent searches as one-click chips
+    const recents = q ? [] : readRecentSearches();
+    chips.replaceChildren(...recents.map((recent) => h('button', {
+      class: 'search-chip',
+      onClick: () => { input.value = recent; update(); input.focus(); },
+    }, recent)));
+    chips.hidden = !recents.length;
     const scored = q
       ? all.map((n) => ({ n, s: score(n, q) })).filter((x) => x.s >= 0).sort((a, b) => a.s - b.s || a.n.depth - b.n.depth)
       : all.filter((n) => n.depth === 0).map((n) => ({ n, s: 0 }));
@@ -2574,6 +2699,7 @@ export function openSearch() {
     [...results.children].forEach((c, i) => c.classList?.toggle('active', i === active));
   }
   function pick(n) {
+    pushRecentSearch(input.value);
     bus.emit('workspace-map-request');
     close();
     ctrl.gotoNode(n.id).then(() => showDetail(n.id));
@@ -2632,6 +2758,53 @@ function renderCanvasMessage() {
   box.hidden = true;
 }
 
+// ── save conflict ────────────────────────────────────────────────────
+// api.js emits save-conflict when the file on disk changed under the open
+// map. Keep = overwrite the file; Load = drop local edits for the disk copy.
+let saveConflictEl = null;
+
+function saveConflictDialog() {
+  if (saveConflictEl?.isConnected) return; // one conflict dialog at a time
+  const body = h('div', {},
+    h('p', {}, 'The saved file changed since this map was loaded. Saving now would overwrite that version.'),
+    h('p', { class: 'hint' }, 'Keep your version to overwrite the file, or load the saved file and redo your edits on top of it.'));
+  saveConflictEl = body;
+  modal('The file changed on disk', body, [
+    { label: 'Keep my version', primary: true, onClick: () => ctrl.keepMyVersion() },
+    { label: 'Load the saved file', onClick: () => ctrl.loadSavedFile() },
+  ]);
+}
+
+// ── workbench conflict dialog ────────────────────────────────────────
+// A link conflict used to hide behind a toast plus the Share & sync sheet;
+// surface it as a modal with the same choices and a way out: Disconnect.
+let workbenchConflictEl = null;
+
+function workbenchConflictDialog(connection) {
+  const body = h('div', {},
+    h('p', {}, connection.remoteMissing
+      ? 'The map section was removed from Workbench after the local map changed.'
+      : 'The local and Workbench copies both changed. Choose which copy to keep.'),
+    h('p', { class: 'hint' }, `Linked document: ${connection.title || connection.docId}. Disconnecting keeps the local map and drops the link.`));
+  workbenchConflictEl = body;
+  modal('Map changed in two places', body, [
+    { label: 'Decide later' },
+    connection.remoteMissing ? null : {
+      label: 'Use Workbench copy',
+      onClick: async () => { await useWorkbenchCopy(); },
+    },
+    connection.role === 'edit' ? {
+      label: 'Publish local copy',
+      onClick: async () => { await sendLocalCopy(); },
+    } : null,
+    {
+      label: 'Disconnect',
+      // disconnectWorkbenchLink() clears the link and toasts itself
+      onClick: async () => { await disconnectWorkbenchLink(); },
+    },
+  ].filter(Boolean));
+}
+
 // ── reactive wiring ──────────────────────────────────────────────────
 export function initUI() {
   initPalette();
@@ -2675,6 +2848,17 @@ export function initUI() {
   });
   bus.on('map-opened', () => { renderBreadcrumbs(); renderSwitcher(); renderMapMode(); renderCanvasMessage(); });
   bus.on('camera-changed', () => { positionContextActions(); positionScenarioPreview(); });
+  bus.on('node-rename-request', openRenamePopover);
+  bus.on('save-conflict', ({ mapId } = {}) => {
+    if (mapId && mapId !== state.mapId) return;
+    saveConflictDialog();
+  });
+  bus.on('workbench-changed', (connection) => {
+    if (!connection?.conflict) return;
+    if (workbenchConflictEl?.isConnected) return; // already showing
+    if (document.querySelector('.workbench-backdrop')) return; // Share & sync shows the same choice
+    workbenchConflictDialog(connection);
+  });
 
   document.getElementById('map-switcher').addEventListener('click', (ev) => openMapMenu(ev.currentTarget));
   document.getElementById('map-mode')?.addEventListener('click', (ev) => openModeMenu(ev.currentTarget));
