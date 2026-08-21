@@ -54,8 +54,19 @@ const TOOL_ICONS = {
   note: ICONS.artifact,
   probe: 'M10 3v14M3 10h14M6.5 6.5l7 7M13.5 6.5l-7 7',
   automate: ICONS.system,
+  duplicate: 'M7 6V3h10v10h-3M3 7h10v10H3z',
+  delete: 'M4 5h12M8 5V3h4v2m-6 0 1 12h6l1-12M8.5 8v6m3-6v6',
   undo: 'M8 5 4 9l4 4M4 9h8a4 4 0 0 1 0 8H9',
   redo: 'M12 5l4 4-4 4M16 9H8a4 4 0 0 0 0 8h3',
+  history: 'M10 5v5l3 2M4.2 6.5A7 7 0 1 1 3 11M3 5v4h4',
+  import: 'M10 3v9m-4-4 4 4 4-4M4 16h12',
+  export: 'M10 13V4m-4 4 4-4 4 4M4 16h12',
+  share: 'M7 10l6-4m-6 4 6 4M5 12a2 2 0 1 0 0-4 2 2 0 0 0 0 4m10-4a2 2 0 1 0 0-4 2 2 0 0 0 0 4m0 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4',
+  zoomOut: 'M4 10h12',
+  zoomIn: 'M4 10h12M10 4v12',
+  fit: 'M7 4H4v3m9-3h3v3M7 16H4v-3m9 3h3v-3',
+  more: 'M4 10h.01M10 10h.01M16 10h.01',
+  help: 'M8 7a2.3 2.3 0 1 1 3.5 2c-1.2.8-1.5 1.3-1.5 2M10 15h.01M10 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16',
 };
 
 const TOOL_GROUPS = [
@@ -107,6 +118,10 @@ function toolIsVisible(id) {
   return visibleToolGroups().some((group) => group.some((tool) => tool.id === id));
 }
 
+function toolById(id) {
+  return visibleToolGroups().flat().find((tool) => tool.id === id) ?? null;
+}
+
 let rail;
 
 function closeFlyout() {
@@ -114,15 +129,87 @@ function closeFlyout() {
   document.getElementById('tool-flyout')?.setAttribute('hidden', '');
 }
 
+function stackLabel(stack) {
+  const entry = stack.at(-1);
+  if (!entry) return '';
+  return typeof entry === 'string' ? 'edit map' : entry.label || 'edit map';
+}
+
 function refreshRail() {
   if (!rail) return;
+  const canEdit = !!state.model && !state.standalone && !state.presenting;
+  const hasNode = canEdit && !!state.selectedId && !!state.model?.byId.get(state.selectedId);
   for (const button of rail.querySelectorAll('[data-tool]')) {
     const id = button.dataset.tool;
     const pressed = id === 'lane' ? state.ownerLanes : state.activeTool === id;
     button.classList.toggle('active', pressed);
     button.setAttribute('aria-pressed', String(pressed));
+    button.disabled = !state.model || (MUTATING_TOOLS.has(id) && !canEdit);
   }
   document.getElementById('canvas')?.setAttribute('data-tool', state.activeTool);
+
+  const disabled = {
+    duplicate: !hasNode,
+    delete: !canEdit || (!state.selectedId && state.selectedEdge == null),
+    undo: !canEdit || !state.undoStack.length,
+    redo: !canEdit || !state.redoStack.length,
+    history: !state.mapId || state.standalone,
+    'import-transcript': state.standalone,
+    'import-file': state.standalone,
+    'export-yaml': !state.mapId,
+    'export-html': !state.mapId,
+    share: !state.mapId,
+    'zoom-out': !state.model,
+    'zoom-fit': !state.model,
+    'zoom-in': !state.model,
+  };
+  for (const button of rail.querySelectorAll('[data-action]')) {
+    button.disabled = !!disabled[button.dataset.action];
+  }
+
+  const undoLabel = stackLabel(state.undoStack);
+  const redoLabel = stackLabel(state.redoStack);
+  for (const button of rail.querySelectorAll('[data-action="undo"]')) {
+    const name = undoLabel ? `Undo ${undoLabel}` : 'Undo';
+    button.title = `${name} · ⌘Z`;
+    button.setAttribute('aria-label', name);
+  }
+  for (const button of rail.querySelectorAll('[data-action="redo"]')) {
+    const name = redoLabel ? `Redo ${redoLabel}` : 'Redo';
+    button.title = `${name} · ⌘⇧Z`;
+    button.setAttribute('aria-label', name);
+  }
+
+  const save = rail.querySelector('[data-save-status]');
+  if (save) {
+    const value = state.standalone ? 'Read only'
+      : state.saveStatus === 'saving' ? 'Saving'
+      : state.saveStatus === 'error' ? 'Save failed'
+      : state.saveStatus === 'saved' ? 'Saved'
+      : '';
+    save.textContent = value;
+    save.dataset.state = state.standalone ? 'readonly' : state.saveStatus;
+    save.title = state.saveStatus === 'error' && state.saveError
+      ? `Save failed: ${state.saveError}`
+      : value;
+    save.hidden = !value;
+  }
+
+  const connection = state.workbench;
+  const shareState = connection
+    ? connection.conflict ? 'Conflict' : connection.syncing ? 'Syncing' : 'Synced'
+    : '';
+  for (const button of rail.querySelectorAll('[data-action="share"]')) {
+    button.dataset.state = connection?.conflict ? 'conflict' : connection ? 'linked' : 'local';
+    button.title = connection
+      ? `${shareState} with Workbench. Open Share & sync`
+      : 'Copy a link or connect Workbench';
+    const label = button.querySelector('[data-share-state]');
+    if (label) label.textContent = shareState;
+  }
+
+  const zoom = `${Math.round((canvas.getCamera().k || 1) * 100)}%`;
+  for (const label of rail.querySelectorAll('[data-zoom-level]')) label.textContent = zoom;
 }
 
 function setTool(id) {
@@ -140,13 +227,17 @@ function setTool(id) {
   refreshRail();
 }
 
+function positionFlyout(anchor, host) {
+  const rect = anchor.getBoundingClientRect();
+  host.style.top = `${rect.bottom + 8}px`;
+  host.style.left = `${Math.max(8, Math.min(window.innerWidth - 236, rect.left))}px`;
+}
+
 function showUnitFlyout(anchor) {
   const host = document.getElementById('tool-flyout');
-  if (!host) return;
+  if (!host || !anchor) return;
   const freeform = state.model?.mode === 'freeform';
-  const rect = anchor.getBoundingClientRect();
-  host.style.top = `${rect.top}px`;
-  host.style.left = `${rect.right + 8}px`;
+  positionFlyout(anchor, host);
   const types = freeform
     ? [['item', 'Item'], ['system', 'System'], ['database', 'Database'], ['api', 'API'], ['role', 'Person / team'], ['artifact', 'Document']]
     : [['process', 'Process'], ['decision', 'Decision'], ['role', 'Role'], ['system', 'System'], ['artifact', 'Artifact']];
@@ -177,11 +268,9 @@ function showUnitFlyout(anchor) {
 
 function showConnectFlyout(anchor) {
   const host = document.getElementById('tool-flyout');
-  if (!host) return;
+  if (!host || !anchor) return;
   const freeform = state.model?.mode === 'freeform';
-  const rect = anchor.getBoundingClientRect();
-  host.style.top = `${rect.top}px`;
-  host.style.left = `${rect.right + 8}px`;
+  positionFlyout(anchor, host);
   host.replaceChildren(
     h('div', { class: 'tool-flyout-title' }, freeform ? 'Connect items' : 'Connect steps'),
     h('button', { class: 'tool-flyout-item selected', onClick: () => { closeFlyout(); startConnect(); } },
@@ -704,30 +793,162 @@ export function cancelTool() {
   setTool('select');
 }
 
+function closeToolbarMenu(target) {
+  target.closest('details')?.removeAttribute('open');
+}
+
+function runToolbarAction(action, target) {
+  closeToolbarMenu(target);
+  switch (action) {
+    case 'duplicate': ui.duplicateSelection(); break;
+    case 'delete': ui.requestDelete(); break;
+    case 'undo': ctrl.undo(); break;
+    case 'redo': ctrl.redo(); break;
+    case 'history': openHistory(); break;
+    case 'import-transcript': ui.importDialog(); break;
+    case 'import-file': importMapFile(); break;
+    case 'export-yaml': downloadYaml(); break;
+    case 'export-html':
+      if (state.mapId) window.location.href = `/export/${encodeURIComponent(state.mapId)}.html`;
+      break;
+    case 'share': openShareDialog(); break;
+    case 'zoom-out': canvas.zoomBy(0.77); break;
+    case 'zoom-fit': canvas.fit(); break;
+    case 'zoom-in': canvas.zoomBy(1.3); break;
+    case 'help': ui.helpDialog(); break;
+    default: break;
+  }
+}
+
+function toolbarToolButton(tool, { labeled = false, className = '' } = {}) {
+  const freeform = state.model?.mode === 'freeform';
+  const label = tool.id === 'unit'
+    ? freeform ? 'Add item' : 'Add step'
+    : tool.label;
+  return h('button', {
+    class: `tool-button toolbar-tool ${labeled ? 'labeled' : ''} ${className}`.trim(),
+    'data-tool': tool.id,
+    'aria-label': `${label} (${tool.shortcut})`,
+    title: `${label} · ${tool.shortcut}\n${tool.description}`,
+    onClick: (event) => activateTool(tool.id, event.currentTarget),
+  },
+  svgIcon(tool.id === 'unit' && freeform ? ICONS.item : TOOL_ICONS[tool.id]),
+  labeled ? h('span', { class: 'toolbar-button-label' }, label) : null,
+  tool.flyout ? h('i', { class: 'tool-caret' }) : null);
+}
+
+function toolbarActionButton(action, label, icon, {
+  className = '',
+  shortcut = '',
+  danger = false,
+  shareState = false,
+} = {}) {
+  const title = shortcut ? `${label} · ${shortcut}` : label;
+  return h('button', {
+    class: `tool-button tool-action labeled ${danger ? 'danger' : ''} ${className}`.trim(),
+    'data-action': action,
+    'aria-label': label,
+    title,
+    onClick: (event) => runToolbarAction(action, event.currentTarget),
+  },
+  svgIcon(TOOL_ICONS[icon]),
+  h('span', { class: 'toolbar-button-label' }, label),
+  shareState ? h('i', { class: 'share-status-dot', 'aria-hidden': 'true' }) : null,
+  shareState ? h('span', { class: 'share-status-label', 'data-share-state': '' }) : null);
+}
+
+function toolbarMenu(label, icon, items, className = '') {
+  return h('details', { class: `toolbar-menu ${className}`.trim() },
+    h('summary', {
+      class: 'tool-button labeled toolbar-menu-trigger',
+      title: label,
+      'aria-label': label,
+    }, svgIcon(TOOL_ICONS[icon]), h('span', { class: 'toolbar-button-label' }, label), h('i', { class: 'toolbar-menu-caret' })),
+    h('div', { class: 'toolbar-popover' }, ...items));
+}
+
+function toolbarMenuAction(action, label, icon, shortcut = '', className = '') {
+  return h('button', {
+    class: `toolbar-menu-item ${className}`.trim(),
+    'data-action': action,
+    title: shortcut ? `${label} · ${shortcut}` : label,
+    onClick: (event) => runToolbarAction(action, event.currentTarget),
+  }, svgIcon(TOOL_ICONS[icon]), h('span', {}, label), shortcut ? h('kbd', {}, shortcut) : null);
+}
+
+function toolbarMenuTool(tool) {
+  return h('button', {
+    class: 'toolbar-menu-item',
+    'data-tool': tool.id,
+    title: `${tool.label} · ${tool.shortcut}\n${tool.description}`,
+    onClick: (event) => {
+      closeToolbarMenu(event.currentTarget);
+      activateTool(tool.id, event.currentTarget);
+    },
+  }, svgIcon(TOOL_ICONS[tool.id]), h('span', {}, tool.label), h('kbd', {}, tool.shortcut));
+}
+
 function renderRail() {
   if (!rail) return;
   if (!toolIsVisible(state.activeTool)) state.activeTool = 'select';
-  const freeform = state.model?.mode === 'freeform';
-  rail.replaceChildren(...visibleToolGroups().flatMap((group, groupIndex) => [
-    groupIndex ? h('div', { class: 'tool-separator' }) : null,
-    ...group.map((tool) => h('button', {
-      class: 'tool-button',
-      'data-tool': tool.id,
-      'aria-label': `${tool.label} (${tool.shortcut})`,
-      title: `${tool.label} · ${tool.shortcut}\n${tool.description}`,
-      onClick: (event) => activateTool(tool.id, event.currentTarget),
-    }, svgIcon(tool.id === 'unit' && freeform ? ICONS.item : TOOL_ICONS[tool.id]), tool.flyout ? h('i', { class: 'tool-caret' }) : null)),
-  ].filter(Boolean)),
-  // history actions, not tools: they never change the active tool
-  h('div', { class: 'tool-separator' }),
-  ...[['undo', 'Undo', '⌘Z'], ['redo', 'Redo', '⌘⇧Z']].map(([id, label, keys]) => h('button', {
-    class: 'tool-button tool-action',
-    'data-action': id,
-    'aria-label': `${label} (${keys})`,
-    title: `${label} · ${keys}`,
-    disabled: state.standalone || !(id === 'undo' ? state.undoStack.length : state.redoStack.length) ? '' : null,
-    onClick: () => (id === 'undo' ? ctrl.undo() : ctrl.redo()),
-  }, svgIcon(TOOL_ICONS[id]))));
+  const primaryTools = ['select', 'hand', 'unit', 'connect'].map(toolById).filter(Boolean);
+  const secondaryTools = visibleToolGroups().flat()
+    .filter((tool) => !['select', 'hand', 'unit', 'connect'].includes(tool.id));
+
+  const importMenu = toolbarMenu('Import', 'import', [
+    toolbarMenuAction('import-file', 'Serigraph YAML file', 'import'),
+    toolbarMenuAction('import-transcript', 'Meeting transcript', 'note'),
+  ], 'toolbar-wide');
+  const exportMenu = toolbarMenu('Export', 'export', [
+    toolbarMenuAction('export-yaml', 'Serigraph YAML file', 'export'),
+    toolbarMenuAction('export-html', 'Standalone HTML app', 'export'),
+  ], 'toolbar-wide');
+  const moreMenu = toolbarMenu('More', 'more', [
+    ...secondaryTools.map(toolbarMenuTool),
+    secondaryTools.length ? h('div', { class: 'toolbar-menu-separator' }) : null,
+    toolbarMenuAction('history', 'Revision recovery', 'history', '', 'toolbar-compact-item'),
+    toolbarMenuAction('import-file', 'Import YAML file', 'import', '', 'toolbar-compact-item'),
+    toolbarMenuAction('import-transcript', 'Import transcript', 'note', '', 'toolbar-compact-item'),
+    toolbarMenuAction('export-yaml', 'Export YAML file', 'export', '', 'toolbar-compact-item'),
+    toolbarMenuAction('export-html', 'Export standalone app', 'export', '', 'toolbar-compact-item'),
+    toolbarMenuAction('share', 'Share & sync', 'share', '', 'toolbar-compact-item'),
+    toolbarMenuAction('zoom-out', 'Zoom out', 'zoomOut', '−', 'toolbar-compact-item'),
+    toolbarMenuAction('zoom-fit', 'Fit map to screen', 'fit', '0', 'toolbar-compact-item'),
+    toolbarMenuAction('zoom-in', 'Zoom in', 'zoomIn', '+', 'toolbar-compact-item'),
+    h('div', { class: 'toolbar-menu-separator toolbar-compact-end-separator' }),
+    toolbarMenuAction('help', 'Keyboard shortcuts', 'help', '?'),
+  ]);
+
+  rail.replaceChildren(
+    ...primaryTools.map((tool) => toolbarToolButton(tool, {
+      labeled: ['unit', 'connect'].includes(tool.id),
+      className: ['select', 'hand'].includes(tool.id) ? 'toolbar-optional' : '',
+    })),
+    h('div', { class: 'tool-separator' }),
+    toolbarActionButton('duplicate', 'Duplicate', 'duplicate', { shortcut: '⌘D' }),
+    toolbarActionButton('delete', 'Delete', 'delete', { shortcut: 'Delete or Backspace', danger: true }),
+    h('div', { class: 'tool-separator' }),
+    toolbarActionButton('undo', 'Undo', 'undo', { shortcut: '⌘Z' }),
+    toolbarActionButton('redo', 'Redo', 'redo', { shortcut: '⌘⇧Z' }),
+    toolbarActionButton('history', 'History', 'history', { className: 'toolbar-wide-label' }),
+    h('div', { class: 'tool-separator toolbar-wide' }),
+    importMenu,
+    exportMenu,
+    toolbarActionButton('share', 'Share', 'share', { className: 'toolbar-wide', shareState: true }),
+    h('span', { class: 'toolbar-spacer' }),
+    h('span', { class: 'save-status', 'data-save-status': '', role: 'status', 'aria-live': 'polite' }),
+    h('div', { class: 'toolbar-view toolbar-wide' },
+      toolbarActionButton('zoom-out', 'Zoom out', 'zoomOut', { shortcut: '−' }),
+      h('button', {
+        class: 'zoom-level',
+        'data-action': 'zoom-fit',
+        title: 'Fit map to screen · 0',
+        'aria-label': 'Fit map to screen',
+        onClick: (event) => runToolbarAction('zoom-fit', event.currentTarget),
+      }, h('span', { 'data-zoom-level': '' }, '100%')),
+      toolbarActionButton('zoom-in', 'Zoom in', 'zoomIn', { shortcut: '+' })),
+    moreMenu,
+  );
   refreshRail();
 }
 
@@ -736,10 +957,19 @@ export function initWorkbench() {
   if (!rail) return;
   renderRail();
   bus.on('selection-changed', refreshRail);
+  bus.on('save-status', refreshRail);
+  bus.on('workbench-changed', refreshRail);
+  bus.on('camera-changed', () => {
+    const zoom = `${Math.round((canvas.getCamera().k || 1) * 100)}%`;
+    for (const label of rail?.querySelectorAll('[data-zoom-level]') ?? []) label.textContent = zoom;
+  });
   bus.on('view-changed', () => { closeFlyout(); closeReview(); setTool('select'); renderRail(); });
   document.addEventListener('pointerdown', (event) => {
     const flyout = document.getElementById('tool-flyout');
     if (flyout && !flyout.hidden && !flyout.contains(event.target) && !rail?.contains(event.target)) closeFlyout();
+    if (!rail?.contains(event.target)) {
+      for (const menu of rail?.querySelectorAll('details[open]') ?? []) menu.removeAttribute('open');
+    }
   });
 }
 

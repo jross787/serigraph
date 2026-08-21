@@ -76,10 +76,29 @@ function typeIcon(type, size = 14) {
 }
 
 // ── toasts ───────────────────────────────────────────────────────────
-export function toast(msg, isError = false) {
-  const t = h('div', { class: `toast${isError ? ' error' : ''}` }, msg);
+export function toast(msg, isError = false, action = null) {
+  let timer;
+  const dismiss = () => {
+    clearTimeout(timer);
+    t.style.transition = 'opacity .25s';
+    t.style.opacity = '0';
+    setTimeout(() => t.remove(), 260);
+  };
+  const actionButton = action?.label && typeof action.onClick === 'function'
+    ? h('button', {
+        class: 'toast-action',
+        onClick: () => {
+          clearTimeout(timer);
+          t.remove();
+          action.onClick();
+        },
+      }, action.label)
+    : null;
+  const t = h('div', { class: `toast${isError ? ' error' : ''}` },
+    h('span', {}, msg),
+    actionButton);
   document.getElementById('toasts').append(t);
-  setTimeout(() => { t.style.transition = 'opacity .25s'; t.style.opacity = '0'; setTimeout(() => t.remove(), 260); }, isError ? 5000 : 2400);
+  timer = setTimeout(dismiss, actionButton ? 6500 : isError ? 5000 : 2400);
 }
 bus.on('toast', toast);
 
@@ -136,16 +155,10 @@ function renderMapMode() {
     button.title = freeform ? 'Freeform map. Choose another mode' : 'Process map. Choose another mode';
   }
   if (label) label.textContent = freeform ? 'Freeform' : 'Process';
-  const addLabel = document.getElementById('btn-add-node-label');
-  if (addLabel) addLabel.textContent = freeform ? (state.scopeId == null ? 'Add group' : 'Add item') : 'Add step';
-  const addBtn = document.getElementById('btn-add-node');
-  if (addBtn) addBtn.hidden = !state.model;
   const workspaces = document.getElementById('workspace-switcher');
   if (workspaces) workspaces.hidden = freeform || !state.model;
-  for (const id of ['btn-import', 'btn-economics']) {
-    const control = document.getElementById(id);
-    if (control) control.hidden = freeform;
-  }
+  const economics = document.getElementById('btn-economics');
+  if (economics) economics.hidden = freeform;
   if (freeform && state.workspaceView !== 'map') bus.emit('workspace-map-request');
   const templates = document.getElementById('templates-panel');
   if (templates && !templates.hidden) renderTemplates();
@@ -930,14 +943,17 @@ export function helpDialog() {
     ['⌘K / Ctrl+K', 'Search all nodes'],
     ['double-click / ⏎', freeform ? 'Open a group' : 'Zoom into a container node'],
     ...(freeform ? [['pan to another group', 'Follow its connections without zooming out']] : []),
-    ['Esc / ⌫', 'Zoom back out or close a panel'],
+    ['Esc', 'Zoom back out or close a panel'],
+    ['Delete / Backspace', freeform ? 'Delete the selected item' : 'Delete the selected node'],
+    ['⌘D / Ctrl+D', freeform ? 'Duplicate the selected item' : 'Duplicate the selected node'],
     ['← ↑ ↓ →', 'Move selection between nodes'],
     ['V / H', 'Select / pan'],
     ['N / C', freeform ? 'Add an item / connect items' : 'Add a unit / connect steps'],
     ...(freeform ? [['T', 'Review note']] : [['L / T', 'Owner lanes / review note'], ['P / A', 'Path probe / automation lens']]),
     ['⇧P', 'Presentation mode'],
     ['+ / − / 0', 'Zoom in / out / fit'],
-    ['⌘Z / ⌘⇧Z', 'Undo / redo'],
+    ['⌘Z / Ctrl+Z', 'Undo'],
+    ['⌘⇧Z / Ctrl+Shift+Z', 'Redo'],
     ['drag a node', 'Move it and pin its position'],
     ['drag a node onto a container', freeform ? 'Move it into that group' : 'Move it into that sub-map'],
     ['drag from a node\'s ○ port', freeform ? 'Connect it to another item' : 'Draw an edge to another node'],
@@ -1004,76 +1020,108 @@ function beginBranch(node) {
   toast(`Choose where the “${label}” branch goes · Esc cancels`);
 }
 
+function undoableToast(message) {
+  toast(message, false, { label: 'Undo', onClick: () => ctrl.undo() });
+}
+
+function deleteNodeNow(node) {
+  hideDetail();
+  return ctrl.commit(
+    () => edit.deleteNode(node.id),
+    { select: null, historyLabel: `delete “${node.label}”` },
+  ).then((ok) => {
+    if (ok) undoableToast(`Deleted “${node.label}”`);
+    return ok;
+  });
+}
+
 function confirmDelete(node) {
-  if (isFreeform() && node.isElement) {
-    const useCount = placementsOf(state.model, node.id).length;
-    const groupLabel = state.model.byId.get(state.scopeId)?.label ?? 'this group';
-    modal(`Remove “${node.label}”?`,
-      h('div', {},
-        h('p', { class: 'hint' }, `Remove this placement from “${groupLabel}”, or delete the shared element from all ${useCount} group${useCount === 1 ? '' : 's'}.`),
-        h('p', { class: 'hint' }, 'Removing this placement also removes its connections in this group.')),
-      [
-        { label: 'Cancel' },
-        {
-          label: 'Remove from group',
-          onClick: () => {
-            hideDetail();
-            ctrl.commit(() => edit.removePlacement(state.scopeId, node.id), { select: null })
-              .then((ok) => ok && toast(`Removed “${node.label}” from “${groupLabel}”`));
-          },
-        },
-        {
-          label: 'Delete everywhere',
-          danger: true,
-          onClick: () => {
-            hideDetail();
-            ctrl.commit(() => edit.deleteElement(node.id), { select: null })
-              .then((ok) => ok && toast(`Deleted shared element “${node.label}”`));
-          },
-        },
-      ]);
-    return;
-  }
+  if (!(isFreeform() && node.isElement)) return deleteNodeNow(node);
 
-  const n = node.stats.descendantCount;
-  modal(`Delete “${node.label}”?`,
-    h('p', { class: 'hint' }, n
-      ? `This also deletes the ${n} node${n === 1 ? '' : 's'} nested inside it, plus any edges touching it.`
-      : 'Any edges touching it are removed too.'),
-    [{ label: 'Cancel' }, {
-      label: 'Delete', danger: true, primary: true,
-      onClick: () => {
-        hideDetail();
-        ctrl.commit(() => edit.deleteNode(node.id), { select: null })
-          .then((ok) => ok && toast(`Deleted “${node.label}”`));
+  const useCount = placementsOf(state.model, node.id).length;
+  const groupLabel = state.model.byId.get(state.scopeId)?.label ?? 'this group';
+  modal(`Remove “${node.label}”?`,
+    h('div', {},
+      h('p', { class: 'hint' }, `Remove this placement from “${groupLabel}”, or delete the shared element from all ${useCount} group${useCount === 1 ? '' : 's'}.`),
+      h('p', { class: 'hint' }, 'Removing this placement also removes its connections in this group.')),
+    [
+      { label: 'Cancel' },
+      {
+        label: 'Remove from group',
+        onClick: () => {
+          hideDetail();
+          ctrl.commit(
+            () => edit.removePlacement(state.scopeId, node.id),
+            { select: null, historyLabel: `remove “${node.label}” from “${groupLabel}”` },
+          ).then((ok) => ok && undoableToast(`Removed “${node.label}” from “${groupLabel}”`));
+        },
       },
-    }]);
+      {
+        label: 'Delete everywhere',
+        danger: true,
+        onClick: () => {
+          hideDetail();
+          ctrl.commit(
+            () => edit.deleteElement(node.id),
+            { select: null, historyLabel: `delete “${node.label}” everywhere` },
+          ).then((ok) => ok && undoableToast(`Deleted shared element “${node.label}”`));
+        },
+      },
+    ]);
+  return true;
 }
 
-function confirmDeleteEdge(index) {
+function deleteEdgeNow(index) {
   const scope = state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children;
-  const e = scope?.edges?.[index];
-  if (!e) return;
-  const from = state.model.byId.get(e.from)?.label ?? e.from;
-  const to = state.model.byId.get(e.to)?.label ?? e.to;
-  modal('Delete this connection?',
-    h('p', { class: 'hint' }, `The arrow from “${from}” to “${to}” will be removed.`),
-    [{ label: 'Cancel' }, {
-      label: 'Delete', danger: true, primary: true,
-      onClick: () => ctrl.commit(() => edit.deleteEdge(state.scopeId, index))
-        .then((ok) => { if (ok) { ctrl.selectEdge(null); hideDetail(); toast('Connection deleted'); } }),
-    }]);
+  const edge = scope?.edges?.[index];
+  if (!edge) return false;
+  const from = state.model.byId.get(edge.from)?.label ?? edge.from;
+  const to = state.model.byId.get(edge.to)?.label ?? edge.to;
+  return ctrl.commit(
+    () => edit.deleteEdge(state.scopeId, index),
+    { historyLabel: `delete connection from “${from}” to “${to}”` },
+  ).then((ok) => {
+    if (ok) {
+      ctrl.selectEdge(null);
+      hideDetail();
+      undoableToast(`Deleted connection from “${from}” to “${to}”`);
+    }
+    return ok;
+  });
 }
 
-// Delete whatever is selected (node or edge), always behind a confirm.
+// Delete the current selection immediately. Undo is always offered afterward.
 export function requestDelete() {
   if (state.standalone || !state.model || state.presenting) return false;
   if (state.selectedId) {
     const node = state.model.byId.get(state.selectedId);
     if (node) { confirmDelete(node); return true; }
   }
-  if (state.selectedEdge != null) { confirmDeleteEdge(state.selectedEdge.index); return true; }
+  if (state.selectedEdge != null) { deleteEdgeNow(state.selectedEdge.index); return true; }
   return false;
+}
+
+export async function duplicateSelection() {
+  if (state.standalone || !state.model || state.presenting || !state.selectedId) return false;
+  const node = state.model.byId.get(state.selectedId);
+  if (!node) return false;
+  const layoutNode = canvas.getLayout()?.nodes.find((item) => item.id === node.id);
+  const position = layoutNode
+    ? {
+        x: layoutNode.x + layoutNode.w / 2 + layoutNode.w + 28,
+        y: layoutNode.y + layoutNode.h / 2 + 28,
+      }
+    : null;
+  let duplicateId = null;
+  const ok = await ctrl.commit(() => {
+    duplicateId = node.isElement
+      ? edit.duplicateElement(node.id, state.scopeId, { position })
+      : edit.duplicateNode(node.id, { position });
+  }, { historyLabel: `duplicate “${node.label}”` });
+  if (!ok || !duplicateId) return false;
+  ctrl.selectNode(duplicateId);
+  toast(`Duplicated “${node.label}”`);
+  return true;
 }
 
 // ── right-click context menu ─────────────────────────────────────────
@@ -2632,8 +2680,6 @@ export function initUI() {
   document.getElementById('map-mode')?.addEventListener('click', (ev) => openModeMenu(ev.currentTarget));
 
   if (state.standalone) {
-    for (const id of ['btn-add-node', 'btn-templates', 'btn-export', 'btn-import', 'btn-projects']) {
-      document.getElementById(id)?.remove();
-    }
+    for (const id of ['btn-templates', 'btn-projects']) document.getElementById(id)?.remove();
   }
 }

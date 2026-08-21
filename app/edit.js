@@ -124,6 +124,53 @@ function flowPositions(node) {
   }
 }
 
+function isNodeRecord(value) {
+  return value && typeof value === 'object'
+    && typeof value.id === 'string'
+    && typeof value.type === 'string'
+    && typeof value.label === 'string';
+}
+
+function collectCloneIds(value, ids, taken) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectCloneIds(item, ids, taken);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  if (isNodeRecord(value)) {
+    const next = uniqueId(state.model, `${value.id}-copy`, taken);
+    taken.add(next);
+    ids.set(value.id, next);
+  }
+  for (const child of Object.values(value)) collectCloneIds(child, ids, taken);
+}
+
+function remapCloneReferences(value, ids, parentKey = '') {
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      if (parentKey === 'dependsOn' && ids.has(value[i])) value[i] = ids.get(value[i]);
+      else remapCloneReferences(value[i], ids, parentKey);
+    }
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const [key, child] of Object.entries(value)) {
+    if (['id', 'from', 'to', 'use'].includes(key) && ids.has(child)) value[key] = ids.get(child);
+    else remapCloneReferences(child, ids, key);
+  }
+}
+
+function offsetPosition(value, position = null) {
+  if (position) {
+    value.position = { x: Math.round(position.x), y: Math.round(position.y) };
+  } else if (value.position) {
+    value.position = {
+      x: Math.round(Number(value.position.x || 0) + 28),
+      y: Math.round(Number(value.position.y || 0) + 28),
+    };
+  }
+}
+
 export function updateDocument(fields = {}) {
   const doc = state.doc;
   if (!doc.getIn(['document'], true)) doc.setIn(['document'], doc.createNode({}));
@@ -221,6 +268,29 @@ export function addNode(ownerId, fields) {
   return fields.id;
 }
 
+export function duplicateNode(nodeId, { position = null } = {}) {
+  const doc = state.doc;
+  const sourcePath = findNodePath(doc, nodeId);
+  if (!sourcePath) throw new Error(`node "${nodeId}" not found in file`);
+  const source = doc.getIn(sourcePath, true);
+  const plain = source?.toJSON?.();
+  if (!isNodeRecord(plain)) throw new Error(`node "${nodeId}" cannot be duplicated`);
+
+  const ids = new Map();
+  collectCloneIds(plain, ids, new Set());
+  remapCloneReferences(plain, ids);
+  plain.label = `${plain.label} copy`;
+  offsetPosition(plain, position);
+
+  const sequencePath = sourcePath.slice(0, -1);
+  const sequence = doc.getIn(sequencePath, true);
+  if (!isSeq(sequence)) throw new Error(`node "${nodeId}" is not in a node list`);
+  const created = doc.createNode(plain);
+  flowPositions(created);
+  sequence.items.splice(sourcePath.at(-1) + 1, 0, created);
+  return ids.get(nodeId);
+}
+
 export function addElement(fields) {
   const doc = state.doc;
   if (!doc.getIn(['elements'], true)) doc.setIn(['elements'], doc.createNode([]));
@@ -235,10 +305,10 @@ export function addElement(fields) {
 }
 
 export function addPlacement(ownerId, elementId, { note = '', position = null } = {}) {
+  const doc = state.doc;
   if (state.model?.mode === 'freeform' && ownerId == null) {
     throw new Error('Choose a group before adding an item');
   }
-  const doc = state.doc;
   const scope = ensureScope(doc, ownerId);
   if (!scope) throw new Error(`can't find group "${ownerId}" in the file`);
   if (findPlacementPath(doc, ownerId, elementId)) {
@@ -251,6 +321,33 @@ export function addPlacement(ownerId, elementId, { note = '', position = null } 
   flowPositions(created);
   doc.addIn(scope.nodesPath, created);
   return elementId;
+}
+
+export function duplicateElement(elementId, ownerId, { position = null } = {}) {
+  const doc = state.doc;
+  const sourcePath = findElementPath(doc, elementId);
+  const source = sourcePath ? doc.getIn(sourcePath, true) : null;
+  const plain = source?.toJSON?.();
+  if (!isNodeRecord(plain)) throw new Error(`element "${elementId}" not found in file`);
+
+  const nextId = uniqueId(state.model, `${elementId}-copy`);
+  plain.id = nextId;
+  plain.label = `${plain.label} copy`;
+  const elements = doc.getIn(['elements'], true);
+  if (!isSeq(elements)) throw new Error('map has no element list');
+  elements.items.splice(sourcePath.at(-1) + 1, 0, doc.createNode(plain));
+
+  const scope = ensureScope(doc, ownerId, { create: false });
+  const placementPath = findPlacementPath(doc, ownerId, elementId);
+  if (!scope || !placementPath) throw new Error(`"${elementId}" is not placed in this group`);
+  const placement = doc.getIn(placementPath, true)?.toJSON?.() ?? { use: elementId };
+  placement.use = nextId;
+  offsetPosition(placement, position);
+  const placements = doc.getIn(scope.nodesPath, true);
+  const created = doc.createNode(placement);
+  flowPositions(created);
+  placements.items.splice(placementPath.at(-1) + 1, 0, created);
+  return nextId;
 }
 
 export function updatePlacement(ownerId, elementId, fields = {}) {
