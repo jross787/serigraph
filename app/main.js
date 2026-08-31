@@ -406,6 +406,8 @@ async function boot() {
 
   ctrl.loadTemplates();
   api.subscribe(async (event) => {
+    // The server may be restarting when an event lands; a failed refresh must
+    // not surface as an unhandled rejection in the SSE callback.
     try {
       if (event.type === 'maps-changed') await ctrl.handleRemoteChange(event.ids ?? []);
       if (event.type === 'templates-changed') await ctrl.loadTemplates();

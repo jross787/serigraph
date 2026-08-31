@@ -450,6 +450,32 @@ function truncateLabel(text, maxChars) {
 
 const MINI_NODE_CAP = 90;
 
+// actor tag — who performs this step: a human, a computer, or both.
+// Read from the node's `automation` field; absent means not assessed.
+const ACTOR_TAGS = {
+    manual: {
+      cls: 'at-manual',
+      label: 'Human — done by hand',
+      glyph: 'M10 8.4a2.7 2.7 0 1 0 0-5.4 2.7 2.7 0 0 0 0 5.4zM4.4 17c.2-3.4 2.5-5.1 5.6-5.1s5.4 1.7 5.6 5.1',
+    },
+    automated: {
+      cls: 'at-automated',
+      label: 'Computer — done by an agent',
+      glyph: 'M4.6 4.8h10.8v8.2H4.6zM8 16.4h4M10 13v3.4',
+    },
+    assisted: {
+      cls: 'at-assisted',
+      label: 'Human + computer — assisted',
+      glyph: 'M6.8 7.3a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4zM2.6 15.4c.2-2.9 2-4.4 4.2-4.4 1 0 1.8.2 2.5.7M11.4 8.2h6.2v4.9h-6.2zM13 16h3M14.5 13.1V16',
+    },
+    'at-risk': {
+      cls: 'at-risk',
+      label: 'At risk — needs attention',
+      glyph: 'M10 4.4 16.8 16H3.2zM10 8.6v3.6m0 2v.2',
+    },
+  };
+
+
 function buildNode(n) {
   const node = n.node;
   const isContainer = !!node.children;
@@ -502,14 +528,14 @@ function buildNode(n) {
     const metaChars = Math.max(10, Math.floor((n.w - chipW - 58) / 6.2));
     meta.textContent = truncateLabel(metaText, metaChars);
     g.appendChild(meta);
-    if (state.model?.mode !== 'freeform') {
-      const automation = node.automation || 'not-assessed';
-      g.appendChild(el('circle', { cx: n.w - 15, cy: n.h - 17, r: 4 }, `automation-dot a-${automation}`));
+    if (state.model?.mode !== 'freeform' && !ACTOR_TAGS[node.automation]) {
+      // the actor badge already shows assessed nodes; keep the dot for unassessed ones
+      g.appendChild(el('circle', { cx: n.w - 15, cy: n.h - 17, r: 4 }, 'automation-dot a-not-assessed'));
     }
 
     // count chip — the "there's more inside" affordance; click dives in
     const label = countLabel;
-    const chip = el('g', { transform: `translate(${n.w - chipW - 28},${n.h - 26})` });
+    const chip = el('g', { transform: `translate(${n.w - chipW - 42},${n.h - 26})` });
     chip.dataset.dive = node.id;
     chip.style.cursor = 'zoom-in';
     chip.appendChild(el('rect', { width: chipW, height: 19, rx: 9.5 }, 'count-chip-bg'));
@@ -560,33 +586,9 @@ function buildNode(n) {
     g.appendChild(fb);
   }
 
-  // actor tag — who performs this step: a human, a computer, or both.
-  // Read from the node's `automation` field; absent means not assessed.
-  const ACTOR_TAGS = {
-    manual: {
-      cls: 'at-manual',
-      label: 'Human — done by hand',
-      glyph: 'M10 8.4a2.7 2.7 0 1 0 0-5.4 2.7 2.7 0 0 0 0 5.4zM4.4 17c.2-3.4 2.5-5.1 5.6-5.1s5.4 1.7 5.6 5.1',
-    },
-    automated: {
-      cls: 'at-automated',
-      label: 'Computer — done by an agent',
-      glyph: 'M4.6 4.8h10.8v8.2H4.6zM8 16.4h4M10 13v3.4',
-    },
-    assisted: {
-      cls: 'at-assisted',
-      label: 'Human + computer — assisted',
-      glyph: 'M6.8 7.3a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4zM2.6 15.4c.2-2.9 2-4.4 4.2-4.4 1 0 1.8.2 2.5.7M11.4 8.2h6.2v4.9h-6.2zM13 16h3M14.5 13.1V16',
-    },
-    'at-risk': {
-      cls: 'at-risk',
-      label: 'At risk — needs attention',
-      glyph: 'M10 4.4 16.8 16H3.2zM10 8.6v3.6m0 2v.2',
-    },
-  };
   const actorTag = ACTOR_TAGS[node.automation];
   if (actorTag) {
-    const tag = el('g', { transform: `translate(${n.w - 4},${n.h + 2})` }, `actor-tag ${actorTag.cls}`);
+    const tag = el('g', { transform: `translate(${n.w - 14},${n.h - 14})` }, `actor-tag ${actorTag.cls}`);
     tag.appendChild(el('circle', { r: 10 }, 'actor-bg'));
     tag.appendChild(el('path', { d: actorTag.glyph, transform: 'translate(-10,-10) scale(0.94)' }, 'actor-glyph'));
     const at = el('title');

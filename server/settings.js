@@ -70,10 +70,13 @@ export async function writeSettings(patch) {
     if (patch.voiceProvider !== '' && !VOICE_PROVIDERS.includes(patch.voiceProvider)) throw new Error('Unknown voice provider.');
     updates.set('OPSMAP_VOICE_PROVIDER', patch.voiceProvider === 'browser' ? '' : patch.voiceProvider);
   }
-  if (patch.model !== undefined) updates.set('OPSMAP_MODEL', String(patch.model).trim());
-  if (patch.voiceModel !== undefined) updates.set('OPSMAP_VOICE_MODEL', String(patch.voiceModel).trim());
+  // .env is line-based: a pasted key or model with an embedded newline would
+  // inject extra KEY=value lines into the file. Flatten line breaks to spaces.
+  const oneLine = (v) => String(v).replace(/[\r\n]+/g, ' ').trim();
+  if (patch.model !== undefined) updates.set('OPSMAP_MODEL', oneLine(patch.model));
+  if (patch.voiceModel !== undefined) updates.set('OPSMAP_VOICE_MODEL', oneLine(patch.voiceModel));
   for (const field of ['anthropicKey', 'openaiKey', 'openrouterKey', 'veniceKey']) {
-    if (patch[field] !== undefined) updates.set(KEY_FIELDS[field], String(patch[field]).trim());
+    if (patch[field] !== undefined) updates.set(KEY_FIELDS[field], oneLine(patch[field]));
   }
 
   const lines = await readEnvLines();

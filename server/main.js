@@ -218,7 +218,16 @@ async function projectIndex() {
 
 // in-memory move log, old id -> new id: an open tab asking for the old id
 // gets the map back with a movedTo pointer instead of an error
+// Cap the log: the oldest entry (first inserted key) drops once it exceeds
+// 1000 moves, so a very long-running server cannot grow the Map forever.
 const movedFrom = new Map();
+const MOVED_FROM_LIMIT = 1000;
+function recordMove(oldId, newId) {
+  if (!movedFrom.has(oldId) && movedFrom.size >= MOVED_FROM_LIMIT) {
+    movedFrom.delete(movedFrom.keys().next().value);
+  }
+  movedFrom.set(oldId, newId);
+}
 
 function followMoves(id) {
   const seen = new Set([id]);
@@ -385,6 +394,7 @@ async function restoreTrashItem(id) {
       }
     } else {
       await fs.mkdir(MAPS_DIR, { recursive: true });
+      watchMapsDir();
     }
     target = restoredMapPath(metadata);
   } else {
@@ -456,6 +466,15 @@ function watchProjectDir(slug) {
   const dir = path.join(PROJECTS_DIR, slug);
   const watcher = watchDir(dir, (filename) => scheduleMapChange(dir, filename));
   if (watcher) watchedProjects.set(slug, watcher);
+}
+
+// maps/ may not exist when the server boots (fresh workspace), so the startup
+// watchDir is a no-op. Track the watcher and re-attach the moment the folder
+// appears; without this, live reload stays dead for the whole session.
+let mapsWatcher = null;
+function watchMapsDir() {
+  if (mapsWatcher) return;
+  mapsWatcher = watchDir(MAPS_DIR, (filename) => scheduleMapChange(MAPS_DIR, filename));
 }
 
 function unwatchProjectDir(slug) {
@@ -580,7 +599,8 @@ async function handleApi(req, res, url) {
       return json(res, 200, [...await mapSummaries(MAPS_DIR), ...nested.flat()]);
     }
     if (req.method === 'POST') {
-      const body = JSON.parse(await readBody(req) || '{}');
+      let body;
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { return json(res, 400, { error: 'invalid JSON body' }); }
       const name = String(body.name || '').trim();
       const mode = body.mode == null ? 'process' : String(body.mode);
       const project = body.project == null ? null : String(body.project).trim();
@@ -596,7 +616,7 @@ async function handleApi(req, res, url) {
       const elements = mode === 'freeform' ? '\nelements: []\n' : '';
       const purpose = mode === 'freeform' ? 'map' : 'operations map';
       const source = `# ${name} - ${purpose}\nname: ${JSON.stringify(name)}\n${modeLine}description: ""\n${elements}\nnodes: []\n\nedges: []\n`;
-      if (project) await ensureProject(project); else await fs.mkdir(MAPS_DIR, { recursive: true });
+      if (project) await ensureProject(project); else { await fs.mkdir(MAPS_DIR, { recursive: true }); watchMapsDir(); }
       await fs.writeFile(mapPathFor(id), source, 'utf8');
       // fileHashes deliberately NOT updated here: the watcher must see the
       // change and broadcast it so other tabs pick the new map up
@@ -633,7 +653,7 @@ async function handleApi(req, res, url) {
       if (project) await ensureProject(project); else await fs.mkdir(MAPS_DIR, { recursive: true });
       // rename(2) keeps the move atomic — maps/ and projects/ share one volume
       await fs.rename(file, mapPathFor(newId));
-      movedFrom.set(id, newId);
+      recordMove(id, newId);
       return json(res, 200, { id: newId, project });
     }
 
@@ -668,7 +688,7 @@ async function handleApi(req, res, url) {
       const target = file ?? mapPathFor(id);
       const tmp = target + '.tmp-' + process.pid;
       if (id.includes('/')) await ensureProject(id.slice(0, id.indexOf('/')));
-      else await fs.mkdir(MAPS_DIR, { recursive: true });
+      else { await fs.mkdir(MAPS_DIR, { recursive: true }); watchMapsDir(); }
       await fs.writeFile(tmp, body.source, 'utf8');
       await fs.rename(tmp, target);
       // fileHashes deliberately NOT updated here: the watcher must detect the
@@ -754,6 +774,42 @@ async function handleApi(req, res, url) {
       return json(res, 200, await writeSettings(body ?? {}));
     } catch (e) {
       return json(res, 400, { error: e.message });
+    }
+  }
+
+  // ── Agent Trail: live coding-agent sessions ───────────────────────
+  if (parts[1] === 'agents' && parts.length === 2) {
+    if (req.method === 'GET') return json(res, 200, listAgents());
+    if (req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON body' }); }
+      try {
+        const agent = spawnAgent({
+          harness: body?.harness,
+          prompt: body?.prompt,
+          repoPath: body?.repoPath,
+          allowEdits: body?.allowEdits === true,
+        }, { onEvent: broadcast });
+        return json(res, 201, agent);
+      } catch (e) {
+        if (e instanceof AgentError) return json(res, e.status, { error: e.message });
+        throw e;
+      }
+    }
+  }
+  if (parts[1] === 'agents' && parts.length >= 3) {
+    const id = decodeURIComponent(parts[2]);
+    if (parts.length === 3 && req.method === 'GET') {
+      try { return json(res, 200, getAgent(id)); }
+      catch (e) { if (e instanceof AgentError) return json(res, e.status, { error: e.message }); throw e; }
+    }
+    if (parts.length === 4 && parts[3] === 'stop' && req.method === 'POST') {
+      try { return json(res, 200, await stopAgent(id)); }
+      catch (e) { if (e instanceof AgentError) return json(res, e.status, { error: e.message }); throw e; }
+    }
+    if (parts.length === 3 && req.method === 'DELETE') {
+      try { forgetAgent(id); return json(res, 200, { ok: true }); }
+      catch (e) { if (e instanceof AgentError) return json(res, e.status, { error: e.message }); throw e; }
     }
   }
 
@@ -937,7 +993,7 @@ async function start(port, attempt = 0) {
   });
   server.listen(port, BIND_HOST, async () => {
     await primeHashes();
-    watchDir(MAPS_DIR, (f) => scheduleMapChange(MAPS_DIR, f));
+    watchMapsDir();
     watchDir(TEMPLATES_DIR, () => broadcast({ type: 'templates-changed' }));
     for (const project of await projectIndex()) watchProjectDir(project.slug);
     const urlStr = `http://localhost:${port}/`;

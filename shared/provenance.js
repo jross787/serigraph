@@ -57,6 +57,9 @@ export function collectProvenance(doc) {
   };
 
   walkScope(doc.getIn(['nodes'], true), doc.getIn(['edges'], true), null);
+  // Freeform shared elements live outside any scope; their flags light the
+  // badge on every placement that uses the element (keyed by element id).
+  walkScope(doc.getIn(['elements'], true), null, null);
   return { nodes, edges };
 }
 
