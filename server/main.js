@@ -49,7 +49,12 @@ try {
   }
 } catch { /* no .env — fine */ }
 
-const MAPS_DIR = path.join(ROOT, 'maps');
+// OPSMAP_MAPS_DIR points the server at a different maps directory (used by
+// the concurrent-save test to fire real PUTs at a throwaway folder); when
+// unset, maps/ next to the server source is the source of truth.
+const MAPS_DIR = process.env.OPSMAP_MAPS_DIR
+  ? path.resolve(process.env.OPSMAP_MAPS_DIR)
+  : path.join(ROOT, 'maps');
 const TEMPLATES_DIR = path.join(ROOT, 'templates');
 const PROJECTS_DIR = path.join(ROOT, 'projects');
 const TRASH_DIR = path.join(ROOT, '.serigraph-trash');

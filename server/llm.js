@@ -45,6 +45,77 @@ export function killLlmChildren() {
   spawnedChildren.clear();
 }
 
+// Parse OPSMAP_LLM_CMD into an argv array with POSIX-shell-style quoting,
+// then spawn it directly (shell: false). Supporting only argv — never a
+// shell — keeps the prompt out of any shell's reach. Quoting handles one
+// real need: a single argument that contains a space (a model path, a
+// prompt template file). Anything that would need a shell (pipes, chains,
+// redirects, substitution, newlines) is rejected up front so the value can
+// never be re-interpreted by /bin/sh.
+//
+// Metacharacters that are refused anywhere in the raw value: | & ; < > ` $
+// and newlines. The backslash is an escape, not a metacharacter.
+const SHELL_METACHARS = ['|', '&', ';', '<', '>', '`', '$', '\n', '\r'];
+export function parseLlmCmd(raw) {
+  if (typeof raw !== 'string' || raw.length === 0) {
+    throw new Error('OPSMAP_LLM_CMD is empty.');
+  }
+  for (const ch of SHELL_METACHARS) {
+    const at = raw.indexOf(ch);
+    if (at !== -1) {
+      const display = ch === '\n' ? '\\n' : ch === '\r' ? '\\r' : ch;
+      throw new Error(
+        `OPSMAP_LLM_CMD must not contain the shell metacharacter "${display}" `
+        + `(at position ${at + 1}); the value is split into argv and spawned `
+        + `directly with no shell — pipes, chains, redirects, command `
+        + `substitution, and newlines are not allowed.`
+      );
+    }
+  }
+  const argv = [];
+  let buf = '';
+  let hasBuf = false;
+  let i = 0;
+  while (i < raw.length) {
+    const c = raw[i];
+    if (c === ' ' || c === '\t' || c === '\f' || c === '\v') {
+      if (hasBuf) { argv.push(buf); buf = ''; hasBuf = false; }
+      i += 1;
+    } else if (c === '\'') {              // single quote: literal until next '
+      hasBuf = true;
+      i += 1;
+      const start = i;
+      while (i < raw.length && raw[i] !== '\'') { buf += raw[i]; i += 1; }
+      if (i >= raw.length) throw new Error(`OPSMAP_LLM_CMD has an unterminated single quote (opened at position ${start}).`);
+      i += 1;
+    } else if (c === '"') {               // double quote: backslash escapes " \ ` $
+      hasBuf = true;
+      i += 1;
+      const start = i;
+      while (i < raw.length && raw[i] !== '"') {
+        if (raw[i] === '\\' && i + 1 < raw.length && '"\\`$'.includes(raw[i + 1])) {
+          buf += raw[i + 1]; i += 2;
+        } else { buf += raw[i]; i += 1; }
+      }
+      if (i >= raw.length) throw new Error(`OPSMAP_LLM_CMD has an unterminated double quote (opened at position ${start}).`);
+      i += 1;
+    } else if (c === '\\') {              // unquoted backslash: escape next char
+      hasBuf = true;
+      if (i + 1 < raw.length) { buf += raw[i + 1]; i += 2; } else { i += 1; }
+    } else {
+      hasBuf = true;
+      buf += c; i += 1;
+    }
+  }
+  if (hasBuf) argv.push(buf);
+  if (argv.length === 0) throw new Error('OPSMAP_LLM_CMD is empty.');
+  return argv;
+}
+
+// Parsed once at module load so a bad value stops the server before it serves
+// a single request. `null` when OPSMAP_LLM_CMD is unset (provider disabled).
+const CMD_ARGV = process.env.OPSMAP_LLM_CMD ? parseLlmCmd(process.env.OPSMAP_LLM_CMD) : null;
+
 let cliAvailable = null; // lazily probed, cached
 async function hasClaudeCli() {
   if (cliAvailable != null) return cliAvailable;
@@ -63,8 +134,7 @@ async function hasClaudeCli() {
 
 export async function resolveProvider() {
   if (process.env.OPSMAP_MOCK_LLM) return { kind: 'mock', model: 'mock' };
-  if (process.env.OPSMAP_LLM_CMD) return { kind: 'cmd', model: process.env.OPSMAP_LLM_CMD.split(/\s+/)[0] };
-  // an explicit choice from AI settings wins over the auto chain
+  if (process.env.OPSMAP_LLM_CMD) return { kind: 'cmd', model: CMD_ARGV[0] };
   const explicit = process.env.OPSMAP_LLM_PROVIDER;
   if (explicit === 'anthropic' && process.env.ANTHROPIC_API_KEY) return { kind: 'api', model: chatModel('api') };
   if (explicit === 'openrouter' && process.env.OPENROUTER_API_KEY) return { kind: 'openrouter', model: chatModel('openrouter') };
@@ -103,12 +173,12 @@ export async function callLLM({ system, prompt }) {
   return callCli({ system, prompt, model: provider.model });
 }
 
-// Generic local-model escape hatch: run a shell command, write the prompt to
-// its stdin, read the completion from stdout. e.g. OPSMAP_LLM_CMD="ollama run llama3.1"
+// Generic local-model escape hatch: spawn argv directly (no shell), write the
+// prompt to stdin, read the completion from stdout. e.g. OPSMAP_LLM_CMD="ollama run llama3.1".
 async function callCmd({ system, prompt }) {
   return new Promise((resolve, reject) => {
-    const child = trackChild(spawn(process.env.OPSMAP_LLM_CMD, {
-      shell: true,
+    const child = trackChild(spawn(CMD_ARGV[0], CMD_ARGV.slice(1), {
+      shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: process.env.TMPDIR || '/tmp',
     }));
