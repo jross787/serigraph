@@ -10,6 +10,7 @@ import { initWorkbenchSync } from './workbench-sync.js';
 import * as productWorkspace from './product-workspace.js';
 import { togglePresent, exitPresent } from './present.js';
 import { flowShortcut } from './flow.js';
+import { refresh as refreshAgents, initAgents } from './agents.js';
 
 // ── theme ────────────────────────────────────────────────────────────
 function initTheme() {
@@ -372,6 +373,7 @@ async function boot() {
   workbench.initWorkbench();
   initWorkbenchSync();
   productWorkspace.initProductWorkspace();
+  initAgents();
   wireCanvasEvents();
   wireKeyboard();
   wireToolbar();
@@ -404,16 +406,19 @@ async function boot() {
 
   ctrl.loadTemplates();
   api.subscribe(async (event) => {
-    if (event.type === 'maps-changed') ctrl.handleRemoteChange(event.ids ?? []);
-    if (event.type === 'templates-changed') ctrl.loadTemplates();
-    if (event.type === 'library-changed') {
-      const openId = state.mapId;
-      await Promise.all([ctrl.loadMapList(), ctrl.loadProjects(), ctrl.loadTrash()]);
-      if (openId && !state.maps.some((map) => map.id === openId)) {
-        ctrl.goHome();
-        ui.toast('The open map was moved to Trash in another tab.');
+    try {
+      if (event.type === 'maps-changed') await ctrl.handleRemoteChange(event.ids ?? []);
+      if (event.type === 'templates-changed') await ctrl.loadTemplates();
+      if (event.type === 'agents-changed') await refreshAgents();
+      if (event.type === 'library-changed') {
+        const openId = state.mapId;
+        await Promise.all([ctrl.loadMapList(), ctrl.loadProjects(), ctrl.loadTrash()]);
+        if (openId && !state.maps.some((map) => map.id === openId)) {
+          ctrl.goHome();
+          ui.toast('The open map was moved to Trash in another tab.');
+        }
       }
-    }
+    } catch { /* server briefly unavailable — the next event or reconnect recovers */ }
   });
 }
 

@@ -67,6 +67,27 @@ export const api = {
   async deleteTrash(id) {
     return jfetch(`/api/trash/${encodeURIComponent(id)}`, { method: 'DELETE' });
   },
+  async listAgents() {
+    if (state.standalone) return [];
+    return jfetch('/api/agents');
+  },
+  async spawnAgent(payload) {
+    return jfetch('/api/agents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  },
+  async stopAgent(id) {
+    return jfetch(`/api/agents/${encodeURIComponent(id)}/stop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+  },
+  async forgetAgent(id) {
+    return jfetch(`/api/agents/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
   async getMap(id) {
     if (state.standalone) return { id: window.OPSMAP_STANDALONE.id, source: window.OPSMAP_STANDALONE.source };
     return jfetch(`/api/maps/${encodeURIComponent(id)}`);

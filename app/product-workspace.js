@@ -13,8 +13,9 @@ import {
   productDocumentMarkdown,
 } from './product.js';
 import { renderFlow, stopFlow } from './flow.js';
+import { renderAgents } from './agents.js';
 
-const VIEWS = ['map', 'flow', 'brief', 'roadmap', 'audit'];
+const VIEWS = ['map', 'agents', 'flow', 'brief', 'roadmap', 'audit'];
 let filters = { status: 'all', priority: 'all', owner: 'all', query: '' };
 let auditSeverity = 'all';
 let dialogFieldId = 0;
@@ -413,15 +414,24 @@ export function setWorkspaceView(view) {
   if (view !== 'roadmap') roadmapSearchComposing = false;
   state.workspaceView = view;
   const panel = document.getElementById('product-workspace');
+  const agentStage = document.getElementById('agent-stage');
   const stage = document.getElementById('stage');
   const documentView = view !== 'map';
-  if (panel) panel.hidden = !documentView;
+  const agentView = view === 'agents';
+  if (panel) panel.hidden = !documentView || agentView;
+  if (agentStage) agentStage.hidden = !agentView;
   stage?.classList.toggle('product-view-active', documentView);
   document.body.dataset.workspaceView = view;
   for (const button of document.querySelectorAll('#workspace-switcher [data-view]')) {
     const active = button.dataset.view === view;
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
+  }
+  if (agentView) {
+    document.getElementById('detail')?.setAttribute('hidden', '');
+    renderAgents(agentStage);
+    bus.emit('view-changed');
+    return;
   }
   if (documentView) {
     document.getElementById('detail')?.setAttribute('hidden', '');

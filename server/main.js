@@ -16,6 +16,14 @@ import { importTranscript, ImportError } from './importer.js';
 import { chatEdit, ChatError } from './chat.js';
 import { readSettings, writeSettings } from './settings.js';
 import {
+  AgentError,
+  forgetAgent,
+  getAgent,
+  listAgents,
+  spawnAgent,
+  stopAgent,
+} from './agents.js';
+import {
   WorkbenchError,
   createWorkbenchShare,
   inspectWorkbench,
@@ -761,6 +769,42 @@ async function handleApi(req, res, url) {
     } catch (e) {
       console.error('[serigraph] transcribe failed:', e.message);
       return json(res, 502, { error: e.message });
+    }
+  }
+
+  // ── Agent Trail: live coding-agent sessions ───────────────────────
+  if (parts[1] === 'agents' && parts.length === 2) {
+    if (req.method === 'GET') return json(res, 200, listAgents());
+    if (req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON body' }); }
+      try {
+        const agent = spawnAgent({
+          harness: body?.harness,
+          prompt: body?.prompt,
+          repoPath: body?.repoPath,
+          allowEdits: body?.allowEdits === true,
+        }, { onEvent: broadcast });
+        return json(res, 201, agent);
+      } catch (e) {
+        if (e instanceof AgentError) return json(res, e.status, { error: e.message });
+        throw e;
+      }
+    }
+  }
+  if (parts[1] === 'agents' && parts.length >= 3) {
+    const id = decodeURIComponent(parts[2]);
+    if (parts.length === 3 && req.method === 'GET') {
+      try { return json(res, 200, getAgent(id)); }
+      catch (e) { if (e instanceof AgentError) return json(res, e.status, { error: e.message }); throw e; }
+    }
+    if (parts.length === 3 && parts[2] === 'stop' && req.method === 'POST') {
+      try { return json(res, 200, await stopAgent(id)); }
+      catch (e) { if (e instanceof AgentError) return json(res, e.status, { error: e.message }); throw e; }
+    }
+    if (parts.length === 3 && req.method === 'DELETE') {
+      try { forgetAgent(id); return json(res, 200, { ok: true }); }
+      catch (e) { if (e instanceof AgentError) return json(res, e.status, { error: e.message }); throw e; }
     }
   }
 
