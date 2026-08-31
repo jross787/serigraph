@@ -16,10 +16,37 @@ import { renderFlow, stopFlow } from './flow.js';
 import { renderAgents } from './agents.js';
 
 const VIEWS = ['map', 'agents', 'flow', 'brief', 'roadmap', 'audit'];
-let filters = { status: 'all', priority: 'all', owner: 'all', query: '' };
+const FILTER_DEFAULTS = { status: 'all', priority: 'all', owner: 'all', query: '' };
+let filters = { ...FILTER_DEFAULTS };
 let auditSeverity = 'all';
 let dialogFieldId = 0;
 let roadmapSearchComposing = false;
+
+function filtersStorageKey() {
+  return `opsmap.filters.${state.mapId}`;
+}
+
+function loadFilters() {
+  filters = { ...FILTER_DEFAULTS };
+  auditSeverity = 'all';
+  if (!state.mapId) return;
+  try {
+    const stored = JSON.parse(localStorage.getItem(filtersStorageKey()) || 'null');
+    if (stored && typeof stored === 'object') {
+      for (const key of Object.keys(FILTER_DEFAULTS)) {
+        if (typeof stored[key] === 'string') filters[key] = stored[key];
+      }
+      if (typeof stored.auditSeverity === 'string') auditSeverity = stored.auditSeverity;
+    }
+  } catch { /* keep the defaults */ }
+}
+
+function saveFilters() {
+  if (!state.mapId) return;
+  try {
+    localStorage.setItem(filtersStorageKey(), JSON.stringify({ ...filters, auditSeverity }));
+  } catch { /* browser storage is optional */ }
+}
 
 function h(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -289,14 +316,17 @@ function renderRoadmap(panel) {
   const filterRow = h('div', { class: 'roadmap-toolbar' },
     selectControl('Status', 'status', filters.status, roadmap.statuses, (value) => {
       filters.status = value;
+      saveFilters();
       render({ preserveScroll: true, restoreFocus: focusRequest('[data-roadmap-filter="status"]') });
     }),
     selectControl('Priority', 'priority', filters.priority, roadmap.priorities, (value) => {
       filters.priority = value;
+      saveFilters();
       render({ preserveScroll: true, restoreFocus: focusRequest('[data-roadmap-filter="priority"]') });
     }),
     selectControl('Owner', 'owner', filters.owner, roadmap.owners, (value) => {
       filters.owner = value;
+      saveFilters();
       render({ preserveScroll: true, restoreFocus: focusRequest('[data-roadmap-filter="owner"]') });
     }),
     h('label', { class: 'roadmap-filter roadmap-search' }, h('span', {}, 'Find'), h('input', {
@@ -306,16 +336,19 @@ function renderRoadmap(panel) {
       onCompositionEnd: (event) => {
         roadmapSearchComposing = false;
         filters.query = event.currentTarget.value;
+        saveFilters();
         render({ preserveScroll: true, restoreFocus: focusRequest('.roadmap-search input', event.currentTarget, true) });
       },
       onInput: (event) => {
         filters.query = event.currentTarget.value;
         if (event.isComposing || roadmapSearchComposing) return;
+        saveFilters();
         render({ preserveScroll: true, restoreFocus: focusRequest('.roadmap-search input', event.currentTarget, true) });
       },
     })),
     h('button', { class: 'd-btn roadmap-reset', 'data-roadmap-reset': '', onClick: () => {
-      filters = { status: 'all', priority: 'all', owner: 'all', query: '' };
+      filters = { ...FILTER_DEFAULTS };
+      saveFilters();
       render({ preserveScroll: true, restoreFocus: focusRequest('[data-roadmap-reset]') });
     } }, 'Reset'));
 
@@ -351,6 +384,7 @@ function renderAudit(panel) {
     'data-audit-severity': severity,
     onClick: () => {
       auditSeverity = severity;
+      saveFilters();
       render({ preserveScroll: true, restoreFocus: focusRequest(`[data-audit-severity="${severity}"]`) });
     },
   }, h('span', {}, labelize(severity)), h('strong', {}, severity === 'all' ? audit.issues.length : severityCount(severity)))));
@@ -526,8 +560,7 @@ export function initProductWorkspace() {
     button.addEventListener('click', () => setWorkspaceView(button.dataset.view));
   }
   bus.on('map-opened', () => {
-    filters = { status: 'all', priority: 'all', owner: 'all', query: '' };
-    auditSeverity = 'all';
+    loadFilters();
     if (state.workspaceView !== 'map') render();
   });
   bus.on('view-changed', () => { if (state.workspaceView !== 'map') render(); });

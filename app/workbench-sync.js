@@ -71,6 +71,8 @@ function setConnection(url, info, source, { conflict = false, remoteSource = nul
 }
 
 function updateBaseline(connection, source, version) {
+  // A disconnect or map switch during a push/pull must not resurrect the link.
+  if (state.workbench !== connection) return;
   connection.baseSource = source;
   connection.lastHash = sourceHash(source);
   connection.version = version ?? connection.version;
@@ -280,6 +282,14 @@ export function disconnectWorkbench(message = 'Workbench disconnected') {
   state.workbench = null;
   bus.emit('workbench-changed', null);
   if (message) bus.emit('toast', message);
+}
+
+// Conflict resolution 'disconnect': clears every locally stored piece of the
+// connection (share key, document metadata, sync state) exactly where the
+// connect flow persisted them. It makes no network call, so neither copy is
+// written and the remote document is never touched.
+export async function disconnectWorkbenchLink() {
+  disconnectWorkbench('Disconnected from Workbench. Your local map is unchanged.');
 }
 
 async function resumeForOpenMap() {

@@ -59,16 +59,29 @@ function setSaveStatus(status, error = '') {
   bus.emit('save-status', status, error);
 }
 
+// True while a save conflict waits on the user's choice. Remote disk echoes
+// must not replace the local buffer the user is about to keep or discard.
+let saveConflictPending = false;
+
 async function saveMapSource(source) {
   setSaveStatus('saving');
+  let result;
   try {
-    const result = await api.saveMap(state.mapId, source);
-    setSaveStatus('saved');
-    return result;
+    result = await api.saveMap(state.mapId, source);
   } catch (error) {
+    if (error.status === 409) {
+      // Not written: the file changed on disk and the save-conflict dialog
+      // (Keep my version / Load the saved file) is deciding. Keep the local
+      // buffer exactly as it is — never roll back into a silent overwrite.
+      saveConflictPending = true;
+      setSaveStatus('error', 'Map changed on disk');
+      return { conflict: true };
+    }
     setSaveStatus('error', error.message);
     throw error;
   }
+  setSaveStatus('saved');
+  return result;
 }
 
 function cleanHistoryLabel(label) {
@@ -140,6 +153,7 @@ export async function openMap(mapId, { nodeId = null, inId = null, replace = fal
   const { source } = payload;
   if (mapChanged) canvas.resetScopeCameras();
   state.mapId = mapId;
+  saveConflictPending = false;
   state.undoStack = [];
   state.redoStack = [];
   adoptSource(source);
@@ -186,6 +200,7 @@ async function followMoved(newId, { nodeId = null, inId = null } = {}) {
 // Leave the current map and show the projects home.
 export function goHome({ push = true } = {}) {
   state.mapId = null;
+  saveConflictPending = false;
   state.source = '';
   state.doc = null;
   state.model = null;
@@ -253,12 +268,27 @@ function readRevisions() {
   } catch { return []; }
 }
 
+function isQuotaError(e) {
+  return e?.name === 'QuotaExceededError' || e?.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e?.code === 22;
+}
+
 function recordRevision(source, label = 'Edited map') {
   const key = revisionKey();
   if (!key) return;
   const revisions = readRevisions();
   revisions.unshift({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, source, label, savedAt: new Date().toISOString() });
-  try { localStorage.setItem(key, JSON.stringify(revisions.slice(0, 30))); } catch { /* storage is optional */ }
+  // Storage can be full: evict this map's oldest revisions until the write
+  // fits. Storage is optional — recording must never throw.
+  let kept = revisions.slice(0, 30);
+  while (true) {
+    try {
+      localStorage.setItem(key, JSON.stringify(kept));
+      return;
+    } catch (e) {
+      if (!isQuotaError(e) || !kept.length) return;
+      kept = kept.slice(0, -1);
+    }
+  }
 }
 
 export function listRevisions() {
@@ -411,6 +441,11 @@ function refreshView() {
     state.scopeId = nearestSurvivingScope(state.scopeId);
   }
   if (state.selectedId && !state.model.byId.has(state.selectedId)) state.selectedId = null;
+  if (state.selectionIds.size) {
+    for (const id of state.selectionIds) {
+      if (!state.model.byId.has(id)) state.selectionIds.delete(id);
+    }
+  }
   if (state.selectedEdge) state.selectedEdge = null;
   canvas.showScope(state.model, state.scopeId);
   canvas.paintSelection();
@@ -431,6 +466,9 @@ function nearestSurvivingScope(oldScopeId) {
 export async function handleRemoteChange(ids) {
   await loadMapList();
   if (!state.mapId) return;
+  // A save conflict is awaiting the user's choice: the local buffer is not
+  // on disk, and adopting the disk version now would silently discard it.
+  if (saveConflictPending) return;
   if (!ids.includes(state.mapId)) {
     // The open map may have been moved into/out of a project by another
     // process: its old id disappears from the list while the file survives
@@ -456,6 +494,57 @@ export async function handleRemoteChange(ids) {
   setSaveStatus(state.model ? 'saved' : 'error', state.model ? '' : 'Map file has errors');
   refreshView();
   bus.emit('toast', state.model ? 'Map updated from file' : 'Map file has errors — see details', !state.model);
+}
+
+// ── save conflicts ───────────────────────────────────────────────────
+// The file changed on disk while we held an unsaved buffer: api.js emits
+// save-conflict, and the dialog's two choices land here.
+
+// Keep my version: pull a fresh etag, then resave the current buffer.
+export async function keepMyVersion() {
+  if (!state.mapId || state.standalone) return false;
+  try {
+    await api.getMap(state.mapId); // refreshes the stored If-Match etag
+  } catch (e) {
+    saveConflictPending = false;
+    bus.emit('toast', 'Could not reach the file: ' + e.message, true);
+    return false;
+  }
+  let result;
+  try {
+    result = await saveMapSource(state.source);
+  } catch (e) {
+    saveConflictPending = false;
+    bus.emit('toast', 'Save failed: ' + e.message, true);
+    return false;
+  }
+  // The disk moved again in the meantime — a fresh conflict dialog is up
+  // and saveMapSource has kept the pending flag set.
+  if (result?.conflict) return false;
+  saveConflictPending = false;
+  bus.emit('toast', 'Kept your version');
+  return true;
+}
+
+// Load the saved file: pull the disk version and replace local source/model.
+export async function loadSavedFile() {
+  if (!state.mapId || state.standalone) return false;
+  let payload;
+  try {
+    payload = await api.getMap(state.mapId);
+  } catch (e) {
+    bus.emit('toast', 'Could not load the saved file: ' + e.message, true);
+    return false;
+  }
+  saveConflictPending = false;
+  lastAncestry = state.scopeId && state.model ? ancestryOf(state.model, state.scopeId) : [];
+  adoptSource(payload.source);
+  state.undoStack = [];
+  state.redoStack = [];
+  setSaveStatus(state.model ? 'saved' : 'error', state.model ? '' : 'Map file has errors');
+  refreshView();
+  bus.emit('toast', 'Loaded the saved file');
+  return true;
 }
 
 // ── navigation ───────────────────────────────────────────────────────
@@ -542,6 +631,7 @@ export function selectEdge(index) {
 export function clearSelection() {
   state.selectedId = null;
   state.selectedEdge = null;
+  state.selectionIds.clear();
   canvas.paintSelection();
   writeHash();
   bus.emit('selection-changed');

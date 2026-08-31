@@ -53,7 +53,7 @@ Open a map, choose **More actions → Share & sync**, and paste a Workbench docu
 
 Serigraph adds one managed section to the Workbench document. That section contains the full YAML and a live map preview. Other document content stays in place. If the document already contains a different map, Serigraph asks which copy to keep.
 
-While the map is open, edits move in both directions. If the local and Workbench copies change before they can sync, Serigraph stops and asks which copy to keep. Removing the managed section from Workbench disconnects an unchanged local map instead of silently adding it again.
+While the map is open, edits move in both directions. If the local and Workbench copies change before they can sync, Serigraph stops and offers three choices: keep the local copy, keep the Workbench copy, or disconnect. Disconnecting keeps the local map and forgets the link in this browser without touching the Workbench document. Removing the managed section from Workbench disconnects an unchanged local map instead of silently adding it again.
 
 An edit connection can create view, comment, suggest, or edit links for people and agents. Workbench enforces those permissions. Serigraph keeps the linked share key in this browser only; it never writes the key into YAML, the Workbench document, or a standalone export. See [Data handling](docs/DATA-HANDLING.md) before sharing a client map.
 
@@ -157,11 +157,15 @@ The complete schema, enums, validation rules, and examples are in [docs/FORMAT.m
 | **Double-click** a node with a badge (or press ⏎) | Zoom into its sub-map — any depth, breadcrumbs keep you oriented |
 | **Pan toward a connected group** | Keep exploring on the same canvas. Click its frame or any item inside it to make that group active. The minimap spans the full connected view |
 | **Esc** / ⌫ | Zoom back out one level |
+| **Zoom percentage** | Open preset sizes: Fit, 50%, 75%, 100%, 150%, or 200% |
+| **-** beside the minimap | Hide the minimap; **+** shows it again |
+| **Reopen a map** | Return to the camera position and zoom you left |
+| **Filter Roadmap or Audit** | The filters you set are remembered for that map |
 | **⌘K** | Search every node at every level, jump straight to it |
 | **Click** a Process node | Inspect the step, product facts, links, related nodes, and its sub-map |
 | **Click** a Freeform card | Inspect its shared definition and local group note. Every placement of that element is highlighted |
 | **`#id ⧉`** in the inspector | Copy a deep link and open that exact node |
-| **✨ Import** | Paste a meeting or discovery transcript and get a reviewable Process map. Inferred items stay marked until reviewed. This needs `ANTHROPIC_API_KEY`, a logged-in `claude` CLI, or `OPSMAP_LLM_CMD` |
+| **✨ Import** | Paste a meeting or discovery transcript and get a reviewable Process map. Inferred items stay marked until reviewed. This needs `ANTHROPIC_API_KEY`, a logged-in `claude` CLI, or `OPSMAP_LLM_CMD`. If none is configured, the dialog lists these three setup paths instead of failing without explanation. |
 | **$ Economics** | Add monthly volume, human time and rate, and agent cost to Process steps. Unknown values stay out of totals |
 | **Add step** | Add a new Process node |
 | **Add item** | In a Freeform group, choose an existing shared element or create and place a new one |
@@ -169,10 +173,16 @@ The complete schema, enums, validation rules, and examples are in [docs/FORMAT.m
 | **Drag from the palette** | Drop a new typed item at that position |
 | **Drag a card** | Pin it at that position. In Freeform, dragging into another group moves only that placement |
 | **Drag from a card's port** | Draw an edge to another card in the same scope |
+| **Shift+click** a node | Add or remove it in the selection |
+| **Shift+drag** | Draw a box to select every node inside |
+| **⌘C / ⌘V** | Copy and paste the selected nodes |
+| **F2** | Rename the selected node |
+| **Align** | Align or evenly space the selected nodes |
 | **Remove from group** | Remove one Freeform placement while keeping the shared element and its other placements |
 | **Delete shared element** | Remove the definition, all placements, and all connections after confirmation |
 | **Templates** | Insert a reusable block that matches the current map mode |
 | **Shift+P** | Enter presentation mode and walk through a Process flow |
+| **Export** | Download a PNG image, an SVG file, the Serigraph YAML file, or a standalone HTML app |
 | **Share & sync** | Link the map to a Workbench document, create access links, copy a local deep link, or download a read-only standalone application |
 | **?** | Open the shortcut reference |
 

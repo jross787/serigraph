@@ -6,10 +6,14 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { request } from 'node:http';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseMap } from '../shared/model.js';
+
+// etags are "<size>-<mtimeMs>" — mtimeMs keeps sub-millisecond decimals
+const ETAG_RE = /^\d+-\d+(\.\d+)?$/;
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -17,10 +21,11 @@ let proc;
 let port;
 let work;
 
-// raw client so we can send arbitrary Host / Content-Type headers
-function raw({ method = 'GET', p = '/', headers = {}, body = null }) {
+// raw client so we can send arbitrary Host / Content-Type headers;
+// onPort targets a server other than the shared one (see the import test)
+function raw({ method = 'GET', p = '/', headers = {}, body = null, onPort }) {
   return new Promise((resolve, reject) => {
-    const req = request({ host: '127.0.0.1', port, path: p, method, headers }, (res) => {
+    const req = request({ host: '127.0.0.1', port: onPort ?? port, path: p, method, headers }, (res) => {
       let data = '';
       res.on('data', (c) => { data += c; });
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: data }));
@@ -31,35 +36,43 @@ function raw({ method = 'GET', p = '/', headers = {}, body = null }) {
   });
 }
 
-const api = (method, p, payload) => raw({
+const api = (method, p, payload, headers = {}) => raw({
   method,
   p,
-  headers: { 'Content-Type': 'application/json' },
+  headers: { 'Content-Type': 'application/json', ...headers },
   body: payload == null ? null : JSON.stringify(payload),
 });
+
+// boot a server with env overrides; resolves with the child process and the
+// port it actually bound (parsed from the startup banner)
+function boot(env) {
+  const child = spawn(process.execPath, ['server/main.js', '--no-open'], {
+    cwd: ROOT,
+    env: { ...process.env, ...env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const childPort = new Promise((resolve, reject) => {
+    let buf = '';
+    const timer = setTimeout(() => reject(new Error('server did not start:\n' + buf)), 10000);
+    child.stdout.on('data', (d) => {
+      buf += d;
+      const m = buf.match(/http:\/\/localhost:(\d+)\//);
+      if (m) { clearTimeout(timer); resolve(Number(m[1])); }
+    });
+    child.stderr.on('data', (d) => { buf += d; });
+    child.on('exit', (code) => { clearTimeout(timer); reject(new Error(`server exited ${code}:\n${buf}`)); });
+  });
+  return { child, childPort };
+}
 
 before(async () => {
   work = mkdtempSync(path.join(os.tmpdir(), 'serigraph-projects-'));
   // the standalone export inlines the app modules from ROOT — link them in
   // so export routes work against the temp workspace
   for (const dir of ['app', 'vendor', 'shared']) symlinkSync(path.join(ROOT, dir), path.join(work, dir));
-  const tryPort = 4960 + Math.floor(Math.random() * 100);
-  proc = spawn('node', ['server/main.js', '--no-open'], {
-    cwd: ROOT,
-    env: { ...process.env, PORT: String(tryPort), OPSMAP_ROOT: work },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  port = await new Promise((resolve, reject) => {
-    let buf = '';
-    const timer = setTimeout(() => reject(new Error('server did not start:\n' + buf)), 10000);
-    proc.stdout.on('data', (d) => {
-      buf += d;
-      const m = buf.match(/http:\/\/localhost:(\d+)\//);
-      if (m) { clearTimeout(timer); resolve(Number(m[1])); }
-    });
-    proc.stderr.on('data', (d) => { buf += d; });
-    proc.on('exit', (code) => { clearTimeout(timer); reject(new Error(`server exited ${code}:\n${buf}`)); });
-  });
+  const started = boot({ PORT: String(4960 + Math.floor(Math.random() * 100)), OPSMAP_ROOT: work });
+  proc = started.child;
+  port = await started.childPort;
 });
 
 after(() => {
@@ -97,7 +110,11 @@ test('POST /api/projects creates the folder and index; duplicate is 409', async 
 test('POST /api/maps creates a map inside a project', async () => {
   const res = await api('POST', '/api/maps', { name: 'Order Flow', project: 'atlas-logistics' });
   assert.equal(res.status, 201);
-  assert.deepEqual(JSON.parse(res.body), { id: 'atlas-logistics/order-flow', project: 'atlas-logistics' });
+  const created = JSON.parse(res.body);
+  assert.equal(created.id, 'atlas-logistics/order-flow');
+  assert.equal(created.project, 'atlas-logistics');
+  assert.match(created.etag, ETAG_RE, '201 body carries the new file etag');
+  assert.equal(res.headers.etag, created.etag, 'ETag header matches the body field');
   assert.ok(existsSync(path.join(work, 'projects', 'atlas-logistics', 'order-flow.yaml')));
 
   const again = await api('POST', '/api/maps', { name: 'Order Flow', project: 'atlas-logistics' });
@@ -107,14 +124,20 @@ test('POST /api/maps creates a map inside a project', async () => {
 test('POST /api/maps with a new project auto-creates folder and index', async () => {
   const res = await api('POST', '/api/maps', { name: 'Solo Map', project: 'newproj' });
   assert.equal(res.status, 201);
-  assert.deepEqual(JSON.parse(res.body), { id: 'newproj/solo-map', project: 'newproj' });
+  const created = JSON.parse(res.body);
+  assert.equal(created.id, 'newproj/solo-map');
+  assert.equal(created.project, 'newproj');
+  assert.match(created.etag, ETAG_RE, '201 body carries the new file etag');
   assert.ok(existsSync(path.join(work, 'projects', 'newproj', 'projects.yaml')), 'minimal index written');
 });
 
 test('POST /api/maps without a project stays at the root', async () => {
   const res = await api('POST', '/api/maps', { name: 'Root Map' });
   assert.equal(res.status, 201);
-  assert.deepEqual(JSON.parse(res.body), { id: 'root-map', project: null });
+  const created = JSON.parse(res.body);
+  assert.equal(created.id, 'root-map');
+  assert.equal(created.project, null);
+  assert.match(created.etag, ETAG_RE, '201 body carries the new file etag');
   assert.ok(existsSync(path.join(work, 'maps', 'root-map.yaml')));
 });
 
@@ -153,18 +176,23 @@ test('GET /api/projects returns slug, name, description, order, tags, mapCount',
 test('GET and PUT by path-based id', async () => {
   const got = await raw({ p: '/api/maps/atlas-logistics/order-flow' });
   assert.equal(got.status, 200);
-  const { id, source } = JSON.parse(got.body);
+  const { id, source, etag } = JSON.parse(got.body);
   assert.equal(id, 'atlas-logistics/order-flow');
   assert.match(source, /Order Flow/);
+  assert.equal(got.headers.etag, etag, 'ETag header matches the body field');
 
+  // saving an existing file requires the etag the edit was based on
   const updated = 'name: Renamed Flow\nnodes:\n  - id: a\n    type: process\n    label: A\nedges: []\n';
-  const put = await api('PUT', '/api/maps/atlas-logistics/order-flow', { source: updated });
+  const put = await api('PUT', '/api/maps/atlas-logistics/order-flow', { source: updated }, { 'If-Match': etag });
   assert.equal(put.status, 200);
+  const fresh = JSON.parse(put.body).etag;
+  assert.match(fresh, ETAG_RE, 'a successful save returns the new etag');
   const back = await raw({ p: '/api/maps/atlas-logistics/order-flow' });
   assert.equal(JSON.parse(back.body).source, updated);
 
-  const invalid = await api('PUT', '/api/maps/atlas-logistics/order-flow', { source: 'name: X\nnodes:\n  - id: a\n    type: wizard\n    label: A\n' });
+  const invalid = await api('PUT', '/api/maps/atlas-logistics/order-flow', { source: 'name: X\nnodes:\n  - id: a\n    type: wizard\n    label: A\n' }, { 'If-Match': fresh });
   assert.equal(invalid.status, 422);
+  assert.ok(JSON.parse(invalid.body).error, '422 is a JSON error body');
   const still = await raw({ p: '/api/maps/atlas-logistics/order-flow' });
   assert.equal(JSON.parse(still.body).source, updated, '422 leaves the file untouched');
 });
@@ -190,6 +218,7 @@ test('move project -> root: file renames, old id answers with movedTo', async ()
   assert.equal(body.id, 'order-flow');
   assert.equal(body.movedTo, 'order-flow');
   assert.match(body.source, /Renamed Flow/);
+  assert.equal(oldId.headers.etag, body.etag, 'the movedTo branch carries the new file etag too');
 
   const newId = await raw({ p: '/api/maps/order-flow' });
   assert.equal(newId.status, 200);
@@ -303,10 +332,10 @@ test('project export 404s for unknown or empty projects, 400 for bad slugs', asy
   assert.equal(made.status, 201);
   const empty = await raw({ p: '/export/project/empty-proj.html' });
   assert.equal(empty.status, 404);
-  assert.match(empty.body, /no maps to export/);
+  assert.match(JSON.parse(empty.body).error, /no maps to export/);
   const unknown = await raw({ p: '/export/project/nope.html' });
   assert.equal(unknown.status, 404);
-  assert.match(unknown.body, /no project "nope"/);
+  assert.match(JSON.parse(unknown.body).error, /no project "nope"/);
   const bad = await raw({ p: '/export/project/bad%20slug.html' });
   assert.equal(bad.status, 400);
 });
@@ -415,4 +444,118 @@ test('project trash moves, restores, and permanently deletes the whole folder', 
   assert.equal(deleted.status, 200);
   assert.ok(!existsSync(projectPath));
   assert.ok(!JSON.parse((await raw({ p: '/api/trash' })).body).some((item) => item.id === removedAgain.id));
+});
+
+// --- etag / If-Match save-conflict contract ---------------------------------
+
+test('GET etag: header matches the body field, on the movedTo branch too', async () => {
+  const made = await api('POST', '/api/maps', { name: 'Etag Probe' });
+  assert.equal(made.status, 201);
+
+  const got = await raw({ p: '/api/maps/etag-probe' });
+  assert.equal(got.status, 200);
+  const body = JSON.parse(got.body);
+  assert.match(body.etag, ETAG_RE);
+  assert.equal(got.headers.etag, body.etag);
+
+  const project = await api('POST', '/api/projects', { name: 'Etag Moves' });
+  assert.equal(project.status, 201);
+  const moved = await api('POST', '/api/maps/etag-probe/move', { project: 'etag-moves' });
+  assert.equal(moved.status, 200);
+
+  const old = await raw({ p: '/api/maps/etag-probe' });
+  assert.equal(old.status, 200, 'old id still answers after the move');
+  const oldBody = JSON.parse(old.body);
+  assert.equal(oldBody.movedTo, 'etag-moves/etag-probe');
+  assert.match(oldBody.etag, ETAG_RE);
+  assert.equal(old.headers.etag, oldBody.etag, 'movedTo answers set header + body etag');
+});
+
+test('PUT honors If-Match: missing is 428, fresh saves, stale is 409', async () => {
+  const made = await api('POST', '/api/maps', { name: 'Etag Save' });
+  const { etag: first } = JSON.parse(made.body);
+
+  // an existing file refuses a save that proves nothing about what it based on
+  const source = 'name: Etag Save\nnodes:\n  - id: a\n    type: process\n    label: A\nedges: []\n';
+  const missing = await api('PUT', '/api/maps/etag-save', { source });
+  assert.equal(missing.status, 428);
+  assert.deepEqual(JSON.parse(missing.body), { error: 'If-Match required', code: 'precondition' });
+
+  // the correct etag saves and returns the etag of the file just written
+  const ok = await api('PUT', '/api/maps/etag-save', { source }, { 'If-Match': first });
+  assert.equal(ok.status, 200);
+  const saved = JSON.parse(ok.body);
+  assert.equal(saved.ok, true);
+  assert.match(saved.etag, ETAG_RE);
+  assert.notEqual(saved.etag, first, 'a successful save returns a fresh etag');
+
+  // the pre-save etag is now stale: conflict, and the disk keeps the good write
+  const stale = await api('PUT', '/api/maps/etag-save', { source }, { 'If-Match': first });
+  assert.equal(stale.status, 409);
+  assert.deepEqual(JSON.parse(stale.body), { error: 'Map changed on disk', code: 'conflict' });
+  assert.equal(readFileSync(path.join(work, 'maps', 'etag-save.yaml'), 'utf8'), source);
+});
+
+test('PUT to a new id creates the file without If-Match', async () => {
+  const source = 'name: Created By Put\nnodes: []\nedges: []\n';
+  const put = await api('PUT', '/api/maps/created-by-put', { source });
+  assert.equal(put.status, 200);
+  const body = JSON.parse(put.body);
+  assert.equal(body.ok, true);
+  assert.match(body.etag, ETAG_RE);
+  assert.equal(readFileSync(path.join(work, 'maps', 'created-by-put.yaml'), 'utf8'), source);
+});
+
+test('POST creates the map atomically: the file exists and parses as a map', async () => {
+  const res = await api('POST', '/api/maps', { name: 'Atomic Create' });
+  assert.equal(res.status, 201);
+  const file = path.join(work, 'maps', 'atomic-create.yaml');
+  assert.ok(existsSync(file), 'map file written');
+  const { model, errors } = parseMap(readFileSync(file, 'utf8'));
+  assert.deepEqual(errors, [], 'the written file parses cleanly');
+  assert.equal(model.name, 'Atomic Create');
+  const leftovers = readdirSync(path.join(work, 'maps')).filter((f) => f.includes('.tmp-'));
+  assert.deepEqual(leftovers, [], 'the atomic write leaves no .tmp- files behind');
+});
+
+test('POST /api/import with no provider configured is a 400 with code and hint', async () => {
+  const cleanWork = mkdtempSync(path.join(os.tmpdir(), 'serigraph-noprovider-'));
+  // every provider path closed: keys and overrides blanked, and a PATH where
+  // the `claude` CLI probe finds nothing
+  const { child, childPort } = boot({
+    PORT: String(5060 + Math.floor(Math.random() * 100)),
+    OPSMAP_ROOT: cleanWork,
+    PATH: '/usr/bin:/bin',
+    ANTHROPIC_API_KEY: '',
+    OPENROUTER_API_KEY: '',
+    OPENAI_API_KEY: '',
+    VENICE_API_KEY: '',
+    OPSMAP_LLM_CMD: '',
+    OPSMAP_MOCK_LLM: '',
+    OPSMAP_LLM_PROVIDER: '',
+  });
+  try {
+    const cleanPort = await childPort;
+    const res = await raw({
+      method: 'POST',
+      p: '/api/import',
+      onPort: cleanPort,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transcript: 'When a customer checks out, the payment service clears the card first. '
+          + 'Once payment clears, the warehouse team picks the order, packs it, and hands it to the carrier. '
+          + 'If the card is declined, support reaches out to the customer before anything ships.',
+      }),
+    });
+    assert.equal(res.status, 400);
+    const body = JSON.parse(res.body);
+    assert.equal(body.code, 'llm-no-provider');
+    assert.ok(body.error, 'carries an error message');
+    assert.match(body.hint, /ANTHROPIC_API_KEY/);
+    assert.match(body.hint, /claude CLI/);
+    assert.match(body.hint, /OPSMAP_LLM_CMD/);
+  } finally {
+    child.kill();
+    rmSync(cleanWork, { recursive: true, force: true });
+  }
 });
