@@ -237,7 +237,7 @@ function renderFeed() {
 }
 
 // ── launch dialog ───────────────────────────────────────────────────
-export function launchDialog() {
+function launchDialog() {
   if (state.standalone) return;
   const root = document.getElementById('dialog-root');
   const backdrop = h('div', { class: 'dialog-backdrop' });
@@ -251,7 +251,7 @@ export function launchDialog() {
   const prompt = h('textarea', {
     class: 'f-textarea', placeholder: 'What should this agent do? e.g. “Write unit tests for server/export.js”',
   });
-  const repo = h('input', { class: 'f-input', value: window.SERIGRAPH_REPO_ROOT ?? '', placeholder: '/path/to/repo the agent works in' });
+  const repo = h('input', { class: 'f-input', value: '', placeholder: '/path/to/repo the agent works in' });
   const allowEdits = h('input', { type: 'checkbox' });
   const err = h('p', { class: 'dialog-error', hidden: '' });
 
@@ -301,7 +301,10 @@ export async function refresh() {
 
 export function initAgents() {
   if (state.standalone) return;
-  window.SERIGRAPH_REPO_ROOT = '/';
+  // No default repo path: the launch dialog starts empty and the server
+  // uses its own working directory when the field is left blank. (A '/'
+  // prefill was a guaranteed 400 — the server rejects paths under two
+  // characters.)
   refresh();
   bus.on('view-changed', () => {
     if (document.body.dataset.workspaceView === 'agents') refresh();

@@ -23,9 +23,7 @@
   --shadow-node: drop-shadow(0 1px 1.5px rgba(18, 28, 45, .07)) drop-shadow(0 5px 12px rgba(18, 28, 45, .08));
   --shadow-node-hover: drop-shadow(0 1px 2px rgba(18, 28, 45, .10)) drop-shadow(0 9px 22px rgba(18, 28, 45, .13));
   --chrome-blur: saturate(1.1) blur(10px);
-  --radius-sm: 7px;
   --radius-md: 10px;
-  --radius-lg: 14px;
   --sel: #3d5bf5;
 
   --c-process: #3457d6;   --c-process-bg: #e9eefc;
@@ -1127,7 +1125,6 @@ body.presenting #detail, body.presenting #templates-panel { display: none; }
 body { background: var(--bg); }
 #app { position: relative; isolation: isolate; }
 #main-row { position: absolute; inset: 0; }
-#stage { background: var(--bg); }
 
 #topbar {
   position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
@@ -1161,7 +1158,6 @@ body { background: var(--bg); }
 }
 .utility-popover .menu-item { color: var(--ink); }
 
-#canvas { cursor: default; }
 #canvas:active { cursor: grabbing; }
 .grid-dots { opacity: .34; }
 .node, .edge { transition: opacity .22s ease, filter .22s ease; }
@@ -1182,7 +1178,6 @@ body { background: var(--bg); }
 .node .icon-bg { fill: transparent !important; }
 .node .icon-fg { opacity: .92; }
 .node .sel-ring { stroke-width: 1.4; opacity: 0; }
-.node.selected .sel-ring { opacity: 1; fill: rgba(56, 120, 255, .055); filter: drop-shadow(0 0 12px rgba(56, 120, 255, .26)); }
 .node.selected .shape { stroke-width: 1.5; filter: drop-shadow(0 8px 18px rgba(0, 0, 0, .35)); }
 .node.container .shape { stroke-width: 1.2; }
 .node.container .stack { fill: var(--bg); stroke: var(--border); opacity: .75; }

@@ -32,12 +32,19 @@ const api = (method, p, payload) => raw({
 
 before(async () => {
   work = mkdtempSync(path.join(os.tmpdir(), 'serigraph-agents-'));
-  // a fake harness: emits two JSONL events then exits 0
+  // a fake harness: emits a JSONL edit event, then either prints the result
+  // and exits (default) or sleeps forever (mode file 'sleep') so the stop
+  // route can be exercised against a live child
   const fake = path.join(work, 'fake-harness.mjs');
   writeFileSync(fake, `#!/usr/bin/env node
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 const [,, prompt] = process.argv;
+let mode = 'run';
+try { mode = readFileSync(join(dirname(import.meta.url.replace('file://', '')), 'mode.txt'), 'utf8').trim(); } catch {}
 console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Edit', input: { file_path: 'src/demo.ts' } }] } }));
-console.log(JSON.stringify({ type: 'result', result: 'Finished: ' + (prompt ?? '').slice(0, 20) }));
+if (mode === 'sleep') setInterval(() => {}, 1000);
+else console.log(JSON.stringify({ type: 'result', result: 'Finished: ' + (prompt ?? '').slice(0, 20) }));
 `);
   chmodSync(fake, 0o755);
 
@@ -99,6 +106,45 @@ test('validation: bad harness and empty prompt are 400', async () => {
   assert.equal(bad.status, 400);
   const empty = await api('POST', '/api/agents', { harness: 'claude', prompt: '  ' });
   assert.equal(empty.status, 400);
+});
+
+test('stop keeps a stopped agent stopped — never error, never EXIT null as failure', async () => {
+  const modeFile = path.join(work, 'mode.txt');
+  writeFileSync(modeFile, 'sleep');
+  try {
+    const spawned = await api('POST', '/api/agents', { harness: 'claude', prompt: 'sleep long enough to be stopped' });
+    assert.equal(spawned.status, 201, spawned.body);
+    const { id } = JSON.parse(spawned.body);
+
+    // wait until the session is live beyond 'starting' (the edit event landed)
+    let live = null;
+    for (let i = 0; i < 40 && !live; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      const res = await api('GET', `/api/agents/${encodeURIComponent(id)}`);
+      const a = res.status === 200 ? JSON.parse(res.body) : null;
+      if (a && a.status !== 'starting') live = a;
+    }
+    assert.ok(live, 'agent went live');
+
+    const stopped = await api('POST', `/api/agents/${encodeURIComponent(id)}/stop`);
+    assert.equal(stopped.status, 200, stopped.body);
+    assert.equal(JSON.parse(stopped.body).status, 'stopped');
+
+    // after SIGTERM closes the child, the status must survive as stopped
+    let final = null;
+    for (let i = 0; i < 40 && !final; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      const res = await api('GET', `/api/agents/${encodeURIComponent(id)}`);
+      const a = res.status === 200 ? JSON.parse(res.body) : null;
+      if (a && ['stopped', 'done', 'error'].includes(a.status)) final = a;
+    }
+    assert.ok(final, 'agent reached a terminal state');
+    assert.equal(final.status, 'stopped', 'a user stop is not an error');
+    assert.equal(final.exitCode, null);
+    assert.ok(!final.steps.some((s) => s.kind === 'error'), 'no error step for a clean stop');
+  } finally {
+    rmSync(modeFile, { force: true });
+  }
 });
 
 test('unknown agent id is 404; forget works', async () => {

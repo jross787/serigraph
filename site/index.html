@@ -663,13 +663,14 @@ footer { position: relative; z-index: 1; border-top: 1px solid var(--line); padd
   var copyBtn = document.getElementById("copyBtn");
   copyBtn.addEventListener("click", function () {
     var text = "git clone https://github.com/jross787/serigraph && cd serigraph && npm start";
-    function done() {
-      copyBtn.textContent = "copied"; copyBtn.classList.add("done");
+    function settle(ok) {
+      copyBtn.textContent = ok ? "copied" : "copy failed";
+      copyBtn.classList.toggle("done", ok);
       setTimeout(function () { copyBtn.textContent = "copy"; copyBtn.classList.remove("done"); }, 1800);
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(done, done);
-    } else { done(); }
+      navigator.clipboard.writeText(text).then(function () { settle(true); }, function () { settle(false); });
+    } else { settle(false); }
   });
 })();
 </script>

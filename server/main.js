@@ -19,6 +19,7 @@ import {
   AgentError,
   forgetAgent,
   getAgent,
+  killAllAgents,
   listAgents,
   spawnAgent,
   stopAgent,
@@ -30,24 +31,8 @@ import {
   pushWorkbench,
   watchWorkbench,
 } from './workbench-sync.js';
+import { ROOT } from './env.js';
 
-// overridable so tests can boot the server against a temp workspace
-const ROOT = process.env.OPSMAP_ROOT
-  ? path.resolve(process.env.OPSMAP_ROOT)
-  : path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-
-// .env next to the repo root carries secrets like ANTHROPIC_API_KEY — this is
-// how the double-clicked Mac app picks them up, since it launches without a
-// shell. Real environment variables always win; the file only fills gaps.
-try {
-  const envFile = await fs.readFile(path.join(ROOT, '.env'), 'utf8');
-  for (const line of envFile.split('\n')) {
-    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
-    if (!m) continue;
-    const value = m[2].replace(/^["']|["']$/g, '');
-    if (process.env[m[1]] === undefined) process.env[m[1]] = value;
-  }
-} catch { /* no .env — fine */ }
 
 // OPSMAP_MAPS_DIR points the server at a different maps directory (used by
 // the concurrent-save test to fire real PUTs at a throwaway folder); when
@@ -207,13 +192,49 @@ async function resolveMapPath(id) {
   return null;
 }
 
-// optimistic-concurrency validator for map saves: byte size + mtime identifies
-// the exact file the browser based its edit on, and survives restarts
+// optimistic-concurrency validator for map saves: content hash + byte size +
+// mtime. The hash matters: two same-size writes inside one millisecond tick
+// would otherwise mint identical etags and a client could not tell its own
+// write from an overwrite (size-mtimeMs alone collided in review).
 async function etagFor(file) {
-  const stat = await fs.stat(file);
-  return `${stat.size}-${stat.mtimeMs}`;
+  const [source, stat] = await Promise.all([fs.readFile(file, 'utf8'), fs.stat(file)]);
+  const hash = createHash('sha1').update(source).digest('base64url').slice(0, 12);
+  return `${stat.size}-${stat.mtimeMs}-${hash}`;
 }
 
+// etag over an already-read source and handle stat — GET uses this so the
+// served bytes and the etag describe the same open file, never two different
+// versions of a path that a concurrent rename swapped between the calls.
+function etagForSource(source, stat) {
+  const hash = createHash('sha1').update(source).digest('base64url').slice(0, 12);
+  return `${stat.size}-${stat.mtimeMs}-${hash}`;
+}
+
+// map saves serialize per file: the If-Match check and the atomic write must
+// happen as one unit, or two tabs holding the same etag can both pass and the
+// later rename silently wins (found by all three reviewers; live-reproduced).
+const mapSaveLocks = new Map();
+function withSaveLock(key, fn) {
+  const prev = mapSaveLocks.get(key) ?? Promise.resolve();
+  const run = prev.then(fn, fn); // run whatever the previous save did
+  const tail = run.then(() => {}, () => {});
+  mapSaveLocks.set(key, tail);
+  tail.then(() => { if (mapSaveLocks.get(key) === tail) mapSaveLocks.delete(key); });
+  return run;
+}
+
+// GET path: open once, read bytes and stat from the same handle so a
+// concurrent atomic rename can never pair one version's source with the
+// other version's etag.
+async function readMapWithEtag(file) {
+  const fh = await fs.open(file, 'r');
+  try {
+    const [source, stat] = await Promise.all([fh.readFile('utf8'), fh.stat()]);
+    return { source, etag: etagForSource(source, stat) };
+  } finally {
+    await fh.close();
+  }
+}
 // parsed index for one project folder; empty defaults when absent/unreadable
 async function readProjectIndex(dir) {
   try {
@@ -759,8 +780,7 @@ async function handleApi(req, res, url) {
 
     if (req.method === 'GET') {
       if (file) {
-        const source = await fs.readFile(file, 'utf8');
-        const etag = await etagFor(file);
+        const { source, etag } = await readMapWithEtag(file);
         res.setHeader('ETag', etag);
         return json(res, 200, { id, source, etag });
       }
@@ -769,8 +789,7 @@ async function handleApi(req, res, url) {
       const movedTo = followMoves(id);
       const movedFile = movedTo ? await resolveMapPath(movedTo) : null;
       if (movedFile) {
-        const source = await fs.readFile(movedFile, 'utf8');
-        const etag = await etagFor(movedFile);
+        const { source, etag } = await readMapWithEtag(movedFile);
         res.setHeader('ETag', etag);
         return json(res, 200, { id: movedTo, source, movedTo, etag });
       }
@@ -786,21 +805,26 @@ async function handleApi(req, res, url) {
       // a mismatch means the file changed on disk under it (editor, sync,
       // another tab) — the client offers keep-mine/load-theirs from there.
       // A target that doesn't exist yet has nothing to conflict with: create.
-      if (file) {
-        const ifMatch = req.headers['if-match'];
-        if (!ifMatch) return json(res, 428, { error: 'If-Match required', code: 'precondition' });
-        if (ifMatch !== await etagFor(file)) {
-          return json(res, 409, { error: 'Map changed on disk', code: 'conflict' });
-        }
-      }
+      // The check and the write run under one per-file lock so two requests
+      // holding the same etag cannot both pass (first wins, rest get 409).
       const target = file ?? mapPathFor(id);
-      if (id.includes('/')) await ensureProject(id.slice(0, id.indexOf('/')));
-      else { await fs.mkdir(MAPS_DIR, { recursive: true }); watchMapsDir(); }
-      await writeFileAtomic(target, body.source);
-      // fileHashes deliberately NOT updated here: the watcher must detect the
-      // write and broadcast to OTHER tabs; the writing tab ignores the echo
-      // because the fetched source matches what it already has
-      return json(res, 200, { ok: true, etag: await etagFor(target) });
+      const saveResult = await withSaveLock(target, async () => {
+        if (file) {
+          const ifMatch = req.headers['if-match'];
+          if (!ifMatch) return json(res, 428, { error: 'If-Match required', code: 'precondition' });
+          if (ifMatch !== await etagFor(file)) {
+            return json(res, 409, { error: 'Map changed on disk', code: 'conflict' });
+          }
+        }
+        if (id.includes('/')) await ensureProject(id.slice(0, id.indexOf('/')));
+        else { await fs.mkdir(MAPS_DIR, { recursive: true }); watchMapsDir(); }
+        await writeFileAtomic(target, body.source);
+        return json(res, 200, { ok: true, etag: await etagFor(target) });
+      });
+      // fileHashes deliberately NOT updated by the write: the watcher must
+      // detect the change and broadcast to OTHER tabs; the writing tab
+      // ignores the echo because the fetched source matches what it has
+      return saveResult;
     }
   }
 
@@ -939,41 +963,6 @@ async function handleApi(req, res, url) {
     }
   }
 
-  // ── Agent Trail: live coding-agent sessions ───────────────────────
-  if (parts[1] === 'agents' && parts.length === 2) {
-    if (req.method === 'GET') return json(res, 200, listAgents());
-    if (req.method === 'POST') {
-      let body;
-      try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON body' }); }
-      try {
-        const agent = spawnAgent({
-          harness: body?.harness,
-          prompt: body?.prompt,
-          repoPath: body?.repoPath,
-          allowEdits: body?.allowEdits === true,
-        }, { onEvent: broadcast });
-        return json(res, 201, agent);
-      } catch (e) {
-        if (e instanceof AgentError) return json(res, e.status, { error: e.message });
-        throw e;
-      }
-    }
-  }
-  if (parts[1] === 'agents' && parts.length >= 3) {
-    const id = decodeURIComponent(parts[2]);
-    if (parts.length === 3 && req.method === 'GET') {
-      try { return json(res, 200, getAgent(id)); }
-      catch (e) { if (e instanceof AgentError) return json(res, e.status, { error: e.message }); throw e; }
-    }
-    if (parts.length === 3 && parts[2] === 'stop' && req.method === 'POST') {
-      try { return json(res, 200, await stopAgent(id)); }
-      catch (e) { if (e instanceof AgentError) return json(res, e.status, { error: e.message }); throw e; }
-    }
-    if (parts.length === 3 && req.method === 'DELETE') {
-      try { forgetAgent(id); return json(res, 200, { ok: true }); }
-      catch (e) { if (e instanceof AgentError) return json(res, e.status, { error: e.message }); throw e; }
-    }
-  }
 
   if (parts[1] === 'templates' && req.method === 'GET') {
     const out = [];
@@ -1105,6 +1094,7 @@ function shutdown(signal) {
   for (const res of sseClients) { try { res.end(); } catch { /* already gone */ } }
   sseClients.clear();
   killLlmChildren();
+  killAllAgents();
   process.exit(0);
 }
 process.on('SIGINT', () => shutdown('SIGINT'));

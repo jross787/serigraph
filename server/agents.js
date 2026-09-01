@@ -3,14 +3,13 @@
 // coding task. The server owns the child processes, parses their JSON event
 // streams into a shared step shape, and broadcasts changes over SSE.
 import { spawn } from 'node:child_process';
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 export class AgentError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
-export const HARNESS_KEYS = { claude: 'claude', codex: 'codex', omp: 'omp' };
+const HARNESS_KEYS = { claude: 'claude', codex: 'codex', omp: 'omp' };
 const MAX_STEPS = 200;
 const MAX_SESSIONS = 50;
 
@@ -165,7 +164,9 @@ function harnessCommand(harness, prompt, allowEdits) {
     return { cmd: 'claude', args, stdin: null, useShell: false };
   }
   if (harness === 'codex') {
-    const args = ['exec', '--json', '-s', allowEdits ? 'workspace-write' : 'read-only', '--skip-git-repo-check', prompt];
+    // `--` keeps a prompt that begins with a dash from being consumed as a
+    // codex flag (e.g. "--help" would otherwise print help and exit 0)
+    const args = ['exec', '--json', '-s', allowEdits ? 'workspace-write' : 'read-only', '--skip-git-repo-check', '--', prompt];
     return { cmd: 'codex', args, stdin: null, useShell: false };
   }
   const args = ['-p', prompt, '--mode', 'json'];
@@ -227,6 +228,11 @@ export function spawnAgent({ harness, prompt, repoPath, allowEdits = false }, { 
 
   const parser = PARSERS[harness];
   let buffer = '';
+  // a single line without a newline must not grow without bound (a stuck or
+  // malicious harness could stream forever); oversized lines are dropped and
+  // reported once, then input resumes at the next newline
+  const MAX_LINE = 1_000_000; // ~1 MB — real JSON events stay far below this
+  let droppedOversize = false;
   const handleLine = (line) => {
     if (!line.trim()) return;
     try { parser(session, line); } catch { /* a bad event line never kills the session */ }
@@ -238,7 +244,18 @@ export function spawnAgent({ harness, prompt, repoPath, allowEdits = false }, { 
     while ((idx = buffer.indexOf('\n')) >= 0) {
       const line = buffer.slice(0, idx);
       buffer = buffer.slice(idx + 1);
+      if (droppedOversize) {
+        // this closing newline ends the dropped line — resume normal parsing
+        droppedOversize = false;
+        continue;
+      }
       handleLine(line);
+    }
+    if (!droppedOversize && buffer.length > MAX_LINE) {
+      droppedOversize = true;
+      buffer = '';
+      pushStep(session, 'error', `discarded an output line over ${MAX_LINE} bytes`);
+      onEvent?.({ type: 'agents-changed', id });
     }
   });
   let errBuffer = '';
@@ -256,7 +273,11 @@ export function spawnAgent({ harness, prompt, repoPath, allowEdits = false }, { 
     if (buffer.trim()) handleLine(buffer);
     session.done = true;
     session.exitCode = code;
-    session.status = session.status === 'error' || code !== 0 ? 'error' : 'done';
+    // a user-requested stop is a stop, not a failure: the child exits by
+    // signal (code null) because we killed it
+    if (session.status !== 'stopped') {
+      session.status = session.status === 'error' || code !== 0 ? 'error' : 'done';
+    }
     if (session.status === 'error') {
       const tail = shortSummary(errBuffer.split('\n').filter(Boolean).pop() ?? `exit ${code}`);
       pushStep(session, 'error', tail);
@@ -267,7 +288,6 @@ export function spawnAgent({ harness, prompt, repoPath, allowEdits = false }, { 
 
   return getAgent(id);
 }
-
 export async function stopAgent(id) {
   const s = sessions.get(id);
   if (!s) throw new AgentError(404, `no agent "${id}"`);
@@ -292,5 +312,15 @@ export function forgetAgent(id) {
   sessions.delete(id);
 }
 
-// test seam
-export function _reset() { sessions.clear(); counter = 0; }
+// server shutdown path: SIGKILL every live child. A coding agent launched
+// with edit rights must not outlive the server that owns it.
+export function killAllAgents() {
+  for (const s of sessions.values()) {
+    if (s.child) {
+      try { s.child.kill('SIGKILL'); } catch { /* already gone */ }
+      s.child = null;
+    }
+    if (!s.done) { s.done = true; if (s.status !== 'error') s.status = 'stopped'; }
+  }
+}
+

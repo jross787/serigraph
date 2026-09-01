@@ -57,15 +57,16 @@ While the map is open, edits move in both directions. If the local and Workbench
 
 An edit connection can create view, comment, suggest, or edit links for people and agents. Workbench enforces those permissions. Serigraph keeps the linked share key in this browser only; it never writes the key into YAML, the Workbench document, or a standalone export. See [Data handling](docs/DATA-HANDLING.md) before sharing a client map.
 
-## One source, five useful views
+## One source, six useful views
 
 The file is the truth. A graph lives in `maps/<name>.yaml`; visual edits write back to that file, file edits live-reload into the canvas, and YAML comments survive supported edits.
 
-The view switcher turns that one graph into five working surfaces:
+The view switcher turns that one graph into six working surfaces:
 
 | View | What it is for |
 |---|---|
 | **Map** | Design the process or product story as a nested, navigable graph. |
+| **Agents** | Launch claude, codex, or omp coding agents against a repo and watch their edits land on a live map. |
 | **Flow** | Watch the operating model in motion: a rotatable 3D view where every node is a building and moving payloads are the work items, paced by the monthly volume recorded in the file. Lanes show how each handoff moves — API, file, manual re-entry, or event — and confirmed issues render loudly. Drag to rotate, ⌘-drag to pan, scroll to zoom, drag a building to move it, click a payload to inspect the handoff it represents, or trace a named flow one step at a time. |
 | **Brief** | Read a graph-backed PRD with goals, problems, objectives, requirements, acceptance criteria, evidence, decisions, risks, and metrics. |
 | **Roadmap** | See eligible planning nodes in Now, Next, Later, named-target, and Unscheduled lanes; filter by status, priority, owner, or text. |

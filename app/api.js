@@ -113,13 +113,15 @@ export const api = {
       });
     } catch (error) {
       if (error.status === 409) {
-        // The file changed on disk under us. Fetch the disk version (this
-        // also refreshes the stored etag) and hand the choice to the user
-        // instead of overwriting silently. Still throw: callers that save
-        // outside the open-map flow keep their existing error handling.
+        // The file changed on disk under us. Fetch the disk version for the
+        // dialog — WITHOUT adopting its etag. Storing the disk etag here
+        // would arm the next save to overwrite the very version the user is
+        // being warned about; only an explicit choice may refresh it.
+        // Still throw: callers that save outside the open-map flow keep
+        // their existing error handling.
         let diskSource = null;
         try {
-          const disk = await api.getMap(id);
+          const disk = await jfetch(`/api/maps/${encodeURIComponent(id)}`);
           diskSource = disk?.source ?? null;
         } catch { /* the dialog still works without the disk copy */ }
         bus.emit('save-conflict', { mapId: id, diskSource });

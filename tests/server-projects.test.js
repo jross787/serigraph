@@ -12,8 +12,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseMap } from '../shared/model.js';
 
-// etags are "<size>-<mtimeMs>" — mtimeMs keeps sub-millisecond decimals
-const ETAG_RE = /^\d+-\d+(\.\d+)?$/;
+// etags are "<size>-<mtimeMs>-<contentHash>" — mtimeMs keeps sub-millisecond
+// decimals and the hash separates same-size writes within one tick
+const ETAG_RE = /^\d+-\d+(\.\d+)?-[A-Za-z0-9_-]+$/;
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 

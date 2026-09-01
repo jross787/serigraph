@@ -63,6 +63,12 @@ function setSaveStatus(status, error = '') {
 // must not replace the local buffer the user is about to keep or discard.
 let saveConflictPending = false;
 
+// The last source this tab successfully wrote to disk. The watcher echo of
+// that write is suppressed even once the live buffer has moved on —
+// comparing the echo against state.source alone would adopt a stale version
+// when a second edit lands while the first save's echo is still in flight.
+let lastSavedSource = '';
+
 async function saveMapSource(source) {
   setSaveStatus('saving');
   let result;
@@ -80,6 +86,10 @@ async function saveMapSource(source) {
     setSaveStatus('error', error.message);
     throw error;
   }
+  // A clean write ends any pending conflict: the buffer that just saved is
+  // now the disk truth, so remote-change adoption may resume.
+  saveConflictPending = false;
+  lastSavedSource = source;
   setSaveStatus('saved');
   return result;
 }
@@ -485,7 +495,7 @@ export async function handleRemoteChange(ids) {
     await openMap(state.mapId); // openMap follows the move
     return;
   }
-  if (payload.source === state.source) return; // our own write echoed back
+  if (payload.source === state.source || payload.source === lastSavedSource) return; // our own write echoed back
 
   lastAncestry = state.scopeId && state.model ? ancestryOf(state.model, state.scopeId) : [];
   adoptSource(payload.source);

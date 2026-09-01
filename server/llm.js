@@ -13,6 +13,7 @@
 //   8. none                    — AI features show a setup hint
 // Models resolve at call time so AI settings can change them without a
 // restart: OPSMAP_MODEL (chat), OPSMAP_VOICE_MODEL (transcription).
+import './env.js'; // loads ROOT/.env before CMD_ARGV snapshots OPSMAP_LLM_CMD
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 

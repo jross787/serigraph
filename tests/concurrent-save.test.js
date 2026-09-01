@@ -70,23 +70,29 @@ test('concurrent PUTs stay atomic: each lands whole or conflicts, never corrupts
   assert.ok(etag, 'seed PUT must return an etag');
 
   // the rest race to overwrite it, each proving it saw the current file;
-  // under the If-Match contract a racer that lost the race gets 409, and
-  // one that validated before any write landed still writes atomically
+  // under the per-file save lock exactly one racer can win — the check and
+  // the write are one unit, so every other racer must get a 409, never a
+  // second 200 (a silent lost update)
   const responses = await Promise.all(
     bodies.slice(1).map((body) =>
       raw({ method: 'PUT', p: '/api/maps/concurrent-target', headers: { ...headers, 'If-Match': etag }, body })),
   );
-  for (const r of responses) {
-    assert.ok(r.status === 200 || r.status === 409, `a concurrent PUT failed unexpectedly: ${r.status} ${r.body}`);
-  }
-
+  const ok = responses.filter((r) => r.status === 200);
+  const conflicts = responses.filter((r) => r.status === 409);
+  assert.equal(ok.length + conflicts.length, responses.length,
+    `unexpected statuses: ${responses.map((r) => r.status).join(',')}`);
+  assert.equal(ok.length, 1, `exactly one racer may win; got ${ok.length} × 200`);
+  assert.equal(conflicts.length, responses.length - 1, 'every loser must be a 409 conflict');
+  // the winner's etag differs from the seed: same-size writes in the same
+  // tick must not mint colliding etags (content hash prevents that)
+  const winnerEtag = JSON.parse(ok[0].body).etag;
+  assert.notEqual(winnerEtag, etag, 'etag must change after a write');
   // the file on disk parses and equals exactly one of the written payloads
   const onDisk = readFileSync(path.join(MAPS_DIR, 'concurrent-target.yaml'), 'utf8');
   assert.ok(payloads.includes(onDisk), 'on-disk source must be one of the written payloads');
 
   // GET agrees with the file
   const back = await raw({ p: '/api/maps/concurrent-target' });
-  assert.equal(back.status, 200);
   assert.equal(JSON.parse(back.body).source, onDisk);
 
   // no temp files left behind

@@ -390,6 +390,33 @@ export function zoomBy(factor, cx = vw / 2, cy = vh / 2) {
   return animateCamera({ k, x: cx - wp.x * k, y: cy - wp.y * k }, 240);
 }
 
+// The canvas's CSS, inlined for export: every custom property on :root in its
+// current theme, plus every stylesheet rule that targets canvas marks. Rules
+// with pseudo-classes (hover/focus state) and app-chrome id selectors are
+// skipped — they neither apply nor belong in a standalone file.
+const EXPORT_SELECTORS = ['.node', '.edge', '.grid-dots', '.bundle', '.scope', '.peer', '.identity', '.icon', '.type-chip', '.count-chip', '.sel-ring', '.stack', '.shape', '.link-dot', '.marquee', '#griddots'];
+function exportStylesheet() {
+  const cs = getComputedStyle(document.documentElement);
+  const vars = [];
+  for (let i = 0; i < cs.length; i++) {
+    const prop = cs.item(i);
+    if (prop.startsWith('--')) vars.push(`  ${prop}: ${cs.getPropertyValue(prop).trim()};`);
+  }
+  const rules = [];
+  for (const sheet of document.styleSheets) {
+    let list;
+    try { list = sheet.cssRules; } catch { continue; } // cross-origin sheets
+    for (const rule of list) {
+      if (!(rule instanceof CSSStyleRule)) continue;
+      const sel = rule.selectorText ?? '';
+      if (sel.includes(':')) continue;
+      if (/#[a-zA-Z]/.test(sel) && !sel.includes('#griddots')) continue;
+      if (EXPORT_SELECTORS.some((token) => sel.includes(token))) rules.push(rule.cssText);
+    }
+  }
+  return `:root {\n${vars.join('\n')}\n}\n${rules.join('\n')}`;
+}
+
 // Serialize the canvas to a standalone SVG string for export. The clone is
 // neutralized — camera transform removed, viewBox baked to the full content
 // bounds (every scope level, not just the current viewport), cursor and
@@ -399,7 +426,12 @@ export function getCanvasSvgString() {
   const clone = svg.cloneNode(true);
   clone.removeAttribute('class');
   clone.removeAttribute('tabindex');
-  clone.setAttribute('xmlns', SVG);
+  // the page stylesheet never travels with the file: embed the theme's
+  // custom properties plus the canvas's own rules so nodes keep their
+  // fills, strokes, and type colors when opened anywhere or rasterized
+  const styleEl = document.createElementNS(SVG, 'style');
+  styleEl.textContent = exportStylesheet();
+  clone.insertBefore(styleEl, clone.firstChild);
 
   // content returns to plain world coordinates
   clone.querySelector('#viewport')?.removeAttribute('transform');

