@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createGitHubReader } from '../server/github.js';
-import { ciSummary, initGitHub, refreshGitHub, nodeObservation } from '../app/github.js';
+import { ciSummary, initGitHub, refreshGitHub, nodeObservation, isGitHubStale } from '../app/github.js';
 import { state, bus } from '../app/state.js';
 import { api } from '../app/api.js';
 
@@ -76,6 +76,17 @@ test('PR evidence follows its freshly read head, rejects foreign checks, and nev
   await assert.rejects(reader.pullChecks('../private'));
   await assert.rejects(reader.pullChecks(0));
   assert.equal(calls.length, 3);
+
+  // A newer list head must defeat the short-lived PR snapshot cache.
+  let clock = 1000;
+  const changing = createGitHubReader({ now: () => clock, fetchImpl: fixture([
+    { number: 7, head: { sha: old } }, { check_runs: [] }, { sha: old, statuses: [] },
+    repo, head, { workflow_runs: [] }, [{ number: 7, head: { sha } }], [],
+    { number: 7, head: { sha } }, { check_runs: [] }, { sha, statuses: [] },
+  ]) });
+  assert.equal((await changing.pullChecks(7)).pull.sha, old);
+  clock += 1000; await changing.observation();
+  assert.equal((await changing.pullChecks(7)).pull.sha, sha);
 });
 
 test('refresh shares in-flight/cache reads, conditionally revalidates, respects rate limits, and recovers', async () => {
@@ -141,6 +152,9 @@ test('visible-map lifecycle cancels obsolete reads, deduplicates refresh, preser
   requests[0].resolve({ ...snapshot, sha: old }); await first;
   assert.equal(state.github.result, null);
   requests[1].resolve(snapshot); await second; assert.equal(state.github.result.sha, sha);
+  state.github.pull = { pull: { number: 7, sha }, fetchedAt: new Date(clock - 1500000).toISOString() };
+  assert.ok(isGitHubStale(state.github.pull.fetchedAt));
+  assert.equal(isGitHubStale(state.github.result.fetchedAt), false);
   state.github.pull = { pull: { number: 7, sha: old } };
   const updated = refreshGitHub(); requests[2].resolve(snapshot); await updated;
   assert.equal(state.github.pull, null); assert.match(state.github.pullError, /changed/);

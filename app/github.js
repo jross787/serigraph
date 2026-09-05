@@ -37,7 +37,11 @@ function h(tag, props = {}, ...children) {
   return el;
 }
 const time = value => value ? new Date(value).toLocaleString() : 'Not provided';
-const sourceLink = (url, label) => h('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, label);
+const sourceLink = (url, label, focusKey = url) => h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', 'data-github-focus': focusKey }, label);
+
+export function isGitHubStale(fetchedAt) {
+  return !!fetchedAt && Date.now() - Date.parse(fetchedAt) >= state.github.config.refreshMs;
+}
 
 export function ciSummary(result) {
   if (!result) return 'CI unavailable';
@@ -56,7 +60,7 @@ export function ciSummary(result) {
 export function nodeObservation(id) {
   const github = state.github;
   if (state.standalone || github?.mapKey !== bindingKey() || !github?.bindings.includes(id)) return null;
-  const stale = github.result && Date.now() - Date.parse(github.result.fetchedAt) >= github.config.refreshMs;
+  const stale = isGitHubStale(github.result?.fetchedAt);
   const label = github.error || stale ? (github.result ? 'CI stale' : 'CI unavailable') : github.loading && !github.result ? 'CI loading' : ciSummary(github.result);
   return { label, detail: `${label} · ${github.config.repo} · ${github.config.branch} · ${github.result?.sha ?? 'commit unknown'} · fetched ${time(github.result?.fetchedAt)} · bounded sample, not production health` };
 }
@@ -115,6 +119,12 @@ async function inspectPull(number) {
   try {
     const result = await api.githubPullChecks(number, request.signal);
     if (request !== pullRequest || token !== generation) return;
+    const list = state.github.result?.pulls;
+    const listed = list?.items?.find(item => item.number === number);
+    if (listed?.sha && listed.sha !== result.pull.sha && Date.parse(list.fetchedAt) >= Date.parse(result.headObservedAt)) {
+      state.github.pullError = 'This check snapshot predates the listed PR head. Refresh its evidence again.';
+      return;
+    }
     state.github.pull = result;
     if (result.pausedUntil) { state.github.retryAt = result.pausedUntil; schedule(); }
   } catch (error) {
@@ -128,44 +138,45 @@ async function inspectPull(number) {
 
 function workList(kind, section) {
   const title = kind === 'pulls' ? 'Open pull requests' : 'Open issues';
-  const list = h('details', { 'data-github-section': kind }, h('summary', {}, `${title} · ${section?.items?.length ?? 'unknown'} shown`));
+  const list = h('details', { 'data-github-section': kind }, h('summary', { 'data-github-focus': `section-${kind}` }, `${title} · ${section?.items?.length ?? 'unknown'} shown`));
   list.append(h('p', { class: 'github-meta' }, kind === 'issues'
     ? 'Issues from the first 10 updated issue/PR entries; PRs excluded. This is not a total.'
     : 'First 10 updated open pull requests, not a total. Inspect checks on demand.'));
   if (section?.error) list.append(h('p', { class: 'github-error' }, section.error));
   else if (!section?.items?.length) list.append(h('p', {}, `No ${kind === 'pulls' ? 'pull requests' : 'issues'} in this page.`));
   for (const item of section?.items ?? []) list.append(h('div', { class: 'github-row' },
-    item.url ? sourceLink(item.url, `#${item.number} ${item.title}`) : h('span', {}, item.title),
+    item.url ? sourceLink(item.url, `#${item.number} ${item.title}`, `work-${kind}-${item.number}`) : h('span', {}, item.title),
     h('span', {}, `${item.state} · updated ${time(item.updatedAt)}`),
-    kind === 'pulls' && item.number ? h('button', { class: 'pa-btn', 'data-github-action': `pr-${item.number}`, onClick: () => inspectPull(item.number) }, 'Inspect checks') : null));
+    kind === 'pulls' && item.number ? h('button', { class: 'pa-btn', 'data-github-focus': `pr-${item.number}`,
+      'aria-disabled': String(Date.now() < (state.github.retryAt ?? 0)), onClick: () => inspectPull(item.number) }, 'Inspect checks') : null));
   return list;
 }
 
 export function renderGitHubGlance(node) {
   const github = state.github;
   if (state.standalone || !github?.config?.enabled || github.mapKey !== bindingKey()) return null;
-  const section = h('section', { id: 'github-glance', class: 'panel-section github-glance', 'aria-label': 'GitHub Glance' },
+  const section = h('section', { id: 'github-glance', tabindex: '-1', class: 'panel-section github-glance', 'aria-label': 'GitHub Glance' },
     h('h3', {}, 'GitHub Glance'));
   if (!github.bindings.includes(node.id)) {
-    section.append(h('p', {}, 'Public repository · read-only'), h('button', { class: 'pa-btn', onClick: () => bindNode(node.id, true) },
+    section.append(h('p', {}, 'Public repository · read-only'), h('button', { class: 'pa-btn', 'data-github-focus': 'connect', onClick: () => bindNode(node.id, true) },
       icon('plugs-connected', 14), `Connect ${github.config.repo}`));
     return section;
   }
   const result = github.result;
   section.append(h('p', {}, sourceLink(`https://github.com/${github.config.repo}`, github.config.repo), ` · ${github.config.branch}`),
     h('div', { class: 'github-actions' },
-      h('button', { class: 'pa-btn', 'data-github-action': 'refresh', disabled: github.loading || Date.now() < (github.retryAt ?? 0) ? '' : null, onClick: refreshGitHub }, icon('arrow-clockwise', 14), github.loading ? 'Refreshing…' : 'Refresh'),
-      h('button', { class: 'pa-btn', onClick: () => bindNode(node.id, false) }, 'Disconnect')),
+      h('button', { class: 'pa-btn', 'data-github-focus': 'refresh', 'aria-disabled': String(github.loading || Date.now() < (github.retryAt ?? 0)), onClick: refreshGitHub }, icon('arrow-clockwise', 14), github.loading ? 'Refreshing…' : 'Refresh'),
+      h('button', { class: 'pa-btn', 'data-github-focus': 'disconnect', onClick: () => bindNode(node.id, false) }, 'Disconnect')),
     h('p', { class: 'github-state', role: 'status' }, nodeObservation(node.id).label));
   section.append(h('p', { class: 'github-meta' }, Date.now() < (github.retryAt ?? 0)
     ? `Refresh paused until ${time(github.retryAt)}.`
     : visible() ? 'Auto refresh every 10 minutes while this map is visible. Manual reads share a 60-second cache.' : 'Auto refresh paused while this map is not visible.'));
-  if (github.error) section.append(h('p', { class: 'github-error' }, `${github.error}${result ? ' Retaining the last observation with its original timestamp.' : ''}`));
+  if (github.error) section.append(h('p', { class: 'github-error' }, `${github.error}${result ? ' — retaining the last observation with its original timestamp.' : ''}`));
   if (!result) return section;
   section.append(h('p', {}, 'Observed head ', sourceLink(`${result.url}/commit/${result.sha}`, result.sha.slice(0, 10))),
     h('p', { class: 'github-meta' }, `Commit time: ${time(result.commitAt)}\nFetched: ${time(result.fetchedAt)}`),
     h('p', { class: 'github-meta' }, result.coverage));
-  const workflows = h('details', { 'data-github-section': 'workflows' }, h('summary', {}, `Workflow runs · ${result.runs.length} shown`));
+  const workflows = h('details', { 'data-github-section': 'workflows' }, h('summary', { 'data-github-focus': 'section-workflows' }, `Workflow runs · ${result.runs.length} shown`));
   if (!result.runs.length) workflows.append(h('p', {}, 'No runs returned. CI has not been observed.'));
   for (const run of result.runs) workflows.append(h('div', { class: 'github-row' },
     run.url ? sourceLink(run.url, `${run.name || 'Workflow'} · #${run.id}`) : h('span', {}, run.name),
@@ -177,9 +188,13 @@ export function renderGitHubGlance(node) {
   if (github.pull) {
     const detail = github.pull;
     section.append(h('h4', {}, `PR #${detail.pull.number} evidence`),
-      h('p', {}, sourceLink(detail.pull.url, detail.pull.title)),
+      h('p', {}, sourceLink(detail.pull.url, detail.pull.title, `pull-detail-${detail.pull.number}`)),
       h('p', { class: 'github-meta' }, `${detail.pull.branch} · ${detail.pull.sha}\nFetched ${time(detail.fetchedAt)}`),
       h('p', { class: 'github-meta' }, detail.coverage));
+    if (isGitHubStale(detail.fetchedAt)) section.append(
+      h('p', { class: 'github-error' }, 'Stale PR evidence. Checks can change on the same commit; reinspect before relying on this result.'),
+      h('button', { class: 'pa-btn', 'data-github-focus': `reinspect-${detail.pull.number}`,
+        'aria-disabled': String(Date.now() < (github.retryAt ?? 0)), onClick: () => inspectPull(detail.pull.number) }, 'Refresh PR evidence'));
     for (const [name, evidence] of [['Check runs', detail.checks], ['Commit statuses', detail.statuses]]) {
       section.append(h('h4', {}, name));
       if (evidence.error) section.append(h('p', { class: 'github-error' }, evidence.error));

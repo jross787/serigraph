@@ -2855,12 +2855,13 @@ export function initUI() {
     const node = state.model?.byId.get(state.detailNodeId);
     if (current && node) {
       const expanded = [...current.querySelectorAll('details[open]')].map(el => el.dataset.githubSection);
-      const action = current.contains(document.activeElement) ? document.activeElement.dataset.githubAction : null;
+      const focused = current.contains(document.activeElement);
+      const focusKey = focused ? document.activeElement.dataset.githubFocus : null;
       const next = renderGitHubGlance(node);
       if (next) {
         for (const detail of next.querySelectorAll('details')) detail.open = expanded.includes(detail.dataset.githubSection);
         current.replaceWith(next);
-        if (action) next.querySelector(`[data-github-action="${CSS.escape(action)}"]`)?.focus({ preventScroll: true });
+        if (focused) (focusKey ? next.querySelector(`[data-github-focus="${CSS.escape(focusKey)}"]`) ?? next : next).focus({ preventScroll: true });
       } else current.remove();
     } else if (node && !editMode && !catalogView.open && !automationMode) {
       const next = renderGitHubGlance(node);

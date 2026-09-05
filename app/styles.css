@@ -123,6 +123,7 @@ button { font-family: inherit; color: inherit; }
 .github-glance p { margin: 8px 0; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .github-glance a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 .github-actions { display: flex; gap: 6px; }
+.github-glance [aria-disabled="true"] { opacity: .55; cursor: default; }
 .github-state { font-weight: 700; }
 .github-glance .github-meta, .github-row span { color: var(--muted); font-size: 11px; white-space: pre-line; }
 .github-error { color: var(--danger); }

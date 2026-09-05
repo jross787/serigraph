@@ -116,6 +116,7 @@ export function createGitHubReader({ fetchImpl = fetch, now = Date.now } = {}) {
     if (!Number.isSafeInteger(number) || number < 1 || number > 2147483647) throw new Error('Invalid pull request number.');
     const pull = await read(`/pulls/${number}`, data => workItem(data, 'pulls'));
     if (pull.number !== number || !pull.sha) throw new Error('Pull request head is unavailable.');
+    const headObservedAt = new Date(now()).toISOString();
     const readChecks = async (path, key, convert) => {
       try {
         const items = await read(path, data => {
@@ -135,11 +136,18 @@ export function createGitHubReader({ fetchImpl = fetch, now = Date.now } = {}) {
         name: text(status.context), status: text(status.state), updatedAt: date(status.updated_at),
       })),
     ]);
-    return { ...GITHUB_SOURCE, pull, checks, statuses, fetchedAt: new Date(now()).toISOString(),
+    return { ...GITHUB_SOURCE, pull, headObservedAt, checks, statuses, fetchedAt: new Date(now()).toISOString(),
       coverage: 'Up to 10 check runs and 10 status contexts for this captured PR head. Required checks and merge-ref checks are not established; not a merge-readiness verdict.' };
   }
   return {
     observation: () => cached(`${GITHUB_SOURCE.repo}:${GITHUB_SOURCE.branch}`, observation),
-    pullChecks: number => cached(`pull:${number}`, () => pullChecks(number)),
+    pullChecks: number => {
+      const key = `pull:${number}`, previous = snapshots.get(key);
+      const list = snapshots.get(`${GITHUB_SOURCE.repo}:${GITHUB_SOURCE.branch}`)?.pulls;
+      const listed = list?.items?.find(item => item.number === number);
+      if (previous && listed && listed.sha !== previous.pull.sha
+        && Date.parse(list.fetchedAt) >= Date.parse(previous.headObservedAt)) snapshots.delete(key);
+      return cached(key, () => pullChecks(number));
+    },
   };
 }
