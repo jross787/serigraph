@@ -1446,7 +1446,9 @@ body { background: var(--bg); }
 .grid-dots { opacity: .24; }
 .node, .edge { transition: opacity .14s ease; }
 .node.focus-dimmed { opacity: .68; }
-.edge.focus-dimmed { opacity: .44; }
+.edge.focus-dimmed { opacity: 1; }
+.edge.focus-dimmed .line, .edge.focus-dimmed .arrow { opacity: .45; }
+.edge.focus-dimmed .edge-label-bg { stroke-opacity: .5; }
 .node .shape { stroke: #35404c; stroke-width: 1; }
 .node .label { font-size: 14.25px; font-weight: 600; letter-spacing: -.006em; }
 .node-summary { font-size: 10.5px; line-height: 1.4; }
