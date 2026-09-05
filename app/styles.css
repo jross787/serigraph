@@ -1679,6 +1679,11 @@ body { letter-spacing: -.008em; }
 .node:hover .shape { filter: none; stroke-width: 1.75; }
 .node.selected .shape { stroke: var(--sel); stroke-width: 2.15; }
 .node.selected .sel-ring { opacity: .55; }
+.node.relationship-endpoint .sel-ring { opacity: .8; stroke-width: 2; stroke-dasharray: 4 3; }
+.edge:focus { outline: none; }
+.edge:focus-visible .line, .edge.selected .line { stroke: var(--sel); stroke-width: 2.5; }
+.edge:focus-visible .edge-label-bg, .edge.selected .edge-label-bg { stroke: var(--sel); stroke-width: 1.5; }
+.edge:focus-visible .arrow, .edge.selected .arrow { fill: var(--sel); }
 .edge .line { stroke: color-mix(in srgb, var(--edge) 88%, var(--ink)); stroke-width: 1.35; }
 .edge .arrow { fill: color-mix(in srgb, var(--edge) 88%, var(--ink)); }
 .edge .edge-label-bg { fill: var(--edge-label-bg); stroke: color-mix(in srgb, var(--edge) 40%, transparent); }
@@ -2780,9 +2785,11 @@ body.presenting .edge .route-badge { display: none; }
 .bundle .members > .edge { opacity: 0; pointer-events: none; }
 .bundle .members > .edge path.hit { stroke-width: 20; }
 .bundle:hover .members > .edge,
+.bundle:focus-within .members > .edge,
 .bundle.open .members > .edge,
 .bundle:has(.edge.selected) .members > .edge { opacity: 1; pointer-events: auto; }
 .bundle:hover .sheath,
+.bundle:focus-within .sheath,
 .bundle.open .sheath,
 .bundle:has(.edge.selected) .sheath { opacity: 0; pointer-events: none; }
 
@@ -3570,8 +3577,9 @@ g.node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 }
 
 /* Edge rewire: the From and To selects share one row in the edge panel. */
-.edge-rewire { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.edge-rewire { display: grid; grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr); align-items: center; gap: 8px; }
 .edge-rewire select { min-width: 0; }
+.edge-rewire .pa-btn { grid-column: 1 / -1; }
 
 /* Recent searches: clickable chips above an empty search result list. */
 .search-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 2px; }

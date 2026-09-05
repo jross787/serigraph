@@ -252,6 +252,13 @@ export async function loadTrash() {
 // parse source into state (doc + model + errors); no rendering
 function adoptSource(source) {
   const { doc, model, errors } = parseMap(source);
+  const sel = state.selectedEdge;
+  if (sel) {
+    const before = state.model && scopeOf(state.model, sel.scopeId)?.edges[sel.index];
+    const after = model && scopeOf(model, sel.scopeId)?.edges[sel.index];
+    // Keep inspection through route edits/undo, never retarget a deleted edge.
+    if (!before || !after || before.from !== after.from || before.to !== after.to) state.selectedEdge = null;
+  }
   state.source = source;
   state.doc = doc;
   state.model = model;
@@ -456,7 +463,6 @@ function refreshView() {
       if (!state.model.byId.has(id)) state.selectionIds.delete(id);
     }
   }
-  if (state.selectedEdge) state.selectedEdge = null;
   canvas.showScope(state.model, state.scopeId);
   canvas.paintSelection();
   writeHash();

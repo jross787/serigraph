@@ -816,7 +816,12 @@ function buildNode(n) {
 }
 
 function buildEdge(e) {
-  const g = el('g', {}, 'edge');
+  const from = state.model?.byId.get(e.edge.from)?.label ?? e.edge.from;
+  const to = state.model?.byId.get(e.edge.to)?.label ?? e.edge.to;
+  const g = el('g', {
+    tabindex: '0', role: 'button',
+    'aria-label': `${from} to ${to}${e.edge.label ? `: ${e.edge.label}` : ''}`,
+  }, 'edge');
   g.dataset.index = e.index;
   const smooth = e.smooth ? smoothEdgePath(e.points) : null;
   const d = smooth ? smooth.d : edgePath(e.points);
@@ -1410,6 +1415,8 @@ export const getLayout = () => currentLayout;
 export function paintSelection() {
   if (!currentLayer) return;
   const selected = state.selectedId;
+  const selectedEdge = currentLayout.edges.find(e => e.index === state.selectedEdge?.index);
+  const endpoints = new Set(selectedEdge ? [selectedEdge.edge.from, selectedEdge.edge.to] : []);
   const probeNodes = new Set(state.probePath?.nodeIds ?? []);
   const probeEdges = new Set(state.probePath?.edgeIndexes ?? []);
   const adjacent = new Set(selected ? [selected] : []);
@@ -1426,19 +1433,23 @@ export function paintSelection() {
   }
   for (const g of currentLayer.querySelectorAll('.node')) {
     g.classList.toggle('selected', g.dataset.id === state.selectedId);
+    g.classList.toggle('relationship-endpoint', endpoints.has(g.dataset.id));
     g.classList.toggle('multi-selected', state.selectionIds.has(g.dataset.id));
     g.classList.toggle('connect-target', !!state.connectFrom && g.dataset.id !== state.connectFrom);
     g.classList.toggle('probe-node', probeNodes.has(g.dataset.id));
     g.classList.toggle('probe-dimmed', probeNodes.size > 0 && !probeNodes.has(g.dataset.id));
-    g.classList.toggle('focus-dimmed', probeNodes.size === 0 && !!selected && !adjacent.has(g.dataset.id));
+    g.classList.toggle('focus-dimmed', probeNodes.size === 0 && (selectedEdge
+      ? !endpoints.has(g.dataset.id) : !!selected && !adjacent.has(g.dataset.id)));
   }
   for (const g of currentLayer.querySelectorAll('.edge')) {
     g.classList.toggle('selected', state.selectedEdge != null && Number(g.dataset.index) === state.selectedEdge.index);
+    g.setAttribute('aria-pressed', String(Number(g.dataset.index) === selectedEdge?.index));
     const e = currentLayout.edges.find((x) => x.index === Number(g.dataset.index));
     const isProbeEdge = probeEdges.has(Number(g.dataset.index));
     g.classList.toggle('probe-edge', isProbeEdge);
     g.classList.toggle('probe-dimmed', probeNodes.size > 0 && !isProbeEdge);
-    g.classList.toggle('focus-dimmed', probeNodes.size === 0 && !!selected && e?.edge.from !== selected && e?.edge.to !== selected);
+    g.classList.toggle('focus-dimmed', probeNodes.size === 0 && (selectedEdge
+      ? e?.index !== selectedEdge.index : !!selected && e?.edge.from !== selected && e?.edge.to !== selected));
   }
   svg.classList.toggle('connecting', !!state.connectFrom);
   // focus follows the selection for keyboard users, but only when focus is
@@ -1978,15 +1989,16 @@ function wirePointer() {
 }
 
 // ── keyboard access ──────────────────────────────────────────────────
-// A focused node behaves like a click target: Enter/Space selects it.
+// Focused map objects behave like click targets: Enter/Space selects them.
 function wireNodeKeyboard() {
   svg.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Enter' && ev.key !== ' ') return;
-    const nodeEl = ev.target?.closest?.('.node');
-    if (!nodeEl || !currentLayer?.contains(nodeEl)) return;
+    const target = ev.target?.closest?.('.node, .edge');
+    if (!target || !currentLayer?.contains(target)) return;
     ev.preventDefault(); // Space would scroll the page
     ev.stopPropagation();
-    bus.emit('node-click', nodeEl.dataset.id, ev);
+    if (target.classList.contains('edge')) bus.emit('edge-click', Number(target.dataset.index));
+    else bus.emit('node-click', target.dataset.id, ev);
   });
 }
 

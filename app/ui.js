@@ -2007,12 +2007,11 @@ function renderEdgeDetail(panel) {
 
   const freeform = isFreeform();
   // The label commits on blur (Enter blurs) — no Save click, panel stays open.
-  const label = h('input', {
-    class: 'f-input',
+  const label = h('textarea', {
+    class: 'f-textarea compact-textarea', rows: 3, 'aria-label': 'Connection label',
     placeholder: freeform ? 'e.g. reads customer data' : 'e.g. approved / declined',
-    value: e.label ?? '',
     readonly: state.standalone ? '' : null,
-  });
+  }, e.label ?? '');
   const commitLabel = () => {
     const cur = state.selectedEdge;
     if (state.standalone || !cur || cur.scopeId !== sel.scopeId || cur.index !== sel.index) return;
@@ -2860,7 +2859,8 @@ export function initUI() {
     if (state.workspaceView !== 'map') hideDetail();
     else if (catalogView.open) renderDetail();
     else if (state.selectedId) showDetail(state.selectedId);
-    else if (state.selectedEdge == null) hideDetail();
+    else if (state.selectedEdge != null) renderDetail();
+    else hideDetail();
     const mm = document.getElementById('minimap');
     const curScope = state.model ? (state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children) : null;
     if (mm) mm.hidden = !curScope || curScope.nodes.length === 0;
