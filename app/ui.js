@@ -1637,7 +1637,7 @@ function renderDetail() {
     }
 
     if (node.links.length || node.children) {
-      body.append(h('div', { class: 'focus-aux' },
+      body.append(h('div', { class: `focus-aux${node.links.some(link => safeUrl(link.url)) ? ' node-links' : ''}` },
         node.children ? h('button', { class: 'focus-link', onClick: () => ctrl.diveInto(node.id) },
           freeform ? `Open group with ${node.stats.childCount} items` : `Open ${node.stats.childCount}-step sub-map`) : null,
         node.links.map((l) => {

@@ -410,7 +410,12 @@ button { font-family: inherit; color: inherit; }
   user-select: none; pointer-events: none;
 }
 .node .sub { fill: var(--node-sub); font-size: 10.5px; font-weight: 500; pointer-events: none; user-select: none; }
-.node .link-dot { fill: var(--faint); }
+.node-launch { color: var(--muted); cursor: pointer; }
+.node-launch-hit { fill: transparent; stroke: transparent; }
+.node-launch:hover, .node-launch:focus-visible { color: var(--accent); outline: none; }
+.node-launch:hover .node-launch-hit { fill: var(--surface-2); }
+.node-launch:focus-visible .node-launch-hit { fill: var(--surface-2); stroke: var(--accent); stroke-width: 1.5; }
+.node-launch .ui-icon { pointer-events: none; }
 
 .node.t-process .shape { stroke: var(--c-process); }
 .node.t-decision .shape { stroke: var(--c-decision); }
@@ -1296,6 +1301,8 @@ body { background: var(--bg); }
 .automation-state.a-at-risk { color: var(--danger) !important; }
 .automation-state.a-not-assessed { color: var(--faint) !important; }
 .focus-aux { display: none; }
+.focus-aux.node-links { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.node-links .focus-link { font-size: 12px; line-height: 1.5; min-height: 24px; padding: 3px 0; overflow-wrap: anywhere; }
 .focus-link { border: 0; background: none; color: var(--accent); padding: 0; font: 550 10.5px var(--font); text-decoration: none; cursor: pointer; }
 #detail .panel-actions { width: 205px; flex: none; align-items: center; padding: 20px; border: 0; border-left: 1px solid var(--border); }
 .pa-btn.primary-action { width: 100%; flex: none; padding: 13px 16px; border-color: var(--accent); background: var(--accent); color: white; border-radius: 11px; }
@@ -3542,8 +3549,8 @@ g.node.multi-selected .sel-ring { opacity: .55; }
 g.node.multi-selected .shape { stroke: var(--sel); stroke-width: 2; }
 
 /* Keyboard focus on a node is a clear outline; mouse clicks stay quiet. */
-g.node:focus { outline: none; }
-g.node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+g.node:focus, g.node-body:focus { outline: none; }
+g.node:focus-visible, g.node-body:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* The collapse toggle hides the minimap but stays beside it. */
 #minimap.minimap-collapsed { display: none; }

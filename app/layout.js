@@ -21,7 +21,11 @@ export const EDGE_LABEL_SIZE = { w: 192, h: 28 };
 const EDGE_LABEL_FONT = '600 11px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
 export function edgeLabelText(text) {
   const width = EDGE_LABEL_SIZE.w - 24;
-  return measure(text, EDGE_LABEL_FONT) <= width ? text : ellipsize(text, width, EDGE_LABEL_FONT);
+  return fitText(text, width, EDGE_LABEL_FONT);
+}
+
+export function fitText(text, maxWidth, font = CARD_FONT) {
+  return measure(text, font) <= maxWidth ? text : ellipsize(text, maxWidth, font);
 }
 
 export function wrapText(text, maxWidth, font = `600 ${FONT}`, maxLines = 3) {
@@ -49,7 +53,7 @@ export function wrapText(text, maxWidth, font = `600 ${FONT}`, maxLines = 3) {
 // ── node sizing ──────────────────────────────────────────────────────
 const HEADER_FONT = '650 14px ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif';
 // Match the full-size .node .label typography; overview labels are smaller.
-const CARD_FONT = '650 14.25px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
+export const CARD_FONT = '650 14.25px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
 
 function sizeNode(node, model) {
   const isContainer = !!node.children;
@@ -69,7 +73,7 @@ function sizeNode(node, model) {
   const labelWidth = 132;
   // Also cap unbroken names that exceed wrapText's word-based limit.
   const lines = wrapText(node.label, labelWidth, CARD_FONT, 2)
-    .map((line) => measure(line, CARD_FONT) > labelWidth ? ellipsize(line, labelWidth, CARD_FONT) : line);
+    .map((line) => fitText(line, labelWidth));
   return { w: 200, h: 64, lines };
 }
 

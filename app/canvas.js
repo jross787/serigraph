@@ -7,7 +7,7 @@ import { ancestryOf } from '../shared/model.js';
 import { nodeCost, compactMoney } from '../shared/cost.js';
 import { icon, TYPE_ICONS } from './icons.js';
 import { nodeObservation } from './github.js';
-import { layoutScope, miniTransform, edgePath, smoothEdgePath, routeDirect, routeStyled, routeDragged, routeAutomaticEdges, EDGE_LABEL_SIZE, edgeLabelText, invalidateLayouts } from './layout.js';
+import { layoutScope, miniTransform, edgePath, smoothEdgePath, routeDirect, routeStyled, routeDragged, routeAutomaticEdges, EDGE_LABEL_SIZE, edgeLabelText, invalidateLayouts, wrapText, fitText, CARD_FONT } from './layout.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const el = (tag, attrs = {}, cls = '') => {
@@ -384,7 +384,7 @@ export function zoomBy(factor, cx = vw / 2, cy = vh / 2) {
 // current theme, plus every stylesheet rule that targets canvas marks. Rules
 // with pseudo-classes (hover/focus state) and app-chrome id selectors are
 // skipped — they neither apply nor belong in a standalone file.
-const EXPORT_SELECTORS = ['.node', '.edge', '.grid-dots', '.bundle', '.scope', '.peer', '.identity', '.icon', '.type-chip', '.count-chip', '.sel-ring', '.stack', '.shape', '.link-dot', '.marquee', '#griddots'];
+const EXPORT_SELECTORS = ['.node', '.edge', '.grid-dots', '.bundle', '.scope', '.peer', '.identity', '.icon', '.type-chip', '.count-chip', '.sel-ring', '.stack', '.shape', '.marquee', '#griddots'];
 function exportStylesheet() {
   const cs = getComputedStyle(document.documentElement);
   const vars = [];
@@ -592,6 +592,22 @@ function truncateLabel(text, maxChars) {
   return `${value.slice(0, Math.max(1, maxChars - 1)).trimEnd()}…`;
 }
 
+// Card previews use authored metadata only. Link order chooses the launch
+// destination; other references remain available in the inspector.
+export function nodeCardDetails(node) {
+  const description = String(node.description || '').replace(/\s+/g, ' ').trim();
+  let launch = null;
+  for (const link of node.links ?? []) {
+    try {
+      const url = new URL(link.url);
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) continue;
+      launch = { url: url.href, label: link.label || url.hostname };
+      break;
+    } catch { /* Invalid/relative references never become launch actions. */ }
+  }
+  return { description, launch };
+}
+
 const MINI_NODE_CAP = 90;
 
 // actor tag — who performs this step: a human, a computer, or both.
@@ -623,12 +639,16 @@ const ACTOR_TAGS = {
 function buildNode(n) {
   const node = n.node;
   const isContainer = !!node.children;
+  const details = nodeCardDetails(node);
+  const launch = node.type === 'decision' && !isContainer ? null : details.launch;
+  const observed = !!nodeObservation(node.id);
   const g = el('g', { transform: `translate(${n.x},${n.y})` },
     `node t-${node.type}${isContainer ? ' container' : ''}${state.selectedId === node.id ? ' selected' : ''}${state.selectionIds.has(node.id) ? ' multi-selected' : ''}`);
   g.dataset.id = node.id;
   g.setAttribute('tabindex', '0');
   g.setAttribute('role', 'button');
   g.setAttribute('aria-label', `${node.label} (${node.type})`);
+  if (details.description) g.setAttribute('aria-description', details.description);
 
   // selection ring
   const ringPad = 5;
@@ -662,7 +682,8 @@ function buildNode(n) {
     g.appendChild(el('rect', { x: 5, y: 5, width: n.w, height: n.h, rx: 8 }, 'stack'));
     g.appendChild(nodeShape(n));
     g.appendChild(iconChip(node.type, 13, 10));
-    g.appendChild(textLines(n.lines, 45, 26, 'label', 'start', 19));
+    const lines = launch ? wrapText(node.label, n.w - 87, CARD_FONT, 2).map(line => fitText(line, n.w - 87)) : n.lines;
+    g.appendChild(textLines(lines, 45, 26, 'label', 'start', 19));
     const desc = summaryLines(node.description);
     if (desc.length) g.appendChild(textLines(desc, 14, 58, 'node-summary', 'start', 15));
     const meta = el('text', { x: 14, y: n.h - 15 }, 'node-meta');
@@ -709,8 +730,17 @@ function buildNode(n) {
       g.appendChild(el('path', { d: `M${n.w - 13},0 V13 H${n.w}` }, 'artifact-fold'));
     }
     g.appendChild(iconChip(node.type, 11, (n.h - 24) / 2));
-    const totalH = n.lines.length * 17;
-    g.appendChild(textLines(n.lines, 44, (n.h - totalH) / 2 + 13, 'label'));
+    const labelWidth = launch ? n.w - 84 : 132;
+    const lines = (launch || observed) ? wrapText(node.label, labelWidth, CARD_FONT, observed ? 1 : 2).map(line => fitText(line, labelWidth)) : n.lines;
+    const totalH = lines.length * 17 + (details.description ? 16 : 0);
+    const startY = (n.h - totalH) / 2 + 13;
+    g.appendChild(textLines(lines, 44, startY, 'label'));
+    if (details.description) {
+      const width = n.w - 44 - (ACTOR_TAGS[node.automation] ? 40 : 14);
+      const font = '500 10.5px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
+      const subtitle = textLines([fitText(details.description, width, font)], 44, startY + lines.length * 17, 'node-summary');
+      g.appendChild(subtitle);
+    }
   }
 
   // provenance badge — this element was inferred from a transcript, not
@@ -767,17 +797,6 @@ function buildNode(n) {
     g.appendChild(nb);
   }
 
-  if (node.links.length) {
-    const lg = el('path', {
-      d: 'M6.5 9.5l3-3M5 7l-1.8 1.8a2.3 2.3 0 0 0 3.2 3.2L8.2 10M8 5l1.8-1.8a2.3 2.3 0 0 1 3.2 3.2L11.2 8',
-      fill: 'none', 'stroke-width': 1.5, 'stroke-linecap': 'round',
-      transform: `translate(${n.w - 20},${n.h - 19})`,
-    }, 'link-dot');
-    lg.setAttribute('stroke', 'currentColor');
-    lg.style.color = 'var(--faint)';
-    g.appendChild(lg);
-  }
-
   // cost chip for process maps
   if (node.cost && state.model?.mode !== 'freeform') {
     const cur = state.model?.costModel?.currency ?? 'USD';
@@ -812,13 +831,42 @@ function buildNode(n) {
   }
   const observation = observationBadge(n);
   if (observation) g.append(observation);
+  if (launch) {
+    // The inspect button and external link are siblings, not nested buttons.
+    const group = el('g', { transform: g.getAttribute('transform'), role: 'group', 'aria-label': node.label }, g.getAttribute('class'));
+    group.dataset.id = node.id;
+    g.removeAttribute('transform');
+    g.setAttribute('class', 'node-body');
+    const link = el('a', {
+      href: launch.url, target: '_blank', rel: 'noopener noreferrer', tabindex: '0',
+      transform: `translate(${n.w - 34},8)`,
+      'aria-label': `Open ${launch.label} (new tab)`,
+    }, 'node-launch');
+    link.appendChild(el('rect', { width: 24, height: 24, rx: 5 }, 'node-launch-hit'));
+    const glyph = icon('arrow-square-out', 14);
+    glyph.setAttribute('x', 5); glyph.setAttribute('y', 5);
+    link.appendChild(glyph);
+    const title = el('title'); title.textContent = `Open ${launch.label} (new tab)\n${launch.url}`;
+    link.appendChild(title);
+    // Keep link interaction out of selection, dragging, connect and rename.
+    for (const event of ['pointerdown', 'click', 'dblclick', 'contextmenu']) {
+      link.addEventListener(event, ev => ev.stopPropagation());
+    }
+    link.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter' || ev.key === ' ') ev.stopPropagation();
+    });
+    link.addEventListener('dragstart', ev => ev.preventDefault());
+    group.append(g, link);
+    return group;
+  }
   return g;
 }
 
 function observationBadge(n) {
   const observation = nodeObservation(n.id);
   if (!observation) return null;
-  const badge = el('g', { transform: `translate(${n.w - 78},3)`, role: 'img', 'aria-label': observation.detail }, 'github-observation');
+  const hasLaunch = (n.node.type !== 'decision' || n.node.children) && nodeCardDetails(n.node).launch;
+  const badge = el('g', { transform: `translate(${n.w - 78 - (hasLaunch ? 30 : 0)},3)`, role: 'img', 'aria-label': observation.detail }, 'github-observation');
   badge.append(el('rect', { width: 72, height: 14, rx: 3 }));
   const label = el('text', { x: 36, y: 10, 'text-anchor': 'middle' });
   label.textContent = observation.label;
@@ -1478,9 +1526,10 @@ export function paintSelection(followFocus = true) {
   // focus follows the selection for keyboard users, but only when focus is
   // already inside the canvas — never steal it from panel inputs or dialogs
   if (followFocus && state.selectedId && svg.contains(document.activeElement)
-    && !document.activeElement?.closest?.('.edge')
+    && !document.activeElement?.closest?.('.edge, .node-launch')
     && document.activeElement?.dataset?.id !== state.selectedId) {
-    currentLayer.querySelector(`.node[data-id="${CSS.escape(state.selectedId)}"]`)?.focus({ preventScroll: true });
+    const node = currentLayer.querySelector(`.node[data-id="${CSS.escape(state.selectedId)}"]`);
+    (node?.querySelector('.node-body') ?? node)?.focus({ preventScroll: true });
   }
 }
 
