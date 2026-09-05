@@ -154,8 +154,8 @@ button { font-family: inherit; color: inherit; }
 .tb-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; }
 .tb-right { display: flex; align-items: center; gap: 6px; flex: none; }
 
-.logo { display: flex; align-items: center; gap: 8px; text-decoration: none; color: var(--ink); font-weight: 700; letter-spacing: -.01em; flex: none; }
-.logo-mark { display: block; width: 24px; height: 24px; flex: none; }
+.logo { display: flex; align-items: center; gap: 7px; text-decoration: none; color: var(--ink); font-weight: 700; letter-spacing: -.01em; flex: none; }
+.logo-mark { display: block; width: 22px; height: 22px; flex: none; }
 .logo-word { font-size: 15px; }
 
 .tb-btn {

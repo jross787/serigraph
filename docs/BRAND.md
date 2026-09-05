@@ -45,7 +45,7 @@ the clear central channel keeps the mark readable at toolbar size.
 
 The production source is [app/serigraph-mark.svg](../app/serigraph-mark.svg):
 a `32×32` viewBox, one path and its rotated instance, in signal emerald
-`#3DDC97`. The header uses a `24×24` box; the favicon shares the same source.
+`#3DDC97`. The header uses a `22×22` box; the favicon shares the same source.
 Standalone exports embed it, so branding needs no network connection.
 
 - Keep the two ribbons identical and preserve their spacing.
