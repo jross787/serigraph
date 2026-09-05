@@ -2601,8 +2601,8 @@ body:not([data-workspace-view="map"]) #breadcrumbs { display: none !important; }
 /* Edges carry direction confidently; labels read without squinting. */
 :root[data-theme="dark"] { --edge: #707c7c; }
 .edge path.line { stroke-width: 1.5; }
-.edge .edge-label-bg { rx: 10px; stroke: color-mix(in srgb, var(--edge) 48%, transparent); }
-.edge .edge-label { font-size: 10.5px; font-weight: 600; letter-spacing: .012em; }
+.edge .edge-label-bg { rx: 6px; stroke: color-mix(in srgb, var(--edge) 48%, transparent); }
+.edge .edge-label { font-size: 11px; font-weight: 600; letter-spacing: 0; }
 
 /* Top bar: one rhythm, calmer borders, a lit primary action. */
 #topbar .map-switcher { max-width: 300px; }

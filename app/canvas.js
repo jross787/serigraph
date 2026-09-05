@@ -5,7 +5,7 @@
 import { bus, state } from './state.js';
 import { ancestryOf } from '../shared/model.js';
 import { nodeCost, compactMoney } from '../shared/cost.js';
-import { layoutScope, miniTransform, edgePath, smoothEdgePath, routeDirect, routeStyled, invalidateLayouts } from './layout.js';
+import { layoutScope, miniTransform, edgePath, smoothEdgePath, routeDirect, routeStyled, routeAutomaticEdges, EDGE_LABEL_SIZE, edgeLabelText, invalidateLayouts } from './layout.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const el = (tag, attrs = {}, cls = '') => {
@@ -852,13 +852,16 @@ function buildEdge(e) {
 
   if (e.edge.label) {
     const label = e.edge.label;
-    const tw = label.length * 7.1 + 21;
+    const { w, h } = EDGE_LABEL_SIZE;
     g.appendChild(el('rect', {
-      x: e.labelPos.x - tw / 2, y: e.labelPos.y - 12, width: tw, height: 24, rx: 12,
+      x: e.labelPos.x - w / 2, y: e.labelPos.y - h / 2, width: w, height: h, rx: 6,
     }, 'edge-label-bg'));
-    const t = el('text', { x: e.labelPos.x, y: e.labelPos.y + 4.3, 'text-anchor': 'middle' }, 'edge-label');
-    t.textContent = label;
+    const t = el('text', { x: e.labelPos.x, y: e.labelPos.y, 'text-anchor': 'middle', 'dominant-baseline': 'middle' }, 'edge-label');
+    t.textContent = edgeLabelText(label);
     g.appendChild(t);
+    const title = el('title');
+    title.textContent = label; // The complete wording also remains in the edge inspector.
+    g.appendChild(title);
   }
 
   // custom-route badge at the via point: click to release back to auto-routing
@@ -882,7 +885,7 @@ function buildEdge(e) {
 // so each stays clickable and draggable; a member with a custom route
 // leaves the bundle automatically.
 function fanMember(points, labelPos, i, n, normal) {
-  const spread = 24; // clears the 20px-tall label pills between neighbors
+  const spread = EDGE_LABEL_SIZE.h + 8;
   const o = (i - (n - 1) / 2) * spread;
   return {
     points: points.map((p) => ({ x: p.x + normal.x * o, y: p.y + normal.y * o })),
@@ -1512,13 +1515,16 @@ export function dimExcept(nodeId) {
 
 // ── pointer interactions ─────────────────────────────────────────────
 
-// While a node is being dragged, every edge touching it re-routes live as a
-// direct line; the definitive layout is recomputed on commit.
+// Keep connected labels and arrival ports aligned while dragging. The
+// definitive layout is recomputed on commit; custom routes always win.
 function updateEdgesFor(ln) {
   if (!currentLayout || !currentLayer) return;
   const byId = new Map(currentLayout.nodes.map((n) => [n.id, n]));
+  const changed = new Set();
   for (const e of currentLayout.edges) {
     if (e.edge.from !== ln.id && e.edge.to !== ln.id) continue;
+    changed.add(e);
+    delete e.autoFallback;
     if (e.edge.via || e.edge.route) {
       const a = byId.get(e.edge.from), b = byId.get(e.edge.to);
       const via = e.edge.via ?? routeDirect(a, b).labelPos;
@@ -1526,11 +1532,28 @@ function updateEdgesFor(ln) {
     } else {
       Object.assign(e, routeDirect(byId.get(e.edge.from), byId.get(e.edge.to)));
     }
+  }
+  for (const e of routeAutomaticEdges(currentLayout.nodes, currentLayout.edges)) {
+    changed.add(e);
+  }
+  const bundles = new Set();
+  for (const e of changed) {
     const old = currentLayer.querySelector(`.edge[data-index="${e.index}"]`);
     if (!old) continue;
-    old.closest('.bundle')?.classList.add('open'); // reveal the cables while their node moves
+    const bundle = old.closest('.bundle');
+    if (bundle) { bundles.add(bundle); continue; }
     const fresh = buildEdge(e);
     fresh.setAttribute('class', old.getAttribute('class'));
+    old.replaceWith(fresh);
+  }
+  for (const old of bundles) {
+    const members = currentLayout.edges.filter((e) => old.querySelector(`.edge[data-index="${e.index}"]`));
+    const fresh = buildBundle(members, currentLayout);
+    fresh.setAttribute('class', old.getAttribute('class'));
+    fresh.classList.add('open');
+    for (const edge of fresh.querySelectorAll('.edge')) {
+      edge.setAttribute('class', old.querySelector(`.edge[data-index="${edge.dataset.index}"]`).getAttribute('class'));
+    }
     old.replaceWith(fresh);
   }
 }
@@ -1586,11 +1609,10 @@ function wirePointer() {
     const labelBg = drag.el.querySelector('.edge-label-bg');
     const label = drag.el.querySelector('.edge-label');
     if (labelBg && label) {
-      const tw = Number(labelBg.getAttribute('width'));
-      labelBg.setAttribute('x', route.labelPos.x - tw / 2);
-      labelBg.setAttribute('y', route.labelPos.y - 10);
+      labelBg.setAttribute('x', route.labelPos.x - EDGE_LABEL_SIZE.w / 2);
+      labelBg.setAttribute('y', route.labelPos.y - EDGE_LABEL_SIZE.h / 2);
       label.setAttribute('x', route.labelPos.x);
-      label.setAttribute('y', route.labelPos.y + 3.8);
+      label.setAttribute('y', route.labelPos.y);
     }
     drag.via = w;
   };

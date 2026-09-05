@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { parseMap } from '../shared/model.js';
 import { state } from '../app/state.js';
 import * as edit from '../app/edit.js';
+import { routeAutomaticEdges, routeDirect, EDGE_LABEL_SIZE } from '../app/layout.js';
 
 const BASE = `# pinned-position test map — top comment
 name: Pins
@@ -111,4 +112,53 @@ test('updateNode leaves an existing position untouched', () => {
   const { out, model } = reserialize();
   assert.deepEqual(model.byId.get('qualify').position, { x: 640, y: -120 });
   assert.ok(out.includes('position: { x: 640, y: -120 }'));
+});
+
+test('automatic fan-in aligns labels and square arrivals without moving pins or replacing explicit routes', () => {
+  for (const direction of [1, -1]) {
+    const nodes = Array.from({ length: 6 }, (_, i) => ({ id: `source-${i}`, x: direction > 0 ? 0 : 520, y: i * 96, w: 200, h: 64, pinned: true }));
+    const target = { id: 'target', x: direction > 0 ? 520 : 0, y: 192, w: 200, h: 64, pinned: true };
+    nodes.push(target);
+    const before = structuredClone(nodes);
+    const edges = nodes.slice(0, 6).map((n, i) => ({
+      index: i, edge: { from: n.id, to: target.id, label: `Description ${i}` }, ...routeDirect(n, target),
+    }));
+    const fallback = structuredClone(edges);
+    routeAutomaticEdges(nodes, edges);
+    assert.deepEqual(nodes, before, 'routing never moves nodes or modifies pins');
+    assert.equal(new Set(edges.map(e => e.labelPos.x)).size, 1, 'one label column');
+    assert.equal(new Set(edges.map(e => e.points.at(-1).y)).size, edges.length, 'separate arrival ports');
+    for (const [i, e] of edges.entries()) {
+      assert.equal(e.labelPos.y, nodes[i].y + nodes[i].h / 2, 'label stays on its source row');
+      assert.equal(e.points.at(-1).x, direction > 0 ? target.x : target.x + target.w);
+      assert.equal(e.points.at(-1).y, e.points.at(-2).y, 'arrow enters horizontally');
+      assert.ok(Math.abs(e.points[1].x - e.labelPos.x) >= EDGE_LABEL_SIZE.w / 2 + 12, 'label clears the turn');
+      for (let j = 1; j < e.points.length; j++) {
+        assert.ok(e.points[j].x === e.points[j - 1].x || e.points[j].y === e.points[j - 1].y, 'orthogonal segments');
+      }
+    }
+    const repeat = structuredClone(edges);
+    routeAutomaticEdges(nodes, edges);
+    assert.deepEqual(edges, repeat, 'routing is deterministic');
+
+    edges[0].edge.route = 'straight';
+    edges[1].edge.via = { x: 380, y: -60 };
+    const explicit = structuredClone(edges.slice(0, 2));
+    routeAutomaticEdges(nodes, edges);
+    assert.deepEqual(edges.slice(0, 2), explicit, 'explicit routes win');
+
+    const obstacle = { id: 'obstacle', x: direction > 0 ? 260 : 360, y: 260, w: 60, h: 72 };
+    const changed = routeAutomaticEdges([...nodes, obstacle], edges);
+    assert.deepEqual(edges.slice(0, 2), explicit, 'obstructions do not replace explicit routes');
+    for (let i = 2; i < edges.length; i++) {
+      assert.deepEqual(edges[i].points, fallback[i].points, 'a newly obstructed corridor restores the fallback');
+      assert.ok(changed.has(edges[i]), 'fallback restoration requests a redraw during dragging');
+    }
+  }
+  const a = { id: 'a', x: 0, y: 0, w: 200, h: 64 };
+  const b = { id: 'b', x: 248, y: 0, w: 200, h: 64 };
+  const unlabeled = { index: 0, edge: { from: a.id, to: b.id }, points: [], labelPos: {} };
+  routeAutomaticEdges([a, b], [unlabeled]);
+  assert.ok(unlabeled.labelPos.x > a.x + a.w && unlabeled.labelPos.x < b.x, 'an unlabeled route seed stays between cards');
+  assert.equal(unlabeled.labelPos.y, 32, 'seed lies on the horizontal route');
 });
