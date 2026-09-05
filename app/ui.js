@@ -15,6 +15,7 @@ import * as canvas from './canvas.js';
 import { ICONS } from './canvas.js';
 import { opportunityDefaults, calculateOpportunity, assessOpportunity } from './opportunity.js';
 import { disconnectWorkbenchLink, useWorkbenchCopy, sendLocalCopy } from './workbench-sync.js';
+import { renderCatalog } from './catalog.js';
 
 let fieldId = 0;
 
@@ -156,6 +157,9 @@ function renderMapMode() {
     button.title = freeform ? 'Freeform map. Choose another mode' : 'Process map. Choose another mode';
   }
   if (label) label.textContent = freeform ? 'Freeform' : 'Process';
+  const catalogButton = document.getElementById('btn-catalog');
+  if (catalogButton) catalogButton.hidden = !state.model?.dataExplorer;
+  if (!state.model?.dataExplorer) catalogView.open = false;
   const workspaces = document.getElementById('workspace-switcher');
   if (workspaces) workspaces.hidden = freeform || !state.model;
   const economics = document.getElementById('btn-economics');
@@ -996,12 +1000,60 @@ let editMode = false;
 let automationMode = false;
 let contextActionsArmed = null;
 let scenarioNodeId = null;
+const catalogView = { open: false, systemId: '', objectId: null, fieldId: '', query: '' };
+
+export function toggleCatalog(force, systemId = '') {
+  const open = force ?? !catalogView.open;
+  if (open && !state.model?.dataExplorer) return;
+  Object.assign(catalogView, { open, systemId, objectId: null, fieldId: '', query: '' });
+  editMode = false;
+  automationMode = false;
+  if (!open) state.detailNodeId = state.selectedId;
+  hideContextActions();
+  clearScenarioPreview();
+  renderDetail();
+  if (open) document.querySelector('#detail input')?.focus();
+  else document.getElementById('btn-catalog')?.focus();
+}
+
+export function closeCatalog() {
+  if (!catalogView.open) return false;
+  toggleCatalog(false);
+  return true;
+}
+
+function renderCatalogDetail(panel) {
+  panel.hidden = false;
+  panel.classList.remove('editing', 'edge-detail', 'automation-lens');
+  hideContextActions();
+  renderCatalog(panel, state.model, catalogView, h, {
+    close: closeCatalog,
+    change: patch => {
+      Object.assign(catalogView, patch);
+      renderDetail();
+      panel.querySelector('[data-catalog-heading], input')?.focus();
+    },
+    locate: async object => {
+      await ctrl.gotoNode(object.system);
+      if (catalogView.open && catalogView.objectId === object.id) {
+        panel.querySelector('[data-catalog-locate]')?.focus({ preventScroll: true });
+      }
+    },
+  });
+}
 
 export function armContextActions(nodeId) {
   contextActionsArmed = nodeId;
 }
 
 export function showDetail(nodeId, { edit = false } = {}) {
+  if (edit) catalogView.open = false;
+  if (catalogView.open && state.model?.dataExplorer.objects.some(object => object.system === nodeId)) {
+    const inspected = state.model.dataExplorer.objects.find(object => object.id === catalogView.objectId);
+    if (inspected ? inspected.system !== nodeId : catalogView.systemId !== nodeId) {
+      Object.assign(catalogView, { systemId: nodeId, objectId: null, fieldId: '', query: '' });
+    }
+  }
   editMode = edit;
   automationMode = false;
   state.detailNodeId = nodeId;
@@ -1011,6 +1063,8 @@ export function showDetail(nodeId, { edit = false } = {}) {
   });
 }
 export function hideDetail() {
+  catalogView.open = false;
+  document.getElementById('btn-catalog')?.setAttribute('aria-expanded', 'false');
   editMode = false;
   automationMode = false;
   state.detailNodeId = null;
@@ -1463,6 +1517,10 @@ function linkifiedDesc(text) {
 
 function renderDetail() {
   const panel = document.getElementById('detail');
+  const catalogOpen = catalogView.open && !!state.model?.dataExplorer;
+  panel.classList.toggle('catalog-detail', catalogOpen);
+  document.getElementById('btn-catalog')?.setAttribute('aria-expanded', String(catalogOpen));
+  if (catalogOpen) return renderCatalogDetail(panel);
   const nodeId = state.detailNodeId;
   const node = nodeId ? state.model?.byId.get(nodeId) : null;
 
@@ -1774,6 +1832,11 @@ function renderDetail() {
         : node.planning
           ? h('button', { class: 'pa-btn primary-action', onClick: () => { editMode = true; renderDetail(); } }, 'Edit requirement →')
           : h('button', { class: 'pa-btn primary-action', onClick: () => beginAutomation(node) }, 'Design automation →')));
+  }
+  if (!editMode && state.model.dataExplorer?.objects.some(object => object.system === node.id)) {
+    const actions = panel.querySelector('.panel-actions') ?? h('div', { class: 'panel-actions' });
+    actions.prepend(h('button', { class: 'pa-btn catalog-entry', onClick: () => toggleCatalog(true, node.id) }, 'Explore data →'));
+    if (!actions.isConnected) panel.append(actions);
   }
 }
 
@@ -2808,6 +2871,15 @@ function workbenchConflictDialog(connection) {
 // ── reactive wiring ──────────────────────────────────────────────────
 export function initUI() {
   initPalette();
+  bus.on('map-opened', () => { catalogView.open = false; });
+  document.getElementById('btn-catalog')?.addEventListener('click', () => toggleCatalog());
+  document.getElementById('detail').addEventListener('keydown', ev => {
+    if (catalogView.open && ev.key === 'Escape') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      closeCatalog();
+    }
+  });
   bus.on('map-opened', () => { econOverride = null; econExpanded = false; });
   bus.on('view-changed', () => {
     contextActionsArmed = null;
@@ -2819,6 +2891,7 @@ export function initUI() {
     renderCanvasMessage();
     renderEconomics();
     if (state.workspaceView !== 'map') hideDetail();
+    else if (catalogView.open) renderDetail();
     else if (state.selectedId) showDetail(state.selectedId);
     else if (state.selectedEdge == null) hideDetail();
     const mm = document.getElementById('minimap');
@@ -2829,6 +2902,11 @@ export function initUI() {
   bus.on('selection-changed', () => {
     clearTimeout(panelTimer);
     if (state.workspaceView !== 'map') { hideDetail(); return; }
+    if (catalogView.open) {
+      if (state.selectedId) showDetail(state.selectedId);
+      else renderDetail();
+      return;
+    }
     if (contextActionsArmed !== state.selectedId) hideContextActions();
     if (state.selectedId) {
       // open just past the double-click window: the first click of a

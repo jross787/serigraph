@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseMap } from '../shared/model.js';
+import { catalogObjects } from '../app/catalog.js';
 
 const catalog = () => ({
   name: 'Synthetic catalog', mode: 'freeform',
@@ -11,6 +12,30 @@ const catalog = () => ({
     fieldBindings: [{ object: 'orders', sourceField: 'OrderId', sourceDataType: 'string', canonicalField: 'order.id' }],
     flows: [{ id: 'sync', from: 'orders', to: 'orders', method: 'api', label: 'Sync' }],
   },
+});
+
+test('catalog browsing finds field locations and follows directed connections without changing the map', () => {
+  const input = catalog();
+  input.elements.push({ id: 'warehouse', type: 'database', label: 'Warehouse' });
+  input.dataExplorer.objects.push({ id: 'report', system: 'warehouse', sourceName: 'Order report', entityType: 'order', authority: 'analytical' });
+  input.dataExplorer.fieldBindings.push({ object: 'report', sourceField: 'ORDER_ID', sourceDataType: 'varchar', canonicalField: 'order.id' });
+  input.dataExplorer.flows.push({ id: 'replicate', from: 'orders', to: 'report', method: 'file', label: 'Reporting copy' });
+  const { model, doc } = parseMap(JSON.stringify(input));
+  const before = doc.toString();
+  assert.deepEqual(catalogObjects(model, { fieldId: 'order.id' }).map(object => object.id), ['orders', 'report']);
+  assert.deepEqual(catalogObjects(model, { query: 'warehouse order_id' }).map(object => object.id), ['report']);
+  assert.deepEqual(catalogObjects(model, { systemId: 'source', query: 'Order ID' }).map(object => object.id), ['orders']);
+  assert.deepEqual(catalogObjects(model, { query: 'not-documented' }), []);
+  const [source, report] = catalogObjects(model);
+  assert.equal(source.bindings[0].field.label, 'Order ID');
+  assert.equal(source.connections[0].direction, 'internal');
+  assert.equal(source.connections[1].direction, 'outgoing');
+  assert.equal(source.connections[1].peer.id, 'report');
+  assert.equal(report.connections[0].direction, 'incoming');
+  assert.equal(report.connections[0].peer.id, 'orders');
+  assert.equal(doc.toString(), before);
+  assert.deepEqual(model.dataExplorer, input.dataExplorer);
+  assert.deepEqual(catalogObjects(null), []);
 });
 
 test('catalog survives a map edit and appears in the normalized model', () => {

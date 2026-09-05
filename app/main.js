@@ -321,6 +321,7 @@ function wireKeyboard() {
       return;
     }
     if (isTyping() || dialogOpen() || state.presenting) return;
+    if (ev.target.closest?.('.catalog-detail')) return;
 
     if (meta && !ev.shiftKey && ev.key.toLowerCase() === 'z') { ev.preventDefault(); ctrl.undo(); return; }
     if (meta && ev.shiftKey && ev.key.toLowerCase() === 'z') { ev.preventDefault(); ctrl.redo(); return; }
@@ -339,6 +340,7 @@ function wireKeyboard() {
         if (state.connectFrom) { state.connectFrom = null; state.pendingEdgeLabel = null; canvas.paintSelection(); ui.toast('Connect cancelled'); }
         else if (state.activeTool !== 'select') workbench.cancelTool();
         else if (!document.getElementById('templates-panel').hidden) ui.toggleTemplates(false);
+        else if (ui.closeCatalog()) { /* preserve the map's scope and selection */ }
         else if (state.scopeId != null) ctrl.riseUp(); // one level per press, always
         else if (state.selectedId || state.selectedEdge != null) { ctrl.clearSelection(); ui.hideDetail(); }
         break;

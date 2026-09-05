@@ -43,5 +43,19 @@ Runtime responses should identify the catalog revision they used and distinguish
 observed, inferred, unknown, and stale state. Catalog metadata alone is not proof
 that an API is healthy, a record exists, or a transfer happened.
 
-This first boundary does not add live polling, connector credentials, an embedded
-record explorer, or authentication. Those are subsequent integration slices.
+## Browsing a catalog
+
+Open a map with `dataExplorer` and choose **Data catalog** in the top bar, or
+select a system and choose **Explore data** in its inspector. The read-only panel
+searches systems, objects, source-field names, and canonical fields. Open an object
+to inspect its field mappings and declared connections; choose a canonical field
+to find its other locations, or a connection to inspect the linked object.
+**Show system on map** locates the object's system without leaving the catalog.
+Closing the panel preserves the map's scope and selection. Maps without catalog
+metadata do not show these controls.
+
+This uses the catalog already loaded with the map; it makes no Explorer requests
+and does not write catalog data. Mappings, authority labels, and connections are
+declarations, not proof of actual records, transfers, or health. Live polling,
+connector credentials, embedded record investigations, and authentication remain
+separate, unfinished work.

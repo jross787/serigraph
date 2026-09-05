@@ -23,6 +23,7 @@ const MODULE_FILES = [
   'app/flow.js',
   'app/product.js',
   'app/ui.js',
+  'app/catalog.js',
   'app/present.js',
   'app/workbench.js',
   'app/workbench-sync.js',
