@@ -11,6 +11,11 @@ function measure(text, font = `600 ${FONT}`) {
   return mctx.measureText(text).width;
 }
 
+function ellipsize(text, maxWidth, font) {
+  while (text && measure(text + '…', font) > maxWidth) text = text.slice(0, -1).trimEnd();
+  return text + '…';
+}
+
 export function wrapText(text, maxWidth, font = `600 ${FONT}`, maxLines = 3) {
   const words = String(text).split(/\s+/).filter(Boolean);
   const lines = [];
@@ -28,15 +33,15 @@ export function wrapText(text, maxWidth, font = `600 ${FONT}`, maxLines = 3) {
   if (lines.length < maxLines && line) lines.push(line);
   const used = lines.join(' ');
   if (used.length < words.join(' ').length) {
-    let last = lines[lines.length - 1] ?? '';
-    while (last && measure(last + '…', font) > maxWidth) last = last.slice(0, -1).trimEnd();
-    lines[lines.length - 1] = (last || '') + '…';
+    lines[lines.length - 1] = ellipsize(lines[lines.length - 1] ?? '', maxWidth, font);
   }
   return lines;
 }
 
 // ── node sizing ──────────────────────────────────────────────────────
 const HEADER_FONT = '650 14px ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif';
+// Match the full-size .node .label typography; overview labels are smaller.
+const CARD_FONT = '650 14.25px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
 
 function sizeNode(node, model) {
   const isContainer = !!node.children;
@@ -52,11 +57,12 @@ function sizeNode(node, model) {
     const lw = Math.max(...lines.map((l) => measure(l)), 40);
     return { w: Math.max(120, Math.min(148, lw + 40)), h: Math.max(88, lines.length * 17 + 44), lines };
   }
-  const lines = wrapText(node.label, 148, `600 ${FONT}`, 3);
-  const lw = Math.max(...lines.map((l) => measure(l)), 30);
-  const w = Math.max(120, Math.min(220, lw + 64));
-  const h = Math.max(48, lines.length * 17 + 30);
-  return { w, h, lines };
+  // Peer cards share a footprint; reserve room for the icon and corner badges.
+  const labelWidth = 132;
+  // Also cap unbroken names that exceed wrapText's word-based limit.
+  const lines = wrapText(node.label, labelWidth, CARD_FONT, 2)
+    .map((line) => measure(line, CARD_FONT) > labelWidth ? ellipsize(line, labelWidth, CARD_FONT) : line);
+  return { w: 200, h: 64, lines };
 }
 
 // ── connected components + dagre + shelf packing ────────────────────
