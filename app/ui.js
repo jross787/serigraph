@@ -1044,9 +1044,6 @@ export function showDetail(nodeId, { edit = false } = {}) {
   automationMode = false;
   state.detailNodeId = nodeId;
   renderDetail();
-  requestAnimationFrame(() => {
-    if (!state.presenting && state.detailNodeId === nodeId) canvas.ensureVisible(nodeId);
-  });
 }
 export function hideDetail() {
   catalogView.open = false;

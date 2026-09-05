@@ -1406,21 +1406,6 @@ export function centerOn(nodeId, ms = 420) {
 
 export const getLayout = () => currentLayout;
 
-// pan the node into view if it's off-screen or hidden by a panel resize
-export function ensureVisible(nodeId, margin = 30) {
-  const instances = state.model?.mode === 'freeform' ? visibleInstances(nodeId) : [];
-  if (instances.length > 1) {
-    const usable = usableViewport();
-    return animateCamera(fitCamera(boundsAround(instances), usable.width <= 700 ? 120 : Math.max(80, margin), 1.05, usable), 320);
-  }
-  const n = currentLayout?.nodes.find((x) => x.id === nodeId);
-  if (!n) return;
-  const x1 = camera.x + n.x * camera.k, y1 = camera.y + n.y * camera.k;
-  const x2 = x1 + n.w * camera.k, y2 = y1 + n.h * camera.k;
-  const usable = usableViewport();
-  if (x1 < margin || y1 < margin || x2 > usable.width - margin || y2 > usable.height - margin) centerOn(nodeId, 320);
-}
-
 // ── selection visuals (no re-render) ─────────────────────────────────
 export function paintSelection() {
   if (!currentLayer) return;

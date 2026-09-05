@@ -624,7 +624,7 @@ export function selectNode(nodeId) {
   state.selectedId = nodeId;
   state.selectedEdge = null;
   canvas.paintSelection();
-  canvas.focusOn(nodeId);
+  // Inspection does not navigate. Search/deep links still explicitly focus.
   writeHash();
   bus.emit('selection-changed');
 }
