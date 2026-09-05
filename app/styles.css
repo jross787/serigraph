@@ -627,6 +627,8 @@ body.presenting #economics { display: none; }
 .node:hover .count-chip-bg { fill: var(--accent); stroke: var(--accent); }
 .node .count-chip-txt { fill: var(--muted); font-size: 10px; font-weight: 700; pointer-events: none; }
 .node:hover .count-chip-txt { fill: var(--accent-ink); }
+.count-chip-icon { color: var(--muted); }
+.node:hover .count-chip-icon { color: var(--accent-ink); }
 
 .node.selected .shape { stroke: var(--sel); stroke-width: 2.2; }
 .node .sel-ring { fill: none; stroke: var(--sel); stroke-width: 1.6; opacity: 0; }
@@ -2385,7 +2387,7 @@ body:not([data-workspace-view="map"]) #breadcrumbs { display: none !important; }
 .requirement-facts dd { margin: 4px 0 0; color: var(--ink); font-size: 10px; font-weight: 620; }
 .acceptance-list { display: grid; gap: 6px; margin: 12px 0 0; padding: 0; list-style: none; }
 .acceptance-list li { position: relative; padding-left: 17px; color: var(--muted); font-size: 10.5px; line-height: 1.5; }
-.acceptance-list li::before { content: '✓'; position: absolute; left: 0; color: var(--ok-strong); font-weight: 800; }
+.acceptance-list li > .ui-icon { position: absolute; left: 0; top: 2px; color: var(--ok-strong); }
 .requirement-proof {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

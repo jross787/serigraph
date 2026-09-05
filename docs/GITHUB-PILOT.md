@@ -41,11 +41,38 @@ its current interpretation. Details are on demand, not fetched for every PR.
 GitHub's summary endpoints may include body fields in their JSON; the reader
 discards them and makes no requests for comments, diffs, logs or attachments.
 
+## Refresh and limits
+
+- One 10-minute timer runs only with a bound map open in the foreground Map view.
+  Hidden tabs, another view/map, removal of the last binding, and home stop it.
+  Browser requests are aborted and late results discarded. An already-started
+  bounded server read may finish for another consumer; the server never polls.
+- Manual/automatic reads share in-flight work and a 60-second snapshot cache.
+  Cached results keep their original fetch time. ETags conditionally validate up
+  to 24 small metadata-only endpoint entries; at most 8 snapshots are retained in
+  process memory, with no database or persistence.
+- Each repository refresh takes at most 5 GitHub requests; one inspected PR takes
+  at most 3. The process enforces 40 requests per rolling hour, including conditional
+  requests. Ten-minute polling normally uses 30/hour, leaving a small manual budget.
+  Other tools on the same IP can still consume GitHub's unauthenticated allowance.
+- Rate-limit/reset and Retry-After headers pause reads. Other failures use bounded
+  exponential backoff. No browser retries before the reported pause expires;
+  automatic retries remain conservative. Old successful data retains its timestamp,
+  an observation older than 10 minutes is stale, and fetch failure is not CI failure.
+- Open inspector sections and camera stay put across refresh. PR evidence is
+  fetched on demand and explicitly names its captured head and time; a subsequent
+  list that no longer covers that head invalidates it.
+
+The source API behavior follows GitHub's [workflow run documentation](https://docs.github.com/en/rest/actions/workflow-runs)
+and [rate-limit guidance](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api).
+
 ## Verification
 
 Use a synthetic development library for browser checks. The automated checks use
 synthetic responses for head qualification, private/invalid/oversized/denied reads,
-safe links and response minimization. Reuse the existing standalone export and
+safe links, response minimization, issue/PR separation, PR head qualification,
+conditional caching, deduplication, budget/backoff/recovery and hidden/map-switch
+late-response handling. Reuse the existing standalone export and
 geometry checks. Do not commit raw API responses or private source data.
 
 The September 5 local app read was compared directly with the public repository:

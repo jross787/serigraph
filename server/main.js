@@ -32,7 +32,7 @@ import {
   watchWorkbench,
 } from './workbench-sync.js';
 import { ROOT, LIBRARY_ROOT } from './env.js';
-import { createGitHubReader, GITHUB_SOURCE } from './github.js';
+import { createGitHubReader, GITHUB_SOURCE, GITHUB_REFRESH_MS } from './github.js';
 
 const github = process.env.SERIGRAPH_GITHUB_PILOT === '1' ? createGitHubReader() : null;
 
@@ -657,15 +657,15 @@ async function handleApi(req, res, url) {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', ...]
   if (parts[1] === 'github') {
     if (req.method !== 'GET') return json(res, 405, { error: 'GitHub pilot is read-only.' });
-    if (parts.length === 2) return json(res, 200, { enabled: !!github, ...GITHUB_SOURCE });
+    if (parts.length === 2) return json(res, 200, { enabled: !!github, ...GITHUB_SOURCE, refreshMs: GITHUB_REFRESH_MS });
     if (!github) return json(res, 404, { error: 'GitHub pilot is not enabled.' });
     if (parts.length === 3 && parts[2] === 'observation' && !url.search) {
       try { return json(res, 200, await github.observation()); }
-      catch { return json(res, 502, { error: 'GitHub observation unavailable. Retry later.' }); }
+      catch (error) { return json(res, error.status || 502, { error: error.retryAt ? error.message : 'GitHub observation unavailable.', retryAt: error.retryAt ?? null }); }
     }
     if (parts.length === 4 && parts[2] === 'pulls' && /^\d{1,10}$/.test(parts[3]) && !url.search) {
       try { return json(res, 200, await github.pullChecks(Number(parts[3]))); }
-      catch { return json(res, 502, { error: 'Pull request evidence unavailable. Retry later.' }); }
+      catch (error) { return json(res, error.status || 502, { error: error.retryAt ? error.message : 'Pull request evidence unavailable.', retryAt: error.retryAt ?? null }); }
     }
     return json(res, 400, { error: 'Only the approved public source operation is available.' });
   }

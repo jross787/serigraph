@@ -2862,6 +2862,9 @@ export function initUI() {
         current.replaceWith(next);
         if (action) next.querySelector(`[data-github-action="${CSS.escape(action)}"]`)?.focus({ preventScroll: true });
       } else current.remove();
+    } else if (node && !editMode && !catalogView.open && !automationMode) {
+      const next = renderGitHubGlance(node);
+      if (next) document.querySelector('#detail .focus-shelf-body')?.prepend(next);
     }
   });
   bus.on('view-changed', () => {

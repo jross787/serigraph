@@ -1179,7 +1179,9 @@ function keyRow(cls, label) {
   const svg = s('svg', { viewBox: '0 0 34 12', class: `flow-key-swatch ${cls}` });
   if (cls === 'flow-key-payload') {
     svg.append(s('circle', { cx: 17, cy: 6, r: 4 }));
-  } else if (cls !== 'flow-key-flag') {
+  } else if (cls === 'flow-key-flag') {
+    const flag = icon('flag', 12); flag.setAttribute('x', 11); svg.append(flag);
+  } else {
     svg.append(s('line', { x1: 2, y1: 6, x2: 32, y2: 6 }));
   }
   return h('div', { class: 'flow-key-row' }, svg, h('span', {}, label));

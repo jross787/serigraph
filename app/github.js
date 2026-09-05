@@ -5,9 +5,28 @@ import { icon } from './icons.js';
 
 let active = null;
 let pullRequest = null;
+let activeTask = null;
+let timer = null;
 let generation = 0;
 const bindingKey = () => `serigraph:github:${state.libraryId}:${state.mapId}`;
 const announce = () => bus.emit('github-changed');
+function visible() {
+  return !state.standalone && !document.hidden && state.workspaceView === 'map'
+    && !!state.mapId && state.github?.mapKey === bindingKey() && state.github.bindings.some(id => state.model?.byId.has(id));
+}
+function stop() {
+  clearTimeout(timer); timer = null;
+  generation++; active?.abort(); active = null; activeTask = null;
+  pullRequest?.abort(); pullRequest = null;
+  if (state.github) { state.github.loading = false; state.github.pullLoading = false; }
+}
+function schedule() {
+  clearTimeout(timer); timer = null;
+  if (!visible()) return;
+  const github = state.github;
+  const due = Math.max(github.retryAt ?? 0, github.result?.refreshAfter ?? 0, Date.parse(github.result?.fetchedAt ?? '') + github.config.refreshMs || 0);
+  timer = setTimeout(refreshGitHub, Math.max(1000, due - Date.now()));
+}
 function h(tag, props = {}, ...children) {
   const el = document.createElement(tag);
   for (const [key, value] of Object.entries(props)) {
@@ -36,15 +55,24 @@ export function ciSummary(result) {
 
 export function nodeObservation(id) {
   const github = state.github;
-  if (state.standalone || !github?.bindings.includes(id)) return null;
-  const label = github.error ? (github.result ? 'CI stale' : 'CI unavailable') : github.loading && !github.result ? 'CI loading' : ciSummary(github.result);
+  if (state.standalone || github?.mapKey !== bindingKey() || !github?.bindings.includes(id)) return null;
+  const stale = github.result && Date.now() - Date.parse(github.result.fetchedAt) >= github.config.refreshMs;
+  const label = github.error || stale ? (github.result ? 'CI stale' : 'CI unavailable') : github.loading && !github.result ? 'CI loading' : ciSummary(github.result);
   return { label, detail: `${label} · ${github.config.repo} · ${github.config.branch} · ${github.result?.sha ?? 'commit unknown'} · fetched ${time(github.result?.fetchedAt)} · bounded sample, not production health` };
 }
 
-export async function refreshGitHub() {
-  if (!state.github?.bindings.length || state.standalone) return;
+export function refreshGitHub() {
+  if (!visible()) return Promise.resolve();
+  if (activeTask) return activeTask;
+  if (Date.now() < (state.github.retryAt ?? 0)) { schedule(); announce(); return Promise.resolve(); }
+  activeTask = readObservation();
+  return activeTask;
+}
+
+async function readObservation() {
   const token = ++generation;
-  active?.abort();
+  clearTimeout(timer); timer = null;
+  pullRequest?.abort(); pullRequest = null; state.github.pullLoading = false;
   active = new AbortController();
   state.github.loading = true;
   announce();
@@ -53,6 +81,7 @@ export async function refreshGitHub() {
     if (token !== generation) return;
     state.github.result = result;
     state.github.error = null;
+    state.github.retryAt = result.pausedUntil;
     const detail = state.github.pull;
     if (detail && result.pulls?.items?.find(item => item.number === detail.pull.number)?.sha !== detail.pull.sha) {
       state.github.pull = null;
@@ -61,8 +90,9 @@ export async function refreshGitHub() {
   } catch (error) {
     if (token !== generation) return;
     state.github.error = error.message;
+    state.github.retryAt = Math.max(error.data?.retryAt ?? 0, Date.now() + state.github.config.refreshMs);
   } finally {
-    if (token === generation) { state.github.loading = false; active = null; announce(); }
+    if (token === generation) { state.github.loading = false; active = null; activeTask = null; announce(); schedule(); }
   }
 }
 
@@ -73,10 +103,11 @@ function bindNode(id, enabled) {
   catch { bus.emit('toast', 'Could not save the local GitHub binding.', true); return; }
   state.github.bindings = bindings;
   if (bindings.length) refreshGitHub();
-  else { generation++; active?.abort(); active = null; state.github.result = null; state.github.loading = false; announce(); }
+  else { stop(); state.github.result = null; announce(); }
 }
 
 async function inspectPull(number) {
+  if (!visible() || Date.now() < (state.github.retryAt ?? 0)) return;
   pullRequest?.abort();
   const request = new AbortController(); pullRequest = request;
   const token = generation;
@@ -85,9 +116,11 @@ async function inspectPull(number) {
     const result = await api.githubPullChecks(number, request.signal);
     if (request !== pullRequest || token !== generation) return;
     state.github.pull = result;
+    if (result.pausedUntil) { state.github.retryAt = result.pausedUntil; schedule(); }
   } catch (error) {
     if (request !== pullRequest || token !== generation) return;
     state.github.pullError = error.message;
+    if (error.data?.retryAt) { state.github.retryAt = error.data.retryAt; schedule(); }
   } finally {
     if (request === pullRequest) { pullRequest = null; state.github.pullLoading = false; announce(); }
   }
@@ -110,7 +143,7 @@ function workList(kind, section) {
 
 export function renderGitHubGlance(node) {
   const github = state.github;
-  if (state.standalone || !github?.config?.enabled) return null;
+  if (state.standalone || !github?.config?.enabled || github.mapKey !== bindingKey()) return null;
   const section = h('section', { id: 'github-glance', class: 'panel-section github-glance', 'aria-label': 'GitHub Glance' },
     h('h3', {}, 'GitHub Glance'));
   if (!github.bindings.includes(node.id)) {
@@ -121,9 +154,12 @@ export function renderGitHubGlance(node) {
   const result = github.result;
   section.append(h('p', {}, sourceLink(`https://github.com/${github.config.repo}`, github.config.repo), ` · ${github.config.branch}`),
     h('div', { class: 'github-actions' },
-      h('button', { class: 'pa-btn', 'data-github-action': 'refresh', disabled: github.loading ? '' : null, onClick: refreshGitHub }, icon('arrow-clockwise', 14), github.loading ? 'Refreshing…' : 'Refresh'),
+      h('button', { class: 'pa-btn', 'data-github-action': 'refresh', disabled: github.loading || Date.now() < (github.retryAt ?? 0) ? '' : null, onClick: refreshGitHub }, icon('arrow-clockwise', 14), github.loading ? 'Refreshing…' : 'Refresh'),
       h('button', { class: 'pa-btn', onClick: () => bindNode(node.id, false) }, 'Disconnect')),
     h('p', { class: 'github-state', role: 'status' }, nodeObservation(node.id).label));
+  section.append(h('p', { class: 'github-meta' }, Date.now() < (github.retryAt ?? 0)
+    ? `Refresh paused until ${time(github.retryAt)}.`
+    : visible() ? 'Auto refresh every 10 minutes while this map is visible. Manual reads share a 60-second cache.' : 'Auto refresh paused while this map is not visible.'));
   if (github.error) section.append(h('p', { class: 'github-error' }, `${github.error}${result ? ' Retaining the last observation with its original timestamp.' : ''}`));
   if (!result) return section;
   section.append(h('p', {}, 'Observed head ', sourceLink(`${result.url}/commit/${result.sha}`, result.sha.slice(0, 10))),
@@ -160,17 +196,25 @@ export async function initGitHub() {
   let config;
   try { config = await api.githubConfig(); } catch { return; }
   if (!config.enabled) return;
-  state.github = { config, bindings: [], result: null, error: null, loading: false };
+  state.github = { config, bindings: [], result: null, error: null, loading: false, retryAt: null };
+  const visibilityChanged = () => {
+    if (!visible()) { stop(); announce(); return; }
+    if (!state.github.result || Date.now() >= Math.max(state.github.result.refreshAfter ?? 0, state.github.retryAt ?? 0)) refreshGitHub();
+    else { schedule(); announce(); }
+  };
   const mapChanged = () => {
-    generation++; active?.abort(); active = null; pullRequest?.abort(); pullRequest = null;
+    stop();
+    state.github.mapKey = bindingKey();
     state.github.pull = null; state.github.pullError = null; state.github.pullLoading = false;
     let bindings = [];
     try { bindings = JSON.parse(localStorage.getItem(bindingKey()) || '[]'); } catch { /* invalid local preference */ }
     state.github.bindings = Array.isArray(bindings) ? bindings.filter(id => typeof id === 'string' && state.model?.byId.has(id)) : [];
-    state.github.result = null; state.github.error = null; state.github.loading = false;
+    state.github.result = null; state.github.error = null; state.github.loading = false; state.github.retryAt = null;
     announce();
     if (state.github.bindings.length) refreshGitHub();
   };
-  bus.on('map-opened', mapChanged);
+  const unsubscribers = [bus.on('map-opened', mapChanged), bus.on('view-changed', visibilityChanged)];
+  document.addEventListener('visibilitychange', visibilityChanged);
   mapChanged();
+  return () => { stop(); unsubscribers.forEach(unsubscribe => unsubscribe()); document.removeEventListener('visibilitychange', visibilityChanged); };
 }

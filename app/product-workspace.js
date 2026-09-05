@@ -1,6 +1,7 @@
 // Product-document workspace: multiple useful readings of the same YAML graph.
 // Map is the authoring surface; Brief, Roadmap, and Audit are deterministic views.
 import { state, bus } from './state.js';
+import { icon } from './icons.js';
 import * as ctrl from './controller.js';
 import * as edit from './edit.js';
 import * as canvas from './canvas.js';
@@ -219,7 +220,7 @@ function requirementCard(node, { compact = false } = {}) {
       h('div', {}, h('dt', {}, 'Horizon'), h('dd', {}, labelize(p.phase || 'Unscheduled'))),
       h('div', {}, h('dt', {}, 'Target'), h('dd', {}, p.target || 'Not set')),
       h('div', {}, h('dt', {}, 'Acceptance'), h('dd', {}, `${p.acceptance.length} checks`))),
-    compact || !p.acceptance.length ? null : h('ul', { class: 'acceptance-list' }, p.acceptance.map((item) => h('li', {}, item))),
+    compact || !p.acceptance.length ? null : h('ul', { class: 'acceptance-list' }, p.acceptance.map((item) => h('li', {}, icon('check', 14), item))),
     compact || (!p.evidence.length && !p.risks.length) ? null : h('div', { class: 'requirement-proof' },
       p.evidence.length ? h('section', {}, h('span', {}, 'Evidence'), h('ul', {}, p.evidence.map((item) => h('li', {}, item)))) : null,
       p.risks.length ? h('section', {}, h('span', {}, 'Risks'), h('ul', {}, p.risks.map((item) => h('li', {}, item)))) : null),

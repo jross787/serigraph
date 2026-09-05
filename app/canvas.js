@@ -689,13 +689,9 @@ function buildNode(n) {
     const ct = el('text', { x: 9, y: 13.5 }, 'count-chip-txt');
     ct.textContent = label;
     chip.appendChild(ct);
-    const zi = el('path', {
-      d: 'M2 8h8M6 4l4 4-4 4', fill: 'none', 'stroke-width': 1.8,
-      'stroke-linecap': 'round', 'stroke-linejoin': 'round',
-      transform: `translate(${chipW - 18},${3.5}) scale(0.75)`,
-    }, 'count-chip-txt');
-    zi.style.stroke = 'currentColor';
-    zi.setAttribute('stroke', 'currentColor');
+    const zi = icon('arrow-right', 11);
+    zi.setAttribute('x', chipW - 17); zi.setAttribute('y', 4);
+    zi.classList.add('count-chip-icon');
     chip.appendChild(zi);
     const title = el('title');
     title.textContent = state.model?.mode === 'freeform'
@@ -2096,7 +2092,7 @@ function setMinimapCollapsed(collapsed) {
   minimapBox?.classList.toggle('minimap-collapsed', collapsed);
   try { localStorage.setItem('opsmap.minimapHidden', collapsed ? '1' : '0'); } catch { /* storage blocked */ }
   if (minimapToggle) {
-    minimapToggle.textContent = collapsed ? '+' : '-';
+    minimapToggle.replaceChildren(icon(collapsed ? 'plus' : 'minus', 12));
     minimapToggle.title = collapsed ? 'Show minimap' : 'Hide minimap';
     minimapToggle.setAttribute('aria-label', minimapToggle.title);
     minimapToggle.setAttribute('aria-pressed', collapsed ? 'true' : 'false');
