@@ -5,6 +5,7 @@
 import { bus, state } from './state.js';
 import { ancestryOf } from '../shared/model.js';
 import { nodeCost, compactMoney } from '../shared/cost.js';
+import { icon, TYPE_ICONS } from './icons.js';
 import { layoutScope, miniTransform, edgePath, smoothEdgePath, routeDirect, routeStyled, routeDragged, routeAutomaticEdges, EDGE_LABEL_SIZE, edgeLabelText, invalidateLayouts } from './layout.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -13,18 +14,6 @@ const el = (tag, attrs = {}, cls = '') => {
   for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
   if (cls) n.setAttribute('class', cls);
   return n;
-};
-
-// 16px stroke icons per type (decision uses its diamond shape instead)
-export const ICONS = {
-  process: 'M2.5 8h7.5M7.5 4.5 11 8l-3.5 3.5M12.5 3v10',
-  system: 'M4 4.5h8v7H4zM6.5 4.5v-2M9.5 4.5v-2M6.5 13.5v-2M9.5 13.5v-2M2 7h2M2 9.5h2M12 7h2M12 9.5h2',
-  role: 'M8 7.5a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2zM2.8 13.6c.6-2.9 2.7-4 5.2-4s4.6 1.1 5.2 4',
-  artifact: 'M3.5 2h6l3 3v9h-9zM9.5 2v3h3M5.5 8.5h5M5.5 11h5',
-  decision: 'M8 2l6 6-6 6-6-6z',
-  item: 'M3 3h10v10H3z',
-  database: 'M3 4c0-1.1 2.2-2 5-2s5 .9 5 2v8c0 1.1-2.2 2-5 2s-5-.9-5-2zM3 4c0 1.1 2.2 2 5 2s5-.9 5-2M3 8c0 1.1 2.2 2 5 2s5-.9 5-2',
-  api: 'M5.5 3H3v10h2.5M10.5 3H13v10h-2.5M7 5.5h2M6.5 8h3M7 10.5h2',
 };
 
 let svg, viewport, layersG, gridPattern, gridRect;
@@ -162,7 +151,7 @@ function showMoveOutBar() {
   const parentLabel = owner?.ownerId
     ? state.model.byId.get(owner.ownerId)?.label ?? owner.ownerId
     : state.model.name;
-  moveOutBar.textContent = `⤴ Drop here to move out to “${parentLabel}”`;
+  moveOutBar.replaceChildren(icon('arrow-bend-up-left', 16), document.createTextNode(` Drop here to move out to “${parentLabel}”`));
   moveOutBar.hidden = false;
 }
 function hideMoveOutBar() {
@@ -549,16 +538,21 @@ function nodeShape(n) {
   return el('rect', { width: w, height: h, rx: 7 }, 'shape');
 }
 
+function badgeIcon(name, cls, size) {
+  const glyph = icon(name, size);
+  glyph.setAttribute('x', -size / 2);
+  glyph.setAttribute('y', -size / 2);
+  glyph.classList.add(cls);
+  return glyph;
+}
+
 function iconChip(type, x, y, size = 24) {
   const g = el('g', { transform: `translate(${x},${y})` });
   g.appendChild(el('rect', { width: size, height: size, rx: 5 }, 'icon-bg'));
-  const s = size / 22;
-  const p = el('path', {
-    d: ICONS[type], fill: 'none', 'stroke-width': 1.6,
-    'stroke-linecap': 'round', 'stroke-linejoin': 'round',
-    transform: `translate(${3 * s},${3 * s}) scale(${s})`,
-  }, 'icon-fg');
-  p.style.fill = 'none';
+  const p = icon(TYPE_ICONS[type], size - 6);
+  p.setAttribute('x', 3);
+  p.setAttribute('y', 3);
+  p.classList.add('icon-fg');
   g.appendChild(p);
   return g;
 }
@@ -604,22 +598,22 @@ const ACTOR_TAGS = {
     manual: {
       cls: 'at-manual',
       label: 'Human — done by hand',
-      glyph: 'M10 8.4a2.7 2.7 0 1 0 0-5.4 2.7 2.7 0 0 0 0 5.4zM4.4 17c.2-3.4 2.5-5.1 5.6-5.1s5.4 1.7 5.6 5.1',
+      glyph: 'user',
     },
     automated: {
       cls: 'at-automated',
       label: 'Computer — done by an agent',
-      glyph: 'M4.6 4.8h10.8v8.2H4.6zM8 16.4h4M10 13v3.4',
+      glyph: 'desktop',
     },
     assisted: {
       cls: 'at-assisted',
       label: 'Human + computer — assisted',
-      glyph: 'M6.8 7.3a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4zM2.6 15.4c.2-2.9 2-4.4 4.2-4.4 1 0 1.8.2 2.5.7M11.4 8.2h6.2v4.9h-6.2zM13 16h3M14.5 13.1V16',
+      glyph: 'users',
     },
     'at-risk': {
       cls: 'at-risk',
       label: 'At risk — needs attention',
-      glyph: 'M10 4.4 16.8 16H3.2zM10 8.6v3.6m0 2v.2',
+      glyph: 'warning-circle',
     },
   };
 
@@ -727,10 +721,7 @@ function buildNode(n) {
   if (flagNote) {
     const fb = el('g', { transform: 'translate(6,-2)' }, 'flag-badge');
     fb.appendChild(el('circle', { r: 9 }, 'flag-bg'));
-    fb.appendChild(el('path', {
-      d: 'M-2.5 4.5 v-9 h5.5 l-1.8 2.2 1.8 2.2 h-4.3',
-      'stroke-linejoin': 'round',
-    }, 'flag-glyph'));
+    fb.appendChild(badgeIcon('flag', 'flag-glyph', 12));
     const ft = el('title');
     ft.textContent = `Inferred, not stated: ${flagNote} — open the panel to confirm`;
     fb.appendChild(ft);
@@ -741,7 +732,7 @@ function buildNode(n) {
   if (actorTag) {
     const tag = el('g', { transform: `translate(${n.w - 14},${n.h - 14})` }, `actor-tag ${actorTag.cls}`);
     tag.appendChild(el('circle', { r: 10 }, 'actor-bg'));
-    tag.appendChild(el('path', { d: actorTag.glyph, transform: 'translate(-10,-10) scale(0.94)' }, 'actor-glyph'));
+    tag.appendChild(badgeIcon(actorTag.glyph, 'actor-glyph', 14));
     const at = el('title');
     at.textContent = actorTag.label;
     tag.appendChild(at);
@@ -752,10 +743,7 @@ function buildNode(n) {
   if (node.position) {
     const pb = el('g', { transform: `translate(${n.w - 6},${-2})` }, 'pin-badge');
     pb.appendChild(el('circle', { r: 9.5 }, 'pin-bg'));
-    pb.appendChild(el('path', {
-      d: 'M0 4.6 C-3.2 1 -4.1 -0.6 -4.1 -2.1 A4.1 4.1 0 1 1 4.1 -2.1 C4.1 -0.6 3.2 1 0 4.6 Z',
-    }, 'pin-glyph'));
-    pb.appendChild(el('circle', { cx: 0, cy: -2.1, r: 1.5 }, 'pin-dot'));
+    pb.appendChild(badgeIcon('push-pin', 'pin-glyph', 12));
     const pt = el('title');
     if (state.standalone) {
       pt.textContent = 'Pinned position';
@@ -774,10 +762,7 @@ function buildNode(n) {
     const x = n.w - (node.position ? 29 : 7);
     const nb = el('g', { transform: `translate(${x},${-2})` }, 'local-note-badge');
     nb.appendChild(el('circle', { r: 9 }, 'local-note-bg'));
-    nb.appendChild(el('path', {
-      d: 'M-3.5-3h7v5.5h-3.8l-2.7 2.2V2.5h-.5z',
-      'stroke-linejoin': 'round',
-    }, 'local-note-glyph'));
+    nb.appendChild(badgeIcon('chat-text', 'local-note-glyph', 12));
     const nt = el('title');
     nt.textContent = `Note for this group: ${node.note}`;
     nb.appendChild(nt);
@@ -869,7 +854,7 @@ function buildEdge(e) {
     const v = e.edge.via;
     const badge = el('g', { transform: `translate(${v.x},${v.y})`, 'data-unroute': e.index }, 'route-badge');
     badge.appendChild(el('circle', { r: 7.5 }, 'route-badge-bg'));
-    badge.appendChild(el('path', { d: 'M-2.8,-2.8 L2.8,2.8 M2.8,-2.8 L-2.8,2.8' }, 'route-badge-glyph'));
+    badge.appendChild(badgeIcon('x', 'route-badge-glyph', 10));
     const title = el('title');
     title.textContent = 'Custom route — click to restore automatic routing';
     badge.appendChild(title);

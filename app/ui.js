@@ -12,7 +12,7 @@ import { state, bus, currentProjectSlug } from './state.js';
 import * as ctrl from './controller.js';
 import * as edit from './edit.js';
 import * as canvas from './canvas.js';
-import { ICONS } from './canvas.js';
+import { icon, TYPE_ICONS } from './icons.js';
 import { opportunityDefaults, calculateOpportunity, assessOpportunity } from './opportunity.js';
 import { disconnectWorkbenchLink, useWorkbenchCopy, sendLocalCopy } from './workbench-sync.js';
 import { renderCatalog } from './catalog.js';
@@ -59,22 +59,8 @@ function associateFieldLabels(root) {
   }
 }
 
-const SVG = 'http://www.w3.org/2000/svg';
 function typeIcon(type, size = 14) {
-  const svg = document.createElementNS(SVG, 'svg');
-  svg.setAttribute('viewBox', '0 0 16 16');
-  svg.setAttribute('width', size);
-  svg.setAttribute('height', size);
-  svg.setAttribute('aria-hidden', 'true');
-  const p = document.createElementNS(SVG, 'path');
-  p.setAttribute('d', ICONS[type] ?? ICONS.process);
-  p.setAttribute('fill', 'none');
-  p.setAttribute('stroke', 'currentColor');
-  p.setAttribute('stroke-width', '1.6');
-  p.setAttribute('stroke-linecap', 'round');
-  p.setAttribute('stroke-linejoin', 'round');
-  svg.append(p);
-  return svg;
+  return icon(TYPE_ICONS[type] ?? 'square', size);
 }
 
 // ── toasts ───────────────────────────────────────────────────────────
@@ -216,8 +202,8 @@ function openMapMenu(anchor) {
       ...(readOnlySibling ? { disabled: '', title: 'Read-only in this export' } : {}),
       onClick: () => { if (readOnlySibling) return; closeMenus(); ctrl.openMap(m.id); },
     },
-    h('span', { class: 'mi-name' }, m.name || m.id),
-    h('span', { class: 'mi-sub' }, m.invalid ? `⚠ ${m.errorCount} problem${m.errorCount === 1 ? '' : 's'} — open to see details` : `${m.nodeCount} nodes`));
+    h('span', { class: 'mi-name' }, m.name || m.id, isCurrent ? icon('check', 14) : null),
+    h('span', { class: 'mi-sub' }, m.invalid ? icon('warning-circle', 14) : null, m.invalid ? `${m.errorCount} problem${m.errorCount === 1 ? '' : 's'} — open to see details` : `${m.nodeCount} nodes`));
     if (!state.standalone) {
       row.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
@@ -797,7 +783,7 @@ function addElementDialog(ownerId, options = {}) {
           list.hidden = false;
           search.focus();
         },
-      }, '← Existing elements'),
+      }, icon('arrow-left', 14), ' Existing elements'),
       h('div', { class: 'f-field' }, h('label', {}, 'Name'), label),
       h('div', { class: 'f-field' }, h('label', {}, 'Type'), type),
       h('div', { class: 'f-field' }, h('label', {}, 'Shared description'), description),
@@ -1495,7 +1481,7 @@ function renderAutomationDetail(panel, node) {
         await navigator.clipboard?.writeText(text);
         toast('Business case copied');
       },
-    }, 'Copy business case →'));
+    }, 'Copy business case ', icon('arrow-right', 14)));
 
   panel.replaceChildren(head, body, actions);
 }
@@ -1554,7 +1540,7 @@ function renderDetail() {
       h('button', {
         class: 'node-id', title: 'Copy deep link to this node',
         onClick: () => { navigator.clipboard?.writeText(ctrl.nodeUrl(node.id)); toast('Link copied'); },
-      }, `#${node.id} ⧉`)),
+      }, `#${node.id} `, icon('copy', 12))),
     h('button', { class: 'panel-close', title: 'Close (Esc)', onClick: () => { hideDetail(); ctrl.clearSelection(); } }, 'Close'));
 
   const body = h('div', { class: 'panel-body' });
@@ -1627,13 +1613,13 @@ function renderDetail() {
     const flagNote = state.flags?.nodes?.get(node.id);
     if (flagNote) {
       body.append(h('div', { class: 'panel-section flag-section' },
-        h('h3', {}, '⚑ Inferred, not stated'),
+        h('h3', {}, icon('flag', 16), ' Inferred, not stated'),
         h('div', { class: 'desc' }, flagNote),
         ro ? null : h('button', {
           class: 'pa-btn', title: 'Remove the “# inferred:” comment from the file — you have verified this',
           onClick: () => ctrl.commit(() => edit.confirmNodeFlag(node.id))
             .then((ok) => ok && toast('Confirmed — flag removed from the file')),
-        }, '✓ Mark confirmed')));
+        }, icon('check', 14), ' Mark confirmed')));
     }
 
     if (!freeform) body.append(renderCostSection(node, ro));
@@ -1729,7 +1715,7 @@ function renderDetail() {
       const lab = h('input', { class: 'f-input', placeholder: 'Label', value: l.label ?? '' });
       const url = h('input', { class: 'f-input', placeholder: 'https://…', value: l.url ?? '' });
       const row = h('div', { class: 'link-edit-row' }, lab, url,
-        h('button', { class: 'rm', title: 'Remove link', onClick: () => { row.remove(); linkRows.splice(linkRows.indexOf(row), 1); } }, '✕'));
+        h('button', { class: 'rm', title: 'Remove link', 'aria-label': 'Remove link', onClick: () => { row.remove(); linkRows.splice(linkRows.indexOf(row), 1); } }, icon('x', 16)));
       row.get = () => ({ label: lab.value.trim(), url: url.value.trim() });
       linkRows.push(row);
       linksBox.append(row);
@@ -1830,12 +1816,12 @@ function renderDetail() {
         ? h('button', { class: 'pa-btn primary-action', onClick: () => { editMode = true; renderDetail(); } },
           node.isElement ? 'Edit shared element' : 'Edit group')
         : node.planning
-          ? h('button', { class: 'pa-btn primary-action', onClick: () => { editMode = true; renderDetail(); } }, 'Edit requirement →')
-          : h('button', { class: 'pa-btn primary-action', onClick: () => beginAutomation(node) }, 'Design automation →')));
+          ? h('button', { class: 'pa-btn primary-action', onClick: () => { editMode = true; renderDetail(); } }, 'Edit requirement ', icon('arrow-right', 14))
+          : h('button', { class: 'pa-btn primary-action', onClick: () => beginAutomation(node) }, 'Design automation ', icon('arrow-right', 14))));
   }
   if (!editMode && state.model.dataExplorer?.objects.some(object => object.system === node.id)) {
     const actions = panel.querySelector('.panel-actions') ?? h('div', { class: 'panel-actions' });
-    actions.prepend(h('button', { class: 'pa-btn catalog-entry', onClick: () => toggleCatalog(true, node.id) }, 'Explore data →'));
+    actions.prepend(h('button', { class: 'pa-btn catalog-entry', onClick: () => toggleCatalog(true, node.id) }, 'Explore data ', icon('arrow-right', 14)));
     if (!actions.isConnected) panel.append(actions);
   }
 }
@@ -1963,7 +1949,7 @@ export function renderEconomics() {
     h('span', { class: `ec-stat ec-savings${(r.savingsMonthly ?? 0) < 0 ? ' neg' : ''}` }, 'Saves ', h('b', {}, compactMoney(r.savingsMonthly, cur)), '/mo'),
     h('span', { class: 'ec-stat' }, 'Payback ', h('b', {}, formatPayback(r.paybackMonths))),
     coverage,
-    h('span', { class: 'ec-chevron' }, econExpanded ? '▾' : '▸'));
+    h('span', { class: `ec-chevron${econExpanded ? ' expanded' : ''}` }, icon('caret-down', 14)));
 
   const parts = [summary];
   if (econExpanded) {
@@ -2061,9 +2047,9 @@ function renderEdgeDetail(panel) {
 
   const head = h('div', { class: 'panel-head' },
     h('div', { class: 'titles' },
-      h('span', { class: 'type-pill t-artifact' }, freeform ? '→ connection' : '→ edge'),
+      h('span', { class: 'type-pill t-artifact' }, icon('path', 14), freeform ? ' connection' : ' edge'),
       h('h2', {}, `${from?.label ?? e.from} → ${to?.label ?? e.to}`)),
-    h('button', { class: 'panel-close', onClick: () => { ctrl.selectEdge(null); panel.hidden = true; } }, '✕'));
+    h('button', { class: 'panel-close', 'aria-label': 'Close connection details', onClick: () => { ctrl.selectEdge(null); panel.hidden = true; } }, icon('x', 16)));
   const body = h('div', { class: 'panel-body' },
     h('div', { class: 'panel-section' },
       h('h3', {}, 'Connection'),
@@ -2072,7 +2058,7 @@ function renderEdgeDetail(panel) {
           class: 'pa-btn', title: 'Swap the direction',
           disabled: state.standalone ? '' : null,
           onClick: () => ctrl.commit(() => edit.reverseEdge(sel)).then((ok) => { if (ok) renderEdgeDetail(panel); }),
-        }, '⇄ Reverse'))),
+        }, icon('arrow-left', 14), ' Reverse'))),
     h('div', { class: 'f-field' }, h('label', {}, freeform ? 'Connection label' : 'Label (what flows / the outcome)'), label));
 
   // route style: automatic, or a pinned shape the user drags around on the canvas
@@ -2113,13 +2099,13 @@ function renderEdgeDetail(panel) {
     (f.owner ?? null) === (state.scopeId ?? null) && f.from === e.from && f.to === e.to);
   if (edgeFlag) {
     body.append(h('div', { class: 'panel-section flag-section' },
-      h('h3', {}, '⚑ Inferred, not stated'),
+      h('h3', {}, icon('flag', 16), ' Inferred, not stated'),
       h('div', { class: 'desc' }, edgeFlag.note),
       state.standalone ? null : h('button', {
         class: 'pa-btn', title: 'Remove the “# inferred:” comment from the file — you have verified this',
         onClick: () => ctrl.commit(() => edit.confirmEdgeFlag(state.scopeId, sel.index))
           .then((ok) => ok && toast('Confirmed — flag removed from the file')),
-      }, '✓ Mark confirmed')));
+      }, icon('check', 14), ' Mark confirmed')));
   }
   panel.replaceChildren(head, body);
   if (!state.standalone) {
@@ -2127,7 +2113,7 @@ function renderEdgeDetail(panel) {
       h('button', {
         class: 'pa-btn danger',
         onClick: () => { panel.hidden = true; ctrl.commit(() => edit.deleteEdge(state.scopeId, sel.index)).then((ok) => { if (ok) { ctrl.selectEdge(null); toast('Edge deleted'); } }); },
-      }, '🗑 Delete edge')));
+      }, icon('trash', 14), ' Delete edge')));
   }
 }
 
@@ -2137,22 +2123,6 @@ function renderEdgeDetail(panel) {
 let chatMessages = []; // { role, text, proposal?: { source, summary } }
 let chatBusy = false;
 let chatFocusId = null; // node the conversation is about, if any
-
-function micIcon() {
-  const svg = document.createElementNS(SVG, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('width', '15');
-  svg.setAttribute('height', '15');
-  svg.setAttribute('aria-hidden', 'true');
-  const p = document.createElementNS(SVG, 'path');
-  p.setAttribute('d', 'M12 15a3.5 3.5 0 0 0 3.5-3.5v-5a3.5 3.5 0 0 0-7 0v5A3.5 3.5 0 0 0 12 15zM5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3.5');
-  p.setAttribute('fill', 'none');
-  p.setAttribute('stroke', 'currentColor');
-  p.setAttribute('stroke-width', '1.7');
-  p.setAttribute('stroke-linecap', 'round');
-  svg.append(p);
-  return svg;
-}
 
 // Everything the model needs about the selected node: its fields and the
 // edges that touch it, in plain text.
@@ -2233,7 +2203,7 @@ function renderChat() {
               onClick: () => { msg.proposal.settled = 'dismissed'; renderChat(); },
             }, 'Dismiss'))));
       } else if (msg.proposal?.settled === 'applied') {
-        bubble.append(h('div', { class: 'chat-settled' }, `✓ Applied · ${msg.proposal.summary}`));
+        bubble.append(h('div', { class: 'chat-settled' }, icon('check', 14), ` Applied · ${msg.proposal.summary}`));
       } else if (msg.proposal?.settled === 'dismissed') {
         bubble.append(h('div', { class: 'chat-settled dismissed' }, `Dismissed · ${msg.proposal.summary}`));
       }
@@ -2313,18 +2283,18 @@ function renderChat() {
         rec.start();
         micBtn.classList.add('recording');
       },
-    }, micIcon());
+    }, icon('microphone', 15));
   }
   const focusNode = chatFocusId ? state.model?.byId.get(chatFocusId) : null;
   dock.replaceChildren(
     h('div', { class: 'chat-head' },
       h('div', {}, h('span', { class: 'chat-kicker' }, 'Map assistant'), h('strong', {}, state.model?.name ?? '')),
       h('div', { class: 'chat-head-actions' },
-        state.standalone ? null : h('button', { class: 'panel-close chat-settings-btn', title: 'AI settings', onClick: () => bus.emit('ai-settings-request') }, '⚙'),
-        h('button', { class: 'panel-close', onClick: () => toggleChat(false) }, '✕'))),
+        state.standalone ? null : h('button', { class: 'panel-close chat-settings-btn', title: 'AI settings', 'aria-label': 'AI settings', onClick: () => bus.emit('ai-settings-request') }, icon('gear-six', 16)),
+        h('button', { class: 'panel-close', 'aria-label': 'Close assistant', onClick: () => toggleChat(false) }, icon('x', 16)))),
     ...(focusNode ? [h('div', { class: 'chat-focus' },
       h('span', {}, `About: ${focusNode.label}`),
-      h('button', { title: 'Clear the focus — talk about the whole map', onClick: () => { chatFocusId = null; renderChat(); } }, '×'))] : []),
+      h('button', { title: 'Clear the focus — talk about the whole map', 'aria-label': 'Clear assistant focus', onClick: () => { chatFocusId = null; renderChat(); } }, icon('x', 14)))] : []),
     list,
     h('div', { class: 'chat-compose' },
       input,
@@ -2409,10 +2379,10 @@ export async function importDialog() {
         'Pick one setup path, then try again: add ANTHROPIC_API_KEY to a .env file next to the server, as .env.example shows, log in with the claude CLI, or set OPSMAP_LLM_CMD to a command that prints the reply.')
       : status.available
         ? h('p', { class: 'hint' }, `The transcript is sent to your configured model (${status.provider}: ${status.model}) from the local server — steps, decisions, roles, systems, and artifacts come back as a map you review before anything is saved.`)
-        : h('p', { class: 'hint import-unavailable' }, `⚠ Transcript import is disabled — no model is configured. ${status.hint ?? ''}`);
+        : h('p', { class: 'hint import-unavailable' }, icon('warning-circle', 16), ` Transcript import is disabled — no model is configured. ${status.hint ?? ''}`);
 
     dialog.replaceChildren(
-      h('h2', {}, '✨ New map from transcript'),
+      h('h2', {}, icon('sparkle', 20), ' New map from transcript'),
       providerLine,
       ta,
       h('div', { class: 'import-row' }, counter),
@@ -2439,7 +2409,7 @@ export async function importDialog() {
 
   function renderProgress() {
     dialog.replaceChildren(
-      h('h2', {}, '✨ Deriving the map…'),
+      h('h2', {}, icon('sparkle', 20), ' Deriving the map…'),
       h('div', { class: 'import-progress' },
         h('div', { class: 'import-spinner' }),
         h('p', {}, 'Reading the transcript, extracting steps, decisions, roles, systems, and artifacts.'),
@@ -2456,7 +2426,7 @@ export async function importDialog() {
     const flags = review.flags ?? [];
     const flagsBox = flags.length
       ? h('div', { class: 'import-flags' },
-        h('h3', {}, `⚑ Inferred, not stated — confirm after saving (${flags.length})`),
+        h('h3', {}, icon('flag', 16), ` Inferred, not stated — confirm after saving (${flags.length})`),
         h('ul', {}, flags.map((f) => h('li', {},
           h('b', {}, f.label), ' — ', f.note,
           f.kind === 'edge' ? h('span', { class: 'import-flag-kind' }, ' (edge)') : null))),
@@ -2487,7 +2457,7 @@ export async function importDialog() {
               close();
               await ctrl.loadMapList();
               await ctrl.openMap(id);
-              toast(`Imported “${name}” — review the ⚑ flagged items, then add costs to see the economics`);
+              toast(`Imported “${name}” — review the flagged items, then add costs to see the economics`);
             } catch (e) {
               toast(e.message, true);
             }
@@ -2614,7 +2584,7 @@ function renderTemplates() {
     h('div', { class: 'titles' },
       h('h2', {}, 'Template library'),
       h('span', { class: 'node-id' }, freeform ? 'reusable map blocks. Insert, then customize' : 'reusable process blocks. Insert, then customize')),
-    h('button', { class: 'panel-close', onClick: () => toggleTemplates(false) }, '✕'));
+    h('button', { class: 'panel-close', 'aria-label': 'Close templates', onClick: () => toggleTemplates(false) }, icon('x', 16)));
   const list = h('div', { class: 'tpl-list' });
   if (!templates.length) {
     list.append(h('p', { class: 'hint', style: 'padding:8px 6px' },
@@ -2754,7 +2724,7 @@ export function openSearch() {
       },
       h('span', { class: `pal-icon t-${n.type}` }, typeIcon(n.type, 13)),
       h('span', {},
-        h('div', { class: 'pal-label' }, n.label, n.children ? ` ▸ ${n.stats.childCount}` : ''),
+        h('div', { class: 'pal-label' }, n.label, n.children ? [icon('stack', 12), ` ${n.stats.childCount}`] : null),
         h('div', { class: 'pal-path' }, pathOf(n)))));
     });
   }
@@ -2800,7 +2770,7 @@ function renderCanvasMessage() {
   if (state.mapId && !state.model) {
     box.hidden = false;
     box.replaceChildren(h('div', { class: 'map-card' },
-      h('h2', {}, h('span', { class: 'err-badge' }, '⚠'), ' This map can’t be drawn yet'),
+      h('h2', {}, h('span', { class: 'err-badge' }, icon('warning-circle', 22)), ' This map can’t be drawn yet'),
       h('p', {}, `maps/${state.mapId}.yaml has ${state.errors.length} problem${state.errors.length === 1 ? '' : 's'}. Fix the file in your editor — the canvas updates the moment you save.`),
       h('ul', { class: 'err-list' }, state.errors.slice(0, 20).map((e) =>
         h('li', {}, e.line ? h('span', { class: 'ln' }, `line ${e.line}`) : null, ` ${e.message}`))),

@@ -15,6 +15,7 @@ const MODULE_FILES = [
   'app/api.js',
   'app/routes.js',
   'app/layout.js',
+  'app/icons.js',
   'app/canvas.js',
   'app/edit.js',
   'app/controller.js',

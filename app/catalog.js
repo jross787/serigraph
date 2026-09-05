@@ -1,4 +1,5 @@
 // Read-only projections of the map's catalog. No records or connector calls.
+import { icon } from './icons.js';
 export function catalogObjects(model, { systemId = '', query = '', fieldId = '' } = {}) {
   const catalog = model?.dataExplorer;
   if (!catalog) return [];
@@ -48,7 +49,7 @@ export function renderCatalog(panel, model, view, h, { change, close, locate }) 
   const body = h('div', { class: 'panel-body' });
 
   if (object) {
-    body.append(button('← Back to catalog', () => change({ objectId: null })),
+    body.append(button([icon('arrow-left', 14), ' Back to catalog'], () => change({ objectId: null })),
       h('div', { class: 'catalog-object-head' },
         h('span', { class: 'catalog-system-label' }, object.systemLabel),
         h('h3', { tabindex: '-1', 'data-catalog-heading': '' }, object.sourceName),
@@ -59,7 +60,7 @@ export function renderCatalog(panel, model, view, h, { change, close, locate }) 
           ...(model.placementsByElement.get(object.system)?.length
             ? { onClick: () => locate(object) }
             : { disabled: '', title: 'This system has no placement on the map.' }),
-        }, model.placementsByElement.get(object.system)?.length ? 'Show system on map ↗' : 'System not placed on map')));
+        }, model.placementsByElement.get(object.system)?.length ? ['Show system on map ', icon('arrow-square-out', 14)] : 'System not placed on map')));
 
     const fields = h('section', { class: 'catalog-section', 'aria-label': 'Field mappings' },
       h('h3', {}, `Field mappings · ${object.bindings.length}`),
@@ -68,7 +69,7 @@ export function renderCatalog(panel, model, view, h, { change, close, locate }) 
     for (const binding of object.bindings) {
       fields.append(h('div', { class: 'catalog-binding' },
         h('div', {}, h('code', {}, binding.sourceField), h('small', {}, binding.sourceDataType)),
-        h('span', { class: 'catalog-arrow', 'aria-label': 'maps to' }, '→'),
+        h('span', { class: 'catalog-arrow', role: 'img', 'aria-label': 'maps to' }, icon('arrow-right', 16)),
         h('div', {}, button(binding.field?.label ?? binding.canonicalField,
           () => change({ objectId: null, fieldId: binding.canonicalField, systemId: '', query: '' })),
         h('code', {}, binding.canonicalField), h('small', {}, binding.field?.dataType ?? 'Type not documented')),

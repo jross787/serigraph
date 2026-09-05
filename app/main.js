@@ -11,6 +11,7 @@ import * as productWorkspace from './product-workspace.js';
 import { togglePresent, exitPresent } from './present.js';
 import { flowShortcut } from './flow.js';
 import { refresh as refreshAgents, initAgents } from './agents.js';
+import { icon } from './icons.js';
 
 // ── theme ────────────────────────────────────────────────────────────
 function initTheme() {
@@ -424,6 +425,9 @@ function wireToolbar() {
 // ── boot ─────────────────────────────────────────────────────────────
 async function boot() {
   initTheme();
+  for (const placeholder of document.querySelectorAll('[data-icon]')) {
+    placeholder.replaceWith(icon(placeholder.dataset.icon, Number(placeholder.getAttribute('width')) || 18));
+  }
   canvas.initCanvas(document.getElementById('canvas'), document.querySelector('#minimap svg'));
   ui.initUI();
   workbench.initWorkbench();

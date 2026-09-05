@@ -4,6 +4,7 @@
 // rides on the shared design tokens.
 import { state, bus } from './state.js';
 import { api } from './api.js';
+import { icon } from './icons.js';
 
 const CARD_W = 260;
 const CARD_H = 150;
@@ -45,8 +46,6 @@ const STATUS_LABEL = {
   starting: 'Starting', working: 'Working', editing: 'Editing',
   done: 'Done', error: 'Error', stopped: 'Stopped',
 };
-const HARNESS_GLYPH = { claude: '✳', codex: '◈', omp: '▲' };
-
 function statusLabel(a) {
   if (a.status === 'working' || a.status === 'editing') {
     return `${STATUS_LABEL[a.status]} · ${ago(a.lastEventAt)}`;
@@ -78,7 +77,7 @@ function agentCard(a) {
     onClick: () => { view.selectedId = a.id === view.selectedId ? null : a.id; view.feedOpen = view.selectedId != null; render(); },
   },
     h('div', { class: 'agent-card-top' },
-      h('span', { class: `agent-harness t-${a.harness}` }, HARNESS_GLYPH[a.harness] ?? '•', ' ', a.harness),
+      h('span', { class: `agent-harness t-${a.harness}` }, icon('terminal-window', 16), ' ', a.harness),
       h('span', { class: `agent-status st-${a.status}` }, live ? h('i', { class: 'agent-live-dot' }) : null, statusLabel(a))),
     h('div', { class: 'agent-card-title', title: a.title }, a.title),
     h('div', { class: 'agent-card-meta' },

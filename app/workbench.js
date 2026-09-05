@@ -10,9 +10,7 @@ import * as ctrl from './controller.js';
 import * as workbenchSync from './workbench-sync.js';
 import * as edit from './edit.js';
 import * as ui from './ui.js';
-import { ICONS } from './canvas.js';
-
-const SVG = 'http://www.w3.org/2000/svg';
+import { icon as svgIcon, TYPE_ICONS as ICONS } from './icons.js';
 
 function h(tag, props = {}, ...children) {
   const n = document.createElement(tag);
@@ -28,46 +26,13 @@ function h(tag, props = {}, ...children) {
   return n;
 }
 
-function svgIcon(path) {
-  const svg = document.createElementNS(SVG, 'svg');
-  svg.setAttribute('viewBox', '0 0 20 20');
-  svg.setAttribute('width', '18');
-  svg.setAttribute('height', '18');
-  svg.setAttribute('aria-hidden', 'true');
-  const shape = document.createElementNS(SVG, 'path');
-  shape.setAttribute('d', path);
-  shape.setAttribute('fill', 'none');
-  shape.setAttribute('stroke', 'currentColor');
-  shape.setAttribute('stroke-width', '1.7');
-  shape.setAttribute('stroke-linecap', 'round');
-  shape.setAttribute('stroke-linejoin', 'round');
-  svg.append(shape);
-  return svg;
-}
-
 const TOOL_ICONS = {
-  select: 'm4 3 11 6-5 1.4L8.5 16zM10 10.4l3 5.1',
-  hand: 'M7.2 9.1V4.8a1.2 1.2 0 0 1 2.4 0v3.4M9.6 8.2V3.5a1.2 1.2 0 0 1 2.4 0v4.7m0 0V4.7a1.2 1.2 0 0 1 2.4 0v5.1m0 0V6.5a1.2 1.2 0 0 1 2.4 0v5.3c0 3-2.3 5.3-5.3 5.3H10c-1.7 0-2.9-.8-3.8-2.1L4.5 12a1.35 1.35 0 0 1 2-1.8l.7.7',
-  unit: ICONS.process,
-  connect: 'M4 4v4h4m8 8v-4h-4M8 8l4 4',
-  lane: 'M4 3h12v14H4zM4 7h12M4 11h12',
-  note: ICONS.artifact,
-  probe: 'M10 3v14M3 10h14M6.5 6.5l7 7M13.5 6.5l-7 7',
-  automate: ICONS.system,
-  duplicate: 'M7 6V3h10v10h-3M3 7h10v10H3z',
-  delete: 'M4 5h12M8 5V3h4v2m-6 0 1 12h6l1-12M8.5 8v6m3-6v6',
-  undo: 'M8 5 4 9l4 4M4 9h8a4 4 0 0 1 0 8H9',
-  redo: 'M12 5l4 4-4 4M16 9H8a4 4 0 0 0 0 8h3',
-  history: 'M10 5v5l3 2M4.2 6.5A7 7 0 1 1 3 11M3 5v4h4',
-  import: 'M10 3v9m-4-4 4 4 4-4M4 16h12',
-  export: 'M10 13V4m-4 4 4-4 4 4M4 16h12',
-  share: 'M7 10l6-4m-6 4 6 4M5 12a2 2 0 1 0 0-4 2 2 0 0 0 0 4m10-4a2 2 0 1 0 0-4 2 2 0 0 0 0 4m0 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4',
-  zoomOut: 'M4 10h12',
-  zoomIn: 'M4 10h12M10 4v12',
-  fit: 'M7 4H4v3m9-3h3v3M7 16H4v-3m9 3h3v-3',
-  more: 'M4 10h.01M10 10h.01M16 10h.01',
-  help: 'M8 7a2.3 2.3 0 1 1 3.5 2c-1.2.8-1.5 1.3-1.5 2M10 15h.01M10 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16',
-  align: 'M4 3v14M8 6h9M8 10h5M8 14h8',
+  select: 'cursor', hand: 'hand', unit: ICONS.process, connect: 'path',
+  lane: 'rows', note: 'note-pencil', probe: 'crosshair', automate: 'robot',
+  duplicate: 'copy', delete: 'trash', undo: 'arrow-counter-clockwise', redo: 'arrow-clockwise',
+  history: 'clock-counter-clockwise', import: 'download-simple', export: 'upload-simple',
+  share: 'share-network', zoomOut: 'minus', zoomIn: 'plus', fit: 'corners-out',
+  more: 'dots-three', help: 'question', align: 'align-left',
 };
 
 const ZOOM_LEVELS = [50, 75, 100, 150, 200];
@@ -982,7 +947,7 @@ function toolbarToolButton(tool, { labeled = false, className = '' } = {}) {
   },
   svgIcon(tool.id === 'unit' && freeform ? ICONS.item : TOOL_ICONS[tool.id]),
   labeled ? h('span', { class: 'toolbar-button-label' }, label) : null,
-  tool.flyout ? h('i', { class: 'tool-caret' }) : null);
+  tool.flyout ? svgIcon('caret-down', 12) : null);
 }
 
 function toolbarActionButton(action, label, icon, {
@@ -1011,7 +976,7 @@ function toolbarMenu(label, icon, items, className = '') {
       class: 'tool-button labeled toolbar-menu-trigger',
       title: label,
       'aria-label': label,
-    }, svgIcon(TOOL_ICONS[icon]), h('span', { class: 'toolbar-button-label' }, label), h('i', { class: 'toolbar-menu-caret' })),
+    }, svgIcon(TOOL_ICONS[icon]), h('span', { class: 'toolbar-button-label' }, label), svgIcon('caret-down', 12)),
     h('div', { class: 'toolbar-popover' }, ...items));
 }
 
