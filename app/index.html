@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Serigraph</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='8' width='12' height='9' rx='2.5' fill='%233b82f6'/%3E%3Crect x='19' y='4' width='11' height='8' rx='2.5' fill='%2310b981'/%3E%3Crect x='18' y='19' width='12' height='9' rx='2.5' fill='%23f59e0b'/%3E%3Cpath d='M14 12.5 19 9M14 13.5l4 8' stroke='%2394a3b8' stroke-width='1.6'/%3E%3C/svg%3E">
+<link rel="icon" type="image/svg+xml" href="/app/serigraph-mark.svg">
 <link rel="stylesheet" href="/app/styles.css">
 <script src="/vendor/dagre.min.js"></script>
 </head>
@@ -12,13 +12,8 @@
 <div id="app">
   <header id="topbar">
     <div class="tb-left">
-      <a class="logo" href="#/" title="Serigraph">
-        <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
-          <rect x="2" y="8" width="12" height="9" rx="2.5" class="lg-a"/>
-          <rect x="19" y="4" width="11" height="8" rx="2.5" class="lg-b"/>
-          <rect x="18" y="19" width="12" height="9" rx="2.5" class="lg-c"/>
-          <path d="M14 12.5 19 9M14 13.5l4 8" class="lg-l"/>
-        </svg>
+      <a class="logo" href="#/" title="Serigraph" aria-label="Serigraph home">
+        <img class="logo-mark" src="/app/serigraph-mark.svg" width="24" height="24" alt="">
         <span class="logo-word">Serigraph</span>
       </a>
       <button id="btn-projects" class="tb-btn" title="Projects home">Projects</button>

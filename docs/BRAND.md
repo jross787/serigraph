@@ -34,36 +34,29 @@ The internal `opsmap` namespace remains an implementation detail only.
 
 **Brand idea in one line:** *One file. Every impression.*
 
-## 3. The mark: "The Stack"
+## 3. The mark: "Register"
 
-Three plates in register with a single registration point. The stacked
-layers are the screens; the offset is the depth of the file; the point is
-the registration that keeps every impression honest. It reads at 16px and
-holds at 160px.
+September 5, 2026: the user's logo replacement supersedes both the old
+three-node app icon and the previously documented Stack direction.
 
-Construction (SVG, viewBox `0 0 32 32`, stroke-based, round joins):
+Two identical solid ribbons, in half-turn symmetry, form an interlocking S.
+Broad curves and precise diagonal cuts reference printing layers in register;
+the clear central channel keeps the mark readable at toolbar size.
 
-```svg
-<!-- back plate, faint -->
-<rect x="5"  y="15" width="16" height="11" rx="2.5"/>
-<!-- middle plate, half -->
-<rect x="8"  y="10" width="16" height="11" rx="2.5"/>
-<!-- front plate, full signal -->
-<rect x="11" y="5"  width="16" height="11" rx="2.5"/>
-<!-- registration point -->
-<circle cx="25.5" cy="6.5" r="2.2"/>
-```
+The production source is [app/serigraph-mark.svg](../app/serigraph-mark.svg):
+a `32×32` viewBox, one path and its rotated instance, in signal emerald
+`#3DDC97`. The header uses a `24×24` box; the favicon shares the same source.
+Standalone exports embed it, so branding needs no network connection.
 
-- Front plate: signal emerald stroke. Middle: ink at 55%. Back: ink at 28%.
-  Registration point: solid emerald fill.
-- On light contexts (rare): plates use ink, point stays emerald.
-- Monochrome reproduction: all plates ink, opacities unchanged.
-- Clear space: the height of the registration point on all sides.
-- Never rotate the stack, never add a fourth plate, never outline the point.
+- Keep the two ribbons identical and preserve their spacing.
+- Use a single solid color; no outlines, gradients, shadows or animation.
+- For monochrome reproduction, use one contrasting ink for the whole mark.
+- Keep at least four viewBox units of external clear space.
 
-**Motion signature:** on load, the three plates drop from a slight diagonal
-offset into register (staggered, spring). That is the whole logo animation;
-it never loops.
+The initial direction was explored with built-in ImageGen, then reconstructed
+as a small native SVG for the app. Creative brief: an emerald S made from
+interlocking printing ribbons, precise negative space, legible at 24px.
+This is a visual identity direction, not a trademark-clearance claim.
 
 **Wordmark:** "Serigraph" in Clash Display 600, tight tracking (−0.02em),
 ink. Lockup: mark left, wordmark right, cap-height aligned. The wordmark
@@ -156,7 +149,7 @@ Custom easings only: `cubic-bezier(0.32, 0.72, 0, 1)` for entrances,
   blur + fade, resolving over 700-900ms, staggered ≤ 80ms. Once only.
 - **Magnetic buttons:** scale to 0.98 on press; the icon island travels on
   hover. No color-only hovers.
-- **The Stack assembles** on load (see §3). The odometer stats roll once
+- **The mark stays static** (see §3). The odometer stats roll once
   (per-digit wheels, staggered stops, plain values for AT/print).
 - **Everything collapses to fully-present static content** under
   `prefers-reduced-motion` and on print.
@@ -165,13 +158,13 @@ Custom easings only: `cubic-bezier(0.32, 0.72, 0, 1)` for entrances,
 
 - **Site:** dark glass, asymmetric bento, macro-whitespace (`py-24`+),
   floating island nav. The old paper site is retired.
-- **App:** keeps its functional workbench UI; the Stack mark and emerald
-  signal may migrate into its top bar over time. No glass, no orbs there.
+- **App:** keeps its functional workbench UI; the Register mark uses emerald
+  in its top bar. No glass, no orbs there.
   The press room stays utilitarian.
 - **Exports:** standalone HTML exports carry the mark and the line
   "Printed by Serigraph: one file, every impression."
-- **Favicon:** the Stack, emerald on dark (and inverse for light scheme).
-- **OG image spec:** base ground, Stack mark center-left, wordmark,
+- **Favicon:** the Register mark, emerald on a transparent ground.
+- **OG image spec:** base ground, Register mark center-left, wordmark,
   tagline, one emerald orb behind glass.
 
 ### Do / Don't

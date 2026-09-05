@@ -155,10 +155,7 @@ button { font-family: inherit; color: inherit; }
 .tb-right { display: flex; align-items: center; gap: 6px; flex: none; }
 
 .logo { display: flex; align-items: center; gap: 8px; text-decoration: none; color: var(--ink); font-weight: 700; letter-spacing: -.01em; flex: none; }
-.logo .lg-a { fill: var(--c-process); }
-.logo .lg-b { fill: var(--c-role); }
-.logo .lg-c { fill: var(--c-decision); }
-.logo .lg-l { stroke: var(--faint); stroke-width: 1.6; }
+.logo-mark { display: block; width: 24px; height: 24px; flex: none; }
 .logo-word { font-size: 15px; }
 
 .tb-btn {
@@ -1660,7 +1657,6 @@ body { letter-spacing: -.008em; }
 }
 #topbar .logo, #topbar .map-switcher #map-switcher-name, #topbar .crumb.current { color: var(--topbar-ink); }
 #topbar .logo-word { font-size: 15px; letter-spacing: -.025em; }
-#topbar .logo .lg-l { stroke: var(--topbar-muted); }
 #topbar .tb-btn {
   height: 32px; min-height: 32px;
   border-color: var(--topbar-border);

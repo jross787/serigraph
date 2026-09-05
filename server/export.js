@@ -64,10 +64,11 @@ export function projectStandalonePayload(projectMeta) {
 export async function buildExport(root, id, mapSource, projectMeta = null) {
   const read = (p) => fs.readFile(path.join(root, p), 'utf8');
 
-  const [html, css, dagre] = await Promise.all([
+  const [html, css, dagre, mark] = await Promise.all([
     read('app/index.html'),
     read('app/styles.css'),
     read('vendor/dagre.min.js'),
+    read('app/serigraph-mark.svg'),
   ]);
 
   const importMap = { imports: {} };
@@ -88,6 +89,7 @@ export async function buildExport(root, id, mapSource, projectMeta = null) {
   // replacement callbacks throughout: user content (map name, YAML source)
   // must never be interpreted as $-replacement patterns
   let out = html;
+  out = out.replaceAll('/app/serigraph-mark.svg', 'data:image/svg+xml;base64,' + Buffer.from(mark).toString('base64'));
   out = out.replace(/<title>.*?<\/title>/, () => `<title>${title.replace(/</g, '&lt;')}</title>`);
   out = out.replace(
     /<link rel="stylesheet" href="\/app\/styles.css">/,
