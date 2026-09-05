@@ -239,7 +239,7 @@ function wireCanvasEvents() {
 // ── keyboard ─────────────────────────────────────────────────────────
 function isTyping() {
   const el = document.activeElement;
-  return el && (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes(el.tagName) || el.isContentEditable);
+  return el && (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes(el.tagName.toUpperCase()) || el.isContentEditable);
 }
 function dialogOpen() {
   return !!document.querySelector('.dialog-backdrop') || !document.getElementById('search-overlay').hidden;

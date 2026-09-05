@@ -601,7 +601,7 @@ export function nodeCardDetails(node) {
     try {
       const url = new URL(link.url);
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) continue;
-      launch = { url: url.href, label: link.label || url.hostname };
+      launch = { url: url.href, label: link.label?.trim() || url.hostname };
       break;
     } catch { /* Invalid/relative references never become launch actions. */ }
   }
@@ -636,12 +636,26 @@ const ACTOR_TAGS = {
   };
 
 
+function cardText(n, details, launch) {
+  const observed = !!nodeObservation(n.id);
+  const labelWidth = launch ? n.w - 84 : 132;
+  const lines = (launch || observed) ? wrapText(n.node.label, labelWidth, CARD_FONT, observed ? 1 : 2).map(line => fitText(line, labelWidth)) : n.lines;
+  const totalH = lines.length * 17 + (details.description ? 16 : 0);
+  const startY = (n.h - totalH) / 2 + 13 + (observed && details.description ? 4 : 0);
+  const text = [textLines(lines, 44, startY, 'label')];
+  if (details.description) {
+    const width = n.w - 44 - (ACTOR_TAGS[n.node.automation] ? 40 : 14);
+    const font = '500 10.5px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
+    text.push(textLines([fitText(details.description, width, font)], 44, startY + lines.length * 17, 'node-summary'));
+  }
+  return text;
+}
+
 function buildNode(n) {
   const node = n.node;
   const isContainer = !!node.children;
   const details = nodeCardDetails(node);
   const launch = node.type === 'decision' && !isContainer ? null : details.launch;
-  const observed = !!nodeObservation(node.id);
   const g = el('g', { transform: `translate(${n.x},${n.y})` },
     `node t-${node.type}${isContainer ? ' container' : ''}${state.selectedId === node.id ? ' selected' : ''}${state.selectionIds.has(node.id) ? ' multi-selected' : ''}`);
   g.dataset.id = node.id;
@@ -730,17 +744,7 @@ function buildNode(n) {
       g.appendChild(el('path', { d: `M${n.w - 13},0 V13 H${n.w}` }, 'artifact-fold'));
     }
     g.appendChild(iconChip(node.type, 11, (n.h - 24) / 2));
-    const labelWidth = launch ? n.w - 84 : 132;
-    const lines = (launch || observed) ? wrapText(node.label, labelWidth, CARD_FONT, observed ? 1 : 2).map(line => fitText(line, labelWidth)) : n.lines;
-    const totalH = lines.length * 17 + (details.description ? 16 : 0);
-    const startY = (n.h - totalH) / 2 + 13;
-    g.appendChild(textLines(lines, 44, startY, 'label'));
-    if (details.description) {
-      const width = n.w - 44 - (ACTOR_TAGS[node.automation] ? 40 : 14);
-      const font = '500 10.5px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
-      const subtitle = textLines([fitText(details.description, width, font)], 44, startY + lines.length * 17, 'node-summary');
-      g.appendChild(subtitle);
-    }
+    g.append(...cardText(n, details, launch));
   }
 
   // provenance badge — this element was inferred from a transcript, not
@@ -878,9 +882,18 @@ function observationBadge(n) {
 bus.on('github-changed', () => {
   if (!currentLayer) return;
   for (const node of currentLayer.querySelectorAll('.node')) {
-    node.querySelector('.github-observation')?.remove();
     const layout = currentLayout.nodes.find(n => n.id === node.dataset.id);
-    if (layout) { const badge = observationBadge(layout); if (badge) node.append(badge); }
+    if (!layout) continue;
+    const previous = node.querySelector('.github-observation');
+    const badge = observationBadge(layout);
+    previous?.remove();
+    if (badge) node.append(badge);
+    if (!!previous !== !!badge && !layout.node.children && layout.node.type !== 'decision') {
+      const body = node.querySelector('.node-body') ?? node;
+      body.querySelectorAll(':scope > .label, :scope > .node-summary').forEach(text => text.remove());
+      const details = nodeCardDetails(layout.node);
+      body.append(...cardText(layout, details, details.launch));
+    }
   }
 });
 

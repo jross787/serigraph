@@ -22,4 +22,5 @@ test('card details preserve authored content and choose only a configured safe w
   assert.equal(nodeCardDetails({ links: node.links.slice(0, 7) }).launch, null);
   assert.deepEqual(nodeCardDetails({ links: [{ url: 'http://localhost:4717/' }] }).launch,
     { label: 'localhost', url: 'http://localhost:4717/' });
+  assert.equal(nodeCardDetails({ links: [{ label: '  ', url: 'https://example.com/' }] }).launch.label, 'example.com');
 });

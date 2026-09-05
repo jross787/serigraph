@@ -1642,7 +1642,7 @@ function renderDetail() {
           freeform ? `Open group with ${node.stats.childCount} items` : `Open ${node.stats.childCount}-step sub-map`) : null,
         node.links.map((l) => {
           const href = safeUrl(l.url);
-          return href ? h('a', { class: 'focus-link', href, target: '_blank', rel: 'noopener noreferrer' }, l.label) : null;
+          return href ? h('a', { class: 'focus-link', href, target: '_blank', rel: 'noopener noreferrer' }, l.label.trim() || href) : null;
         })));
     }
   } else {
