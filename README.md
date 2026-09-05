@@ -24,6 +24,9 @@ Use the map switcher, or open these seeded examples directly:
 
 ## Update it
 
+Business maps can live in a separate private repository. See
+[Private workspaces](docs/PRIVATE-WORKSPACES.md) for the external-library launch option.
+
 Run this once from the Serigraph folder to add the `serigraph` command:
 
 ```sh

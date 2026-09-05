@@ -1,12 +1,12 @@
 // Project API tests: boot the real server against a temp workspace
-// (OPSMAP_ROOT) and exercise project create/list, path-based map ids, and
+// (SERIGRAPH_LIBRARY_DIR) and exercise project create/list, path-based map ids, and
 // moves between the root and a project. The temp workspace starts empty, so
 // booting here also proves the watcher survives a missing projects/ dir.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { request } from 'node:http';
-import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,10 +68,9 @@ function boot(env) {
 
 before(async () => {
   work = mkdtempSync(path.join(os.tmpdir(), 'serigraph-projects-'));
-  // the standalone export inlines the app modules from ROOT — link them in
-  // so export routes work against the temp workspace
-  for (const dir of ['app', 'vendor', 'shared']) symlinkSync(path.join(ROOT, dir), path.join(work, dir));
-  const started = boot({ PORT: String(4960 + Math.floor(Math.random() * 100)), OPSMAP_ROOT: work });
+  const started = boot({ PORT: String(4960 + Math.floor(Math.random() * 100)),
+    OPSMAP_ROOT: ROOT, OPSMAP_MAPS_DIR: '', OPSMAP_ENV_FILE: '', OPSMAP_SKIP_DOTENV: '1',
+    SERIGRAPH_LIBRARY_DIR: work });
   proc = started.child;
   port = await started.childPort;
 });
@@ -91,6 +90,50 @@ test('boots with no library folders and lists nothing', async () => {
   const trash = await raw({ p: '/api/trash' });
   assert.equal(trash.status, 200);
   assert.deepEqual(JSON.parse(trash.body), []);
+});
+
+test('external library uses application assets and keeps settings private', async () => {
+  const page = await raw({ p: '/' });
+  assert.equal(page.status, 200);
+  assert.match(page.headers['content-type'], /text\/html/);
+  assert.equal(existsSync(path.join(work, 'app')), false, 'no copied application required');
+  const settings = await api('POST', '/api/settings', { model: 'synthetic-test-model' });
+  assert.equal(settings.status, 200);
+  assert.match(readFileSync(path.join(work, '.env'), 'utf8'), /synthetic-test-model/);
+  assert.equal((await raw({ p: '/.env' })).status, 404);
+});
+
+test('stale library requests cannot read, save, or publish after a workspace switch', async () => {
+  const current = await raw({p: '/api/maps'});
+  assert.match(current.headers['x-serigraph-library'], /^[a-f0-9]{64}$/);
+  const headers = {'X-Serigraph-Library': 'different-library'};
+  assert.equal((await raw({p: '/api/maps', headers})).status, 412);
+  assert.equal((await api('POST', '/api/maps', {name: 'Wrong workspace'}, headers)).status, 412);
+  assert.equal((await api('POST', '/api/workbench/push', {}, headers)).status, 412);
+  assert.equal(existsSync(path.join(work, 'maps', 'wrong-workspace.yaml')), false);
+});
+
+test('external project watcher emits the full project/map identity', async () => {
+  await api('POST', '/api/maps', { name: 'Watched', project: 'watch-project' });
+  const file = path.join(work, 'projects', 'watch-project', 'watched.yaml');
+  await new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, path: '/api/events' });
+    const timer = setTimeout(() => { req.destroy(); reject(new Error('No project change event')); }, 5000);
+    req.on('error', error => { clearTimeout(timer); reject(error); });
+    req.on('response', res => {
+      let text = '';
+      res.on('data', chunk => {
+        text += chunk;
+        if (text.includes('watch-project/watched')) {
+          clearTimeout(timer);
+          req.destroy();
+          resolve();
+        }
+      });
+      writeFileSync(file, readFileSync(file, 'utf8') + '\n# External editor change\n');
+    });
+    req.end();
+  });
 });
 
 test('POST /api/projects creates the folder and index; duplicate is 409', async () => {

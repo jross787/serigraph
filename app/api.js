@@ -7,7 +7,16 @@ import { state, bus } from './state.js';
 const etags = new Map();
 
 async function jfetch(url, opts) {
-  const res = await fetch(url, opts);
+  const headers = { ...opts?.headers };
+  if (state.libraryId) headers['X-Serigraph-Library'] = state.libraryId;
+  const res = await fetch(url, { ...opts, headers });
+  const libraryId = res.headers.get('X-Serigraph-Library');
+  if (state.libraryId && libraryId !== state.libraryId) {
+    const error = new Error('The active library changed. Reload Serigraph before continuing.');
+    error.status = 412;
+    throw error;
+  }
+  if (libraryId) state.libraryId = libraryId;
   let data = null;
   try { data = await res.json(); } catch { /* non-JSON error body */ }
   if (!res.ok) {

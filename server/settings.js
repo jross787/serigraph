@@ -1,14 +1,9 @@
 // AI settings: provider, keys, and model choices. Keys are written to the
-// .env file at the repo root (gitignored, mode 600) so the double-clicked
+// .env file in the selected library (gitignored, mode 600) so the double-clicked
 // Mac app picks them up without a shell. The GET view is masked — a saved
 // key never comes back to the browser.
 import { promises as fs } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-// overridable so tests never touch the real .env
-const ENV_PATH = process.env.OPSMAP_ENV_FILE || path.join(ROOT, '.env');
+import { ENV_PATH } from './env.js';
 
 // keys the settings panel manages; everything else in .env is preserved
 const KEY_FIELDS = {

@@ -562,6 +562,13 @@ export function parseMap(source) {
   }
   const root = normalizeScope(data.nodes, data.edges, null, [], 0);
 
+  // Catalog metadata is durable design data, not observed runtime state.
+  // Validate its references so canvas edits cannot silently orphan bindings.
+  if (data.dataExplorer != null) {
+    if (mode !== 'freeform') err(['dataExplorer'], '"dataExplorer" requires a Freeform map.');
+    validateCatalogReferences(data.dataExplorer, elementById, err);
+  }
+
   for (const node of byId.values()) {
     for (const relation of node.relations) {
       if (!byId.has(relation.to)) {
@@ -632,6 +639,7 @@ export function parseMap(source) {
     mode: MAP_MODES.includes(mode) ? mode : 'process',
     description: typeof data.description === 'string' ? data.description : '',
     costModel,
+    dataExplorer: data.dataExplorer ?? null,
     document,
     root,
     byId,
@@ -644,6 +652,56 @@ export function parseMap(source) {
     nodeCount: byId.size,
   };
   return { doc, model, errors, warnings };
+}
+
+function validateCatalogReferences(catalog, elements, err) {
+  const isMap = value => value && typeof value === 'object' && !Array.isArray(value);
+  if (!isMap(catalog)) {
+    err(['dataExplorer'], '"dataExplorer" must be a map.');
+    return;
+  }
+  const lists = {};
+  const ids = {};
+  const required = {
+    objects: ['id', 'system', 'sourceName', 'entityType', 'authority'],
+    canonicalFields: ['id', 'label', 'entityType', 'dataType'],
+    fieldBindings: ['object', 'sourceField', 'sourceDataType', 'canonicalField'],
+    flows: ['id', 'from', 'to', 'method', 'label'],
+  };
+  for (const [name, fields] of Object.entries(required)) {
+    const rows = catalog[name] ?? (['objects', 'flows'].includes(name) ? null : []);
+    lists[name] = [];
+    ids[name] = new Set();
+    if (!Array.isArray(rows)) {
+      err(['dataExplorer', name], `"dataExplorer.${name}" must be a list.`);
+      continue;
+    }
+    rows.forEach((row, index) => {
+      const location = ['dataExplorer', name, index];
+      if (!isMap(row)) { err(location, 'Catalog entry must be a map.'); return; }
+      lists[name].push({ row, location });
+      for (const field of fields) {
+        if (typeof row[field] !== 'string' || !row[field].trim()) {
+          err([...location, field], `Catalog "${field}" must be non-empty text.`);
+        }
+      }
+      const key = name === 'fieldBindings' ? JSON.stringify([row.object, row.sourceField]) : row.id;
+      if (ids[name].has(key)) err(location, `Catalog contains duplicate ${name} identity: ${key}.`);
+      ids[name].add(key);
+    });
+  }
+  const reference = (row, location, field, known, kind) => {
+    if (!known.has(row[field])) err([...location, field], `Catalog references unknown ${kind} "${row[field]}".`);
+  };
+  for (const { row, location } of lists.objects) reference(row, location, 'system', elements, 'system');
+  for (const { row, location } of lists.fieldBindings) {
+    reference(row, location, 'object', ids.objects, 'object');
+    reference(row, location, 'canonicalField', ids.canonicalFields, 'canonical field');
+  }
+  for (const { row, location } of lists.flows) {
+    reference(row, location, 'from', ids.objects, 'object');
+    reference(row, location, 'to', ids.objects, 'object');
+  }
 }
 
 // Path of ancestor ids from root down to (and including) the node.

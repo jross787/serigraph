@@ -8,6 +8,7 @@ export const state = {
   trash: [],           // [{id, kind, name, originalId|originalSlug, deletedAt, mapCount}]
 
   mapId: null,
+  libraryId: null,     // opaque server identity; pins this tab to its library
   source: '',          // current YAML source (authoritative)
   doc: null,           // YAML Document (comment-preserving)
   model: null,         // normalized model from parseMap

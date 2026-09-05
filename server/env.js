@@ -12,9 +12,18 @@ export const ROOT = process.env.OPSMAP_ROOT
   ? path.resolve(process.env.OPSMAP_ROOT)
   : path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
+// Set this in the launching environment, not in .env: it determines which
+// workspace's .env is read. Application assets always remain under ROOT.
+export const LIBRARY_ROOT = process.env.SERIGRAPH_LIBRARY_DIR
+  ? path.resolve(process.env.SERIGRAPH_LIBRARY_DIR)
+  : ROOT;
+export const ENV_PATH = process.env.OPSMAP_ENV_FILE
+  ? path.resolve(process.env.OPSMAP_ENV_FILE)
+  : path.join(LIBRARY_ROOT, '.env');
+
 if (!process.env.OPSMAP_SKIP_DOTENV) {
   try {
-    const envFile = await fs.readFile(path.join(ROOT, '.env'), 'utf8');
+    const envFile = await fs.readFile(ENV_PATH, 'utf8');
     for (const line of envFile.split('\n')) {
       const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
       if (!m) continue;
