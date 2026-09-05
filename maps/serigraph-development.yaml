@@ -1,0 +1,9 @@
+name: Serigraph development
+description: A separate development map for the public, read-only GitHub pilot. Connect the repository from the node inspector when the pilot is enabled.
+nodes:
+  - id: repository
+    type: system
+    label: Serigraph repository
+    description: Repository CI and open work. A passing workflow sample is not production health or merge approval.
+    position: { x: 300, y: 220 }
+edges: []

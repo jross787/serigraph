@@ -119,6 +119,19 @@ body {
 }
 button { font-family: inherit; color: inherit; }
 .ui-icon { display: inline-block; flex: none; vertical-align: -.16em; }
+.github-glance { padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.github-glance p { margin: 8px 0; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.github-glance a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.github-actions { display: flex; gap: 6px; }
+.github-state { font-weight: 700; }
+.github-glance .github-meta, .github-row span { color: var(--muted); font-size: 11px; white-space: pre-line; }
+.github-error { color: var(--danger); }
+.github-row { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--border); font-size: 12px; overflow-wrap: anywhere; }
+.github-row strong { font-size: 11px; font-weight: 600; }
+.github-observation { pointer-events: none; }
+.github-observation rect { fill: var(--surface-2); stroke: var(--border-strong); stroke-width: .6; }
+.github-observation text { fill: var(--muted); font: 600 8px var(--font); }
+@media print { .github-observation, .github-glance { display: none !important; } }
 
 #app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
 

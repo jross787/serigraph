@@ -32,6 +32,8 @@ async function jfetch(url, opts) {
 }
 
 export const api = {
+  githubConfig: () => jfetch('/api/github'),
+  githubObservation: signal => jfetch('/api/github/observation', { signal }),
   async listMaps() {
     if (state.standalone) {
       const s = window.OPSMAP_STANDALONE;

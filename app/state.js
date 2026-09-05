@@ -36,6 +36,7 @@ export const state = {
   saveStatus: 'idle',  // idle | saving | saved | error
   saveError: '',
   workbench: null,     // active Workbench link metadata; the share key stays browser-local
+  github: null,        // public pilot preferences and ephemeral observations; never serialized
 };
 
 // The project slug of the open map, or null for a root map / no map.

@@ -254,10 +254,13 @@ function adoptSource(source) {
   const { doc, model, errors } = parseMap(source);
   const sel = state.selectedEdge;
   if (sel) {
-    const before = state.model && scopeOf(state.model, sel.scopeId)?.edges[sel.index];
-    const after = model && scopeOf(model, sel.scopeId)?.edges[sel.index];
+    const previous = state.model && scopeOf(state.model, sel.scopeId)?.edges;
+    const next = model && scopeOf(model, sel.scopeId)?.edges;
+    const before = previous?.[sel.index], after = next?.[sel.index];
     // Keep inspection through route edits/undo, never retarget a deleted edge.
-    if (!before || !after || before.from !== after.from || before.to !== after.to) state.selectedEdge = null;
+    const parallel = previous?.filter(edge => edge.from === before?.from && edge.to === before?.to).length > 1;
+    if (!before || !after || previous.length !== next.length || before.from !== after.from || before.to !== after.to
+      || (parallel && before.label !== after.label)) state.selectedEdge = null;
   }
   state.source = source;
   state.doc = doc;
@@ -417,7 +420,7 @@ export async function commit(mutator, { select = undefined, historyLabel = 'edit
 
   recordRevision(after, revisionLabel(action));
 
-  if (select !== undefined) state.selectedId = select;
+  if (select !== undefined) { state.selectedId = select; state.selectedEdge = null; }
   refreshView();
   return true;
 }

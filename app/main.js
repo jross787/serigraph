@@ -12,6 +12,7 @@ import { togglePresent, exitPresent } from './present.js';
 import { flowShortcut } from './flow.js';
 import { refresh as refreshAgents, initAgents } from './agents.js';
 import { icon } from './icons.js';
+import { initGitHub } from './github.js';
 
 // ── theme ────────────────────────────────────────────────────────────
 function initTheme() {
@@ -430,6 +431,7 @@ async function boot() {
   }
   canvas.initCanvas(document.getElementById('canvas'), document.querySelector('#minimap svg'));
   ui.initUI();
+  initGitHub();
   workbench.initWorkbench();
   initWorkbenchSync();
   productWorkspace.initProductWorkspace();

@@ -16,6 +16,7 @@ const MODULE_FILES = [
   'app/routes.js',
   'app/layout.js',
   'app/icons.js',
+  'app/github.js',
   'app/canvas.js',
   'app/edit.js',
   'app/controller.js',

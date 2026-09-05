@@ -32,6 +32,9 @@ import {
   watchWorkbench,
 } from './workbench-sync.js';
 import { ROOT, LIBRARY_ROOT } from './env.js';
+import { createGitHubReader, GITHUB_SOURCE } from './github.js';
+
+const github = process.env.SERIGRAPH_GITHUB_PILOT === '1' ? createGitHubReader() : null;
 
 
 // OPSMAP_MAPS_DIR points the server at a different maps directory (used by
@@ -652,6 +655,16 @@ async function handleApi(req, res, url) {
     return json(res, 415, { error: 'Content-Type must be application/json' });
   }
   const parts = url.pathname.split('/').filter(Boolean); // ['api', ...]
+  if (parts[1] === 'github') {
+    if (req.method !== 'GET') return json(res, 405, { error: 'GitHub pilot is read-only.' });
+    if (parts.length === 2) return json(res, 200, { enabled: !!github, ...GITHUB_SOURCE });
+    if (!github) return json(res, 404, { error: 'GitHub pilot is not enabled.' });
+    if (parts.length === 3 && parts[2] === 'observation' && !url.search) {
+      try { return json(res, 200, await github.observation()); }
+      catch { return json(res, 502, { error: 'GitHub observation unavailable. Retry later.' }); }
+    }
+    return json(res, 400, { error: 'Only the approved public source operation is available.' });
+  }
   if (parts[1] === 'workbench' && req.method === 'POST') {
     let body;
     try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON body' }); }

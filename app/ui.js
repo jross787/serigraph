@@ -16,6 +16,7 @@ import { icon, TYPE_ICONS } from './icons.js';
 import { opportunityDefaults, calculateOpportunity, assessOpportunity } from './opportunity.js';
 import { disconnectWorkbenchLink, useWorkbenchCopy, sendLocalCopy } from './workbench-sync.js';
 import { renderCatalog } from './catalog.js';
+import { renderGitHubGlance } from './github.js';
 
 let fieldId = 0;
 
@@ -1544,6 +1545,8 @@ function renderDetail() {
 
   if (!editMode) {
     body.classList.add('focus-shelf-body');
+    const glance = renderGitHubGlance(node);
+    if (glance) body.append(glance);
     const status = node.automation || 'not-assessed';
     const fact = (label, value, cls = '') => h('div', { class: `focus-fact ${cls}` },
       h('span', { class: 'focus-label' }, label),
@@ -2847,6 +2850,14 @@ export function initUI() {
     }
   });
   bus.on('map-opened', () => { econOverride = null; econExpanded = false; });
+  bus.on('github-changed', () => {
+    const current = document.getElementById('github-glance');
+    const node = state.model?.byId.get(state.detailNodeId);
+    if (current && node) {
+      const next = renderGitHubGlance(node);
+      if (next) current.replaceWith(next); else current.remove();
+    }
+  });
   bus.on('view-changed', () => {
     contextActionsArmed = null;
     hideContextActions();

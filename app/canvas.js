@@ -6,6 +6,7 @@ import { bus, state } from './state.js';
 import { ancestryOf } from '../shared/model.js';
 import { nodeCost, compactMoney } from '../shared/cost.js';
 import { icon, TYPE_ICONS } from './icons.js';
+import { nodeObservation } from './github.js';
 import { layoutScope, miniTransform, edgePath, smoothEdgePath, routeDirect, routeStyled, routeDragged, routeAutomaticEdges, EDGE_LABEL_SIZE, edgeLabelText, invalidateLayouts } from './layout.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -413,6 +414,7 @@ function exportStylesheet() {
 export function getCanvasSvgString() {
   if (!state.model || !svg) return null;
   const clone = svg.cloneNode(true);
+  clone.querySelectorAll('.github-observation').forEach(node => node.remove());
   clone.removeAttribute('class');
   clone.removeAttribute('tabindex');
   // the page stylesheet never travels with the file: embed the theme's
@@ -812,8 +814,31 @@ function buildNode(n) {
     port.appendChild(pt);
     g.appendChild(port);
   }
+  const observation = observationBadge(n);
+  if (observation) g.append(observation);
   return g;
 }
+
+function observationBadge(n) {
+  const observation = nodeObservation(n.id);
+  if (!observation) return null;
+  const badge = el('g', { transform: `translate(${n.w - 78},3)`, role: 'img', 'aria-label': observation.detail }, 'github-observation');
+  badge.append(el('rect', { width: 72, height: 14, rx: 3 }));
+  const label = el('text', { x: 36, y: 10, 'text-anchor': 'middle' });
+  label.textContent = observation.label;
+  const title = el('title'); title.textContent = observation.detail;
+  badge.append(label, title);
+  return badge;
+}
+
+bus.on('github-changed', () => {
+  if (!currentLayer) return;
+  for (const node of currentLayer.querySelectorAll('.node')) {
+    node.querySelector('.github-observation')?.remove();
+    const layout = currentLayout.nodes.find(n => n.id === node.dataset.id);
+    if (layout) { const badge = observationBadge(layout); if (badge) node.append(badge); }
+  }
+});
 
 function buildEdge(e) {
   const from = state.model?.byId.get(e.edge.from)?.label ?? e.edge.from;
@@ -1415,7 +1440,9 @@ export const getLayout = () => currentLayout;
 export function paintSelection() {
   if (!currentLayer) return;
   const selected = state.selectedId;
-  const selectedEdge = currentLayout.edges.find(e => e.index === state.selectedEdge?.index);
+  const focused = document.activeElement?.closest?.('.edge:focus-visible');
+  const edgeIndex = focused && currentLayer.contains(focused) ? Number(focused.dataset.index) : state.selectedEdge?.index;
+  const selectedEdge = currentLayout.edges.find(e => e.index === edgeIndex);
   const endpoints = new Set(selectedEdge ? [selectedEdge.edge.from, selectedEdge.edge.to] : []);
   const probeNodes = new Set(state.probePath?.nodeIds ?? []);
   const probeEdges = new Set(state.probePath?.edgeIndexes ?? []);
@@ -1443,7 +1470,7 @@ export function paintSelection() {
   }
   for (const g of currentLayer.querySelectorAll('.edge')) {
     g.classList.toggle('selected', state.selectedEdge != null && Number(g.dataset.index) === state.selectedEdge.index);
-    g.setAttribute('aria-pressed', String(Number(g.dataset.index) === selectedEdge?.index));
+    g.setAttribute('aria-pressed', String(Number(g.dataset.index) === state.selectedEdge?.index));
     const e = currentLayout.edges.find((x) => x.index === Number(g.dataset.index));
     const isProbeEdge = probeEdges.has(Number(g.dataset.index));
     g.classList.toggle('probe-edge', isProbeEdge);
@@ -1455,6 +1482,7 @@ export function paintSelection() {
   // focus follows the selection for keyboard users, but only when focus is
   // already inside the canvas — never steal it from panel inputs or dialogs
   if (state.selectedId && svg.contains(document.activeElement)
+    && !document.activeElement?.closest?.('.edge')
     && document.activeElement?.dataset?.id !== state.selectedId) {
     currentLayer.querySelector(`.node[data-id="${CSS.escape(state.selectedId)}"]`)?.focus({ preventScroll: true });
   }
@@ -1991,6 +2019,8 @@ function wirePointer() {
 // ── keyboard access ──────────────────────────────────────────────────
 // Focused map objects behave like click targets: Enter/Space selects them.
 function wireNodeKeyboard() {
+  svg.addEventListener('focusin', paintSelection);
+  svg.addEventListener('focusout', () => queueMicrotask(paintSelection));
   svg.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Enter' && ev.key !== ' ') return;
     const target = ev.target?.closest?.('.node, .edge');
