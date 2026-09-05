@@ -1437,7 +1437,7 @@ export function centerOn(nodeId, ms = 420) {
 export const getLayout = () => currentLayout;
 
 // ── selection visuals (no re-render) ─────────────────────────────────
-export function paintSelection() {
+export function paintSelection(followFocus = true) {
   if (!currentLayer) return;
   const selected = state.selectedId;
   const focused = document.activeElement?.closest?.('.edge:focus-visible');
@@ -1481,7 +1481,7 @@ export function paintSelection() {
   svg.classList.toggle('connecting', !!state.connectFrom);
   // focus follows the selection for keyboard users, but only when focus is
   // already inside the canvas — never steal it from panel inputs or dialogs
-  if (state.selectedId && svg.contains(document.activeElement)
+  if (followFocus && state.selectedId && svg.contains(document.activeElement)
     && !document.activeElement?.closest?.('.edge')
     && document.activeElement?.dataset?.id !== state.selectedId) {
     currentLayer.querySelector(`.node[data-id="${CSS.escape(state.selectedId)}"]`)?.focus({ preventScroll: true });
@@ -2019,8 +2019,8 @@ function wirePointer() {
 // ── keyboard access ──────────────────────────────────────────────────
 // Focused map objects behave like click targets: Enter/Space selects them.
 function wireNodeKeyboard() {
-  svg.addEventListener('focusin', paintSelection);
-  svg.addEventListener('focusout', () => queueMicrotask(paintSelection));
+  svg.addEventListener('focusin', () => paintSelection(false));
+  svg.addEventListener('focusout', () => queueMicrotask(() => paintSelection(false)));
   svg.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Enter' && ev.key !== ' ') return;
     const target = ev.target?.closest?.('.node, .edge');

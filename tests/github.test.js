@@ -43,3 +43,35 @@ test('CI cannot become success through private, malformed, oversized, or denied 
     [new Response('x'.repeat(512 * 1024 + 1))],
   ]) await assert.rejects(createGitHubReader({ fetchImpl: fixture(responses) }).observation());
 });
+
+test('work pages exclude PRs from issues and keep partial failures distinct from empty lists', async () => {
+  const reader = createGitHubReader({ fetchImpl: fixture([repo, head, { workflow_runs: [] },
+    [{ number: 3, title: 'Change', head: { sha, ref: 'topic' }, state: 'open' }],
+    [{ number: 3, pull_request: {} }, { number: 4, title: 'Question', state: 'open', body: 'discard' }],
+  ]) });
+  const result = await reader.observation();
+  assert.deepEqual(result.issues.items.map(item => item.number), [4]);
+  assert.equal(result.pulls.items[0].sha, sha);
+  assert.equal(result.issues.items[0].body, undefined);
+  const partial = await createGitHubReader({ fetchImpl: fixture([repo, head, { workflow_runs: [] }, [], new Error('offline')]) }).observation();
+  assert.deepEqual(partial.pulls.items, []);
+  assert.equal(partial.issues.items, null);
+  assert.ok(partial.issues.error);
+});
+
+test('PR evidence follows its freshly read head, rejects foreign checks, and never uses the main head', async () => {
+  const calls = [];
+  const reader = createGitHubReader({ fetchImpl: fixture([
+    { number: 7, title: 'Change', state: 'open', head: { sha: old, ref: 'topic' } },
+    { check_runs: [{ name: 'wrong head', head_sha: sha, status: 'completed', conclusion: 'success' }] },
+    { sha: old, statuses: [] },
+  ], calls) });
+  const result = await reader.pullChecks(7);
+  assert.equal(result.pull.sha, old);
+  assert.ok(result.checks.error);
+  assert.deepEqual(result.statuses.items, []);
+  assert.ok(calls.slice(1).every(call => call.url.includes(`/commits/${old}/`)));
+  await assert.rejects(reader.pullChecks('../private'));
+  await assert.rejects(reader.pullChecks(0));
+  assert.equal(calls.length, 3);
+});

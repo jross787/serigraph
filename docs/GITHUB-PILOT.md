@@ -31,6 +31,16 @@ sample contributes to its summary. Missing checks are unknown. Source event time
 and fetch time are different; neither a passing sample nor API connectivity proves
 production health or merge readiness. Reads are not an atomic GitHub snapshot.
 
+PRs and issues are separate first-page samples of up to 10 updated entries. The
+issues endpoint includes PRs; those are excluded, so this page is not a total or
+proof there are no other issues. Individual list failures remain unavailable.
+PR check inspection first reads that PR's current head, then at most 10 check runs
+and 10 status contexts for that SHA. Required/merge-ref coverage remains unknown.
+Refreshing a list that changes or no longer covers the inspected head invalidates
+its current interpretation. Details are on demand, not fetched for every PR.
+GitHub's summary endpoints may include body fields in their JSON; the reader
+discards them and makes no requests for comments, diffs, logs or attachments.
+
 ## Verification
 
 Use a synthetic development library for browser checks. The automated checks use

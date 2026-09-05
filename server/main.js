@@ -663,6 +663,10 @@ async function handleApi(req, res, url) {
       try { return json(res, 200, await github.observation()); }
       catch { return json(res, 502, { error: 'GitHub observation unavailable. Retry later.' }); }
     }
+    if (parts.length === 4 && parts[2] === 'pulls' && /^\d{1,10}$/.test(parts[3]) && !url.search) {
+      try { return json(res, 200, await github.pullChecks(Number(parts[3]))); }
+      catch { return json(res, 502, { error: 'Pull request evidence unavailable. Retry later.' }); }
+    }
     return json(res, 400, { error: 'Only the approved public source operation is available.' });
   }
   if (parts[1] === 'workbench' && req.method === 'POST') {
