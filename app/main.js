@@ -10,6 +10,7 @@ import { initWorkbenchSync } from './workbench-sync.js';
 import * as productWorkspace from './product-workspace.js';
 import { togglePresent, exitPresent } from './present.js';
 import { flowShortcut } from './flow.js';
+import { refresh as refreshAgents, initAgents } from './agents.js';
 
 // ── theme ────────────────────────────────────────────────────────────
 function initTheme() {
@@ -243,6 +244,44 @@ function dialogOpen() {
   return !!document.querySelector('.dialog-backdrop') || !document.getElementById('search-overlay').hidden;
 }
 
+// in-app node clipboard for ⌘C/⌘V (plain copies, see edit.js)
+let nodeClipboard = [];
+
+// multi-select members plus the anchored single selection, deduped
+function effectiveSelectionIds() {
+  const ids = [...state.selectionIds];
+  if (state.selectedId && !state.selectionIds.has(state.selectedId)) ids.push(state.selectedId);
+  return ids;
+}
+
+function copySelection() {
+  const ids = effectiveSelectionIds();
+  if (!ids.length || !state.model) return false;
+  nodeClipboard = edit.copyNodesPlain(ids);
+  ui.toast(nodeClipboard.length === 1 ? 'Copied 1 node' : `Copied ${nodeClipboard.length} nodes`);
+  return true;
+}
+
+function pasteClipboard() {
+  if (!nodeClipboard.length || !state.model) return false;
+  let pasted = [];
+  ctrl.commit(
+    () => { pasted = edit.pasteNodesPlain(nodeClipboard, state.scopeId, { x: 28, y: 28 }); },
+    { historyLabel: nodeClipboard.length === 1 ? 'paste node' : `paste ${nodeClipboard.length} nodes` },
+  ).then((ok) => {
+    if (ok && pasted.length === 1) ctrl.selectNode(pasted[0]);
+  });
+  return true;
+}
+
+// Delete/Backspace with a multi-selection: remove all selected nodes at once.
+function bulkRemoveSelection(ids) {
+  ctrl.commit(
+    () => edit.bulkRemoveNodes(ids),
+    { select: null, historyLabel: `delete ${ids.length} nodes` },
+  ).then((ok) => { if (ok) ui.toast(`Deleted ${ids.length} nodes`); });
+}
+
 function spatialMove(dir) {
   if (canvas.isTransitioning()) return; // the layout on screen is mid-swap
   const layout = canvas.getLayout();
@@ -286,6 +325,8 @@ function wireKeyboard() {
     if (meta && !ev.shiftKey && ev.key.toLowerCase() === 'z') { ev.preventDefault(); ctrl.undo(); return; }
     if (meta && ev.shiftKey && ev.key.toLowerCase() === 'z') { ev.preventDefault(); ctrl.redo(); return; }
     if (meta && !ev.shiftKey && ev.key.toLowerCase() === 'd') { ev.preventDefault(); ui.duplicateSelection(); return; }
+    if (meta && !ev.shiftKey && ev.key.toLowerCase() === 'c') { if (copySelection()) ev.preventDefault(); return; }
+    if (meta && !ev.shiftKey && ev.key.toLowerCase() === 'v') { if (pasteClipboard()) ev.preventDefault(); return; }
     if (meta) return;
 
     if (ev.shiftKey && ev.key.toLowerCase() === 'p') { productWorkspace.setWorkspaceView('map'); togglePresent(); return; }
@@ -301,12 +342,27 @@ function wireKeyboard() {
         else if (state.scopeId != null) ctrl.riseUp(); // one level per press, always
         else if (state.selectedId || state.selectedEdge != null) { ctrl.clearSelection(); ui.hideDetail(); }
         break;
-      case 'Delete':
-        if (state.selectedId || state.selectedEdge != null) { ev.preventDefault(); ui.requestDelete(); }
+      case 'Delete': {
+        const ids = state.selectedEdge == null ? effectiveSelectionIds() : [];
+        if (ids.length > 1) { ev.preventDefault(); bulkRemoveSelection(ids); }
+        else if (state.selectedId || state.selectedEdge != null) { ev.preventDefault(); ui.requestDelete(); }
         break;
-      case 'Backspace':
-        if (state.selectedId || state.selectedEdge != null) { ev.preventDefault(); ui.requestDelete(); }
+      }
+      case 'Backspace': {
+        const ids = state.selectedEdge == null ? effectiveSelectionIds() : [];
+        if (ids.length > 1) { ev.preventDefault(); bulkRemoveSelection(ids); }
+        else if (state.selectedId || state.selectedEdge != null) { ev.preventDefault(); ui.requestDelete(); }
         else if (state.scopeId != null) { ev.preventDefault(); ctrl.riseUp(); }
+        break;
+      }
+      case 'F2':
+        if (state.selectedId) {
+          ev.preventDefault();
+          const rect = canvas.nodeScreenRect(state.selectedId);
+          bus.emit('node-rename-request', rect
+            ? { id: state.selectedId, screen: { x: rect.x, y: rect.y } }
+            : { id: state.selectedId });
+        }
         break;
       case 'Enter':
         if (state.selectedId && state.model.byId.get(state.selectedId)?.children) ctrl.diveInto(state.selectedId);
@@ -372,6 +428,7 @@ async function boot() {
   workbench.initWorkbench();
   initWorkbenchSync();
   productWorkspace.initProductWorkspace();
+  initAgents();
   wireCanvasEvents();
   wireKeyboard();
   wireToolbar();
@@ -404,16 +461,21 @@ async function boot() {
 
   ctrl.loadTemplates();
   api.subscribe(async (event) => {
-    if (event.type === 'maps-changed') ctrl.handleRemoteChange(event.ids ?? []);
-    if (event.type === 'templates-changed') ctrl.loadTemplates();
-    if (event.type === 'library-changed') {
-      const openId = state.mapId;
-      await Promise.all([ctrl.loadMapList(), ctrl.loadProjects(), ctrl.loadTrash()]);
-      if (openId && !state.maps.some((map) => map.id === openId)) {
-        ctrl.goHome();
-        ui.toast('The open map was moved to Trash in another tab.');
+    // The server may be restarting when an event lands; a failed refresh must
+    // not surface as an unhandled rejection in the SSE callback.
+    try {
+      if (event.type === 'maps-changed') await ctrl.handleRemoteChange(event.ids ?? []);
+      if (event.type === 'templates-changed') await ctrl.loadTemplates();
+      if (event.type === 'agents-changed') await refreshAgents();
+      if (event.type === 'library-changed') {
+        const openId = state.mapId;
+        await Promise.all([ctrl.loadMapList(), ctrl.loadProjects(), ctrl.loadTrash()]);
+        if (openId && !state.maps.some((map) => map.id === openId)) {
+          ctrl.goHome();
+          ui.toast('The open map was moved to Trash in another tab.');
+        }
       }
-    }
+    } catch { /* server briefly unavailable — the next event or reconnect recovers */ }
   });
 }
 

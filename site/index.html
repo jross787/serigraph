@@ -3,318 +3,676 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Serigraph keeps a company's operating model in one YAML file: a zoomable map for humans, a readable contract for agents, and honest automation economics.">
-<title>Serigraph</title>
+<meta name="description" content="Serigraph keeps a company's operating model in one YAML file. Humans get a zoomable map, agents get the truth, and the economics stay honest. One file. Every impression.">
+<meta property="og:title" content="Serigraph: One file. Every impression.">
+<meta property="og:description" content="The operating model of a business as one machine-readable file. A map for humans, the truth for agents.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://jross787.github.io/serigraph/">
+<meta name="theme-color" content="#060708">
+<title>Serigraph: One file. Every impression.</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23060708'/%3E%3Cg fill='none' stroke-linejoin='round'%3E%3Crect x='5' y='15' width='16' height='11' rx='2.5' stroke='%23F2F5F7' stroke-opacity='.28' stroke-width='1.6'/%3E%3Crect x='8' y='10' width='16' height='11' rx='2.5' stroke='%23F2F5F7' stroke-opacity='.55' stroke-width='1.6'/%3E%3Crect x='11' y='5' width='16' height='11' rx='2.5' stroke='%233DDC97' stroke-width='1.6'/%3E%3Ccircle cx='25.5' cy='6.5' r='2.2' fill='%233DDC97'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=clash-display@500,600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap">
+<style>
+/* ══════════════════════════════════════════════════════════════════
+   SERIGRAPH v2: the master plate. Identity: docs/BRAND.md
+   Ethereal glass: OLED base, one emerald signal, machined double
+   bezels, motion with mass. Reduced motion and print get everything
+   fully rendered.
+   z scale: content 0-2 · fixed nav 60 · grain veil 95 · menu 70
+   ══════════════════════════════════════════════════════════════════ */
+:root {
+  --base: #060708;      --surface: #0C0E11;
+  --glass: rgba(255,255,255,.04);
+  --line: rgba(255,255,255,.08);
+  --line-strong: rgba(255,255,255,.16);
+  --ink: #F2F5F7;       --muted: #A7AEB8;       --faint: #6B7380;
+  --signal: #3DDC97;    --signal-deep: #17A673; --on-signal: #06110C;
+  --amber: #F0B04E;
+  --process: #6AA2F8; --decision: #E8A33D; --system: #A988EC;
+  --role: #46C393;    --artifact: #93A5BA;
+  --display: "Clash Display", "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --sans: "Geist", ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --ease-in: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --r-shell: 26px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--base); color: var(--ink);
+  font-family: var(--sans); font-size: 16.5px; line-height: 1.6;
+  -webkit-font-smoothing: antialiased; overflow-x: clip;
+}
+::selection { background: var(--signal); color: var(--on-signal); }
+a { color: var(--ink); text-decoration: none; }
+:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; border-radius: 4px; }
+p { color: var(--muted); margin: 0 0 1em; text-wrap: pretty; }
+strong { color: var(--ink); font-weight: 600; }
+code { font-family: var(--mono); font-size: .92em; color: var(--ink); }
+.skip { position: absolute; left: -999px; top: 0; z-index: 100; background: var(--ink); color: var(--on-signal); padding: 8px 14px; font-family: var(--mono); font-size: 13px; border-radius: 4px; }
+.skip:focus { left: 8px; top: 8px; }
+.wrap { max-width: 1200px; margin: 0 auto; padding: 0 28px; }
+.split > *, .proof-grid > *, .run-grid > *, .derivation > *, .cell > * { min-width: 0; }
+
+/* grain veil: fixed, never on a scrolling container */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: 95; pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: .045; mix-blend-mode: overlay;
+}
+/* mesh atmosphere: two disciplined orbs behind everything */
+.orbs { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+.orbs i { position: absolute; border-radius: 50%; filter: blur(90px); }
+.orbs .o1 { width: 54vw; height: 54vw; left: -14vw; top: -22vw; background: radial-gradient(circle, rgba(61,220,151,.13), transparent 65%); }
+.orbs .o2 { width: 44vw; height: 44vw; right: -16vw; top: 30vh; background: radial-gradient(circle, rgba(23,166,115,.09), transparent 65%); }
+
+/* ── floating island nav ── */
+#nav { position: fixed; top: 18px; left: 50%; transform: translateX(-50%); z-index: 60; transition: top .3s var(--ease-out); }
+#nav .pill {
+  display: flex; align-items: center; gap: 26px;
+  background: rgba(12,14,17,.72); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  border: 1px solid var(--line); border-radius: 100px; padding: 9px 10px 9px 18px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.05);
+}
+#nav .brand { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 600; font-size: 17px; letter-spacing: -0.01em; }
+#nav .links { display: flex; gap: 22px; align-items: center; }
+#nav .links a { color: var(--muted); font-size: 13.5px; font-weight: 500; transition: color .2s var(--ease-out); }
+#nav .links a:hover { color: var(--ink); }
+#nav .links a.cta {
+  color: var(--on-signal); background: var(--signal); border-radius: 100px; padding: 8px 16px; font-weight: 600;
+  transition: background .2s var(--ease-out), transform .12s var(--ease-out);
+}
+#nav .links a.cta:hover { background: #5CE6AC; }
+#nav .links a.cta:active { transform: scale(.97); }
+#nav .burger { display: none; width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line-strong); background: var(--glass); cursor: pointer; position: relative; }
+#nav .burger i { position: absolute; left: 11px; right: 11px; height: 1.6px; background: var(--ink); transition: transform .35s var(--ease-in), top .35s var(--ease-in); }
+#nav .burger i:nth-child(1) { top: 15px; }
+#nav .burger i:nth-child(2) { top: 22px; }
+#nav.open .burger i:nth-child(1) { top: 18.5px; transform: rotate(45deg); }
+#nav.open .burger i:nth-child(2) { top: 18.5px; transform: rotate(-45deg); }
+#menu {
+  position: fixed; inset: 0; z-index: 55; display: grid; place-items: center;
+  background: rgba(6,7,8,.82); backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
+  opacity: 0; pointer-events: none; transition: opacity .35s var(--ease-out);
+}
+#menu.open { opacity: 1; pointer-events: auto; }
+#menu nav { display: grid; gap: 8px; text-align: center; }
+#menu a {
+  font-family: var(--display); font-weight: 600; font-size: clamp(30px, 7vw, 44px); letter-spacing: -0.02em;
+  padding: 6px 18px; color: var(--ink);
+  opacity: 0; transform: translateY(26px); transition: opacity .5s var(--ease-out), transform .5s var(--ease-out);
+}
+#menu.open a { opacity: 1; transform: none; }
+#menu.open a:nth-child(1) { transition-delay: .06s; } #menu.open a:nth-child(2) { transition-delay: .12s; }
+#menu.open a:nth-child(3) { transition-delay: .18s; } #menu.open a:nth-child(4) { transition-delay: .24s; }
+#menu.open a:nth-child(5) { transition-delay: .30s; }
+#menu a:hover { color: var(--signal); }
+
+/* ── type furniture ── */
+.eyebrow {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 11px; font-weight: 500; letter-spacing: .18em; text-transform: uppercase; color: var(--muted);
+  border: 1px solid var(--line); background: var(--glass); border-radius: 100px; padding: 7px 14px; margin: 0 0 26px;
+}
+.eyebrow .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--signal); }
+h1, h2 { font-family: var(--display); font-weight: 600; letter-spacing: -0.02em; text-wrap: balance; color: var(--ink); margin: 0; }
+h2 { font-size: clamp(30px, 4.4vw, 52px); line-height: 1.08; }
+.lede { font-size: clamp(16.5px, 1.6vw, 18.5px); max-width: 54ch; }
+section { position: relative; padding: clamp(90px, 12vh, 150px) 0; z-index: 1; }
+
+/* ── buttons: pill + island ── */
+.btn {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-family: var(--sans); font-size: 15px; font-weight: 600;
+  border-radius: 100px; padding: 8px 8px 8px 22px;
+  transition: transform .14s var(--ease-out), background .2s var(--ease-out), border-color .2s var(--ease-out), color .2s var(--ease-out);
+  cursor: pointer; border: 1px solid transparent;
+}
+.btn:active { transform: scale(.98); }
+.btn .island {
+  display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%;
+  transition: transform .22s var(--ease-out), background .2s var(--ease-out);
+  flex: none;
+}
+.btn.primary { background: var(--signal); color: var(--on-signal); box-shadow: 0 0 0 1px rgba(61,220,151,.35), 0 10px 34px rgba(23,166,115,.28); }
+.btn.primary .island { background: rgba(6,17,12,.16); color: var(--on-signal); }
+.btn.primary:hover { background: #5CE6AC; }
+.btn.primary:hover .island { transform: translate(2px, -2px) scale(1.06); }
+.btn.ghost { border-color: var(--line-strong); color: var(--ink); padding-left: 22px; }
+.btn.ghost .island { background: var(--glass); color: var(--ink); }
+.btn.ghost:hover { border-color: var(--signal); color: var(--signal); }
+.btn.ghost:hover .island { transform: translate(2px, -2px) scale(1.06); color: var(--signal); }
+.btn.solo { padding: 8px 22px; }
+
+/* ── double-bezel ── */
+.shell { background: var(--glass); border: 1px solid var(--line); border-radius: var(--r-shell); padding: 8px; box-shadow: 0 24px 70px rgba(0,0,0,.4); }
+.core { background: var(--surface); border-radius: calc(var(--r-shell) - 8px); box-shadow: inset 0 1px 0 rgba(255,255,255,.06); overflow: hidden; }
+
+/* ── hero ── */
+#hero { min-height: 100svh; display: flex; flex-direction: column; justify-content: center; padding: 140px 0 70px; }
+#hero h1 { font-size: clamp(44px, 7.2vw, 96px); line-height: 1.02; max-width: 12ch; margin-bottom: 26px; }
+#hero h1 .plate { color: var(--signal); }
+.hero-sub { max-width: 46ch; font-size: clamp(16.5px, 1.7vw, 19px); margin-bottom: 40px; }
+.cta-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 64px; }
+.hero-frame { position: relative; }
+.hero-frame .chrome { display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.hero-frame .chrome .dots { display: flex; gap: 6px; }
+.hero-frame .chrome .dots i { width: 9px; height: 9px; border-radius: 50%; background: var(--line-strong); }
+.hero-frame .chrome .url { font-family: var(--mono); font-size: 12px; color: var(--faint); background: var(--glass); border: 1px solid var(--line); border-radius: 100px; padding: 5px 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hero-frame svg.map { display: block; width: 100%; height: auto; }
+
+/* the printed map, dark glass render (real render, scoped) */
+.map .node .shape { fill: #12151B; stroke: #2A303B; stroke-width: 1.2; }
+.map .node .label { fill: #EDF1F6; font-size: 13px; font-weight: 600; font-family: var(--sans); }
+.map .node.t-process .shape { stroke: var(--process); }
+.map .node.t-decision .shape { stroke: var(--decision); }
+.map .node.t-system .shape { stroke: var(--system); }
+.map .node.t-role .shape { stroke: var(--role); }
+.map .node.t-artifact .shape { stroke: var(--artifact); }
+.map .node.container .shape { stroke-width: 1.6; }
+.map .node .icon-bg { fill: #1A1E26; }
+.map .node.t-process .icon-bg { fill: #14263F; } .map .node.t-process .icon-fg { fill: var(--process); stroke: var(--process); }
+.map .node.t-decision .icon-bg { fill: #33250E; } .map .node.t-decision .icon-fg { fill: var(--decision); stroke: var(--decision); }
+.map .node.t-system .icon-bg { fill: #251A3D; } .map .node.t-system .icon-fg { fill: var(--system); stroke: var(--system); }
+.map .node.t-role .icon-bg { fill: #0D2F23; } .map .node.t-role .icon-fg { fill: var(--role); stroke: var(--role); }
+.map .node.t-artifact .icon-bg { fill: #1F2937; } .map .node.t-artifact .icon-fg { fill: var(--artifact); stroke: var(--artifact); }
+.map .node .stack { fill: #12151B; stroke: #2A303B; stroke-width: 1.1; opacity: .65; }
+.map .node .mini-frame { fill: #161A22; stroke: var(--line); stroke-width: 1; }
+.map .mini-node { stroke: none; opacity: .92; }
+.map .mini-node.t-process { fill: var(--process); }
+.map .mini-node.t-decision { fill: var(--decision); }
+.map .mini-node.t-system { fill: var(--system); }
+.map .mini-node.t-role { fill: var(--role); }
+.map .mini-node.t-artifact { fill: var(--artifact); }
+.map .mini-edge { stroke: #4D5D70; stroke-width: 1; fill: none; opacity: .6; }
+.map .node .count-chip-bg { fill: #1A1E26; stroke: var(--line); stroke-width: 1; }
+.map .node .count-chip-txt { fill: #93A2B5; font-size: 10px; font-weight: 700; }
+.map .node .cost-chip-bg { fill: #1A1E26; stroke: var(--line); stroke-width: 1; }
+.map .node .cost-chip-txt { fill: #93A2B5; font-size: 9.5px; font-weight: 650; font-family: var(--mono); }
+.map .edge path.line { stroke: #46505F; stroke-width: 1.7; fill: none; }
+.map .edge .arrow { fill: #46505F; }
+.map .edge-label-bg { fill: #0C0E11; stroke: var(--line); stroke-width: 1; }
+.map .edge-label { fill: #93A2B5; font-size: 10.5px; font-weight: 600; }
+
+/* ── bento: four impressions + the economics strip ── */
+.bento { display: grid; grid-template-columns: repeat(12, 1fr); gap: 22px; margin-top: 56px; }
+.cell { position: relative; }
+.cell .core { height: 100%; padding: 30px 30px 28px; display: flex; flex-direction: column; }
+.cell .tag { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 16px; }
+.cell .tag i { width: 8px; height: 8px; border-radius: 2px; background: currentColor; }
+.cell h3 { font-family: var(--display); font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 10px; }
+.cell p { font-size: 14.5px; margin: 0 0 18px; }
+.cell .vig { margin-top: auto; }
+.c-map { grid-column: span 7; grid-row: span 2; }
+.c-brief { grid-column: span 5; }
+.c-road { grid-column: span 5; }
+.c-audit { grid-column: span 5; }
+.c-econ { grid-column: span 7; }
+.c-brief .tag { color: var(--decision); } .c-map .tag { color: var(--process); }
+.c-road .tag { color: var(--system); } .c-audit .tag { color: var(--role); }
+.c-econ .tag { color: var(--signal); }
+/* map vignette: a real node constellation */
+.v-mapmini { position: relative; height: 190px; }
+.v-mapmini i { position: absolute; border: 1.5px solid; border-radius: 8px; background: #12151B; }
+.v-mapmini i.a { left: 4%; top: 20px; width: 26%; height: 34px; border-color: var(--process); }
+.v-mapmini i.b { left: 40%; top: 12px; width: 26px; height: 26px; transform: rotate(45deg); border-radius: 5px; border-color: var(--decision); }
+.v-mapmini i.c { left: 56%; top: 20px; width: 24%; height: 34px; border-color: var(--system); }
+.v-mapmini i.d { left: 16%; top: 96px; width: 30%; height: 34px; border-radius: 17px; border-color: var(--role); }
+.v-mapmini i.e { left: 56%; top: 96px; width: 26%; height: 34px; border-color: var(--artifact); }
+.v-mapmini u { position: absolute; height: 1.5px; background: #46505F; }
+.v-lines { display: grid; gap: 9px; }
+.v-lines b { display: block; height: 6px; border-radius: 3px; background: var(--line-strong); }
+.v-lines b.h { height: 10px; width: 52%; background: var(--decision); opacity: .55; }
+.v-lines b:nth-child(2) { width: 90%; } .v-lines b:nth-child(3) { width: 78%; }
+.v-lines b:nth-child(4) { width: 64%; } .v-lines b:nth-child(5) { width: 72%; }
+.v-lanes { display: flex; gap: 10px; height: 96px; }
+.v-lanes span { flex: 1; border: 1px solid var(--line); border-radius: 10px; background: var(--glass); padding: 9px 8px; font-family: var(--mono); font-size: 9.5px; color: var(--faint); }
+.v-lanes i { display: block; height: 8px; border-radius: 4px; margin: 8px 0 6px; background: var(--system); }
+.v-lanes .l1 i { background: var(--decision); } .v-lanes .l2 i { background: var(--process); } .v-lanes .l3 i { background: var(--role); }
+.v-lanes .l1 i:nth-of-type(2) { width: 70%; } .v-lanes .l2 i:nth-of-type(2) { width: 58%; } .v-lanes .l3 i:nth-of-type(2) { width: 82%; }
+.v-checks { display: grid; gap: 8px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.v-checks em { font-style: normal; display: flex; justify-content: space-between; border-bottom: 1px dashed var(--line); padding-bottom: 7px; }
+.v-checks .ok { color: var(--signal); font-weight: 600; } .v-checks .warn { color: var(--amber); font-weight: 600; }
+/* economics strip */
+.econ-stats { display: grid; grid-template-columns: repeat(4, minmax(0, auto)); justify-content: space-between; gap: 24px; margin-top: 8px; }
+.stat { min-width: 0; }
+.stat-num { font-family: var(--mono); font-size: clamp(22px, 2.4vw, 34px); font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; line-height: 1; white-space: nowrap; }
+.stat.save .stat-num { color: var(--signal); }
+.stat-lbl { font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .1em; margin-top: 8px; }
+.econ-note { font-size: 13.5px; color: var(--faint); border-left: 2px solid var(--line-strong); padding-left: 14px; margin-top: 22px; }
+.econ-note strong { color: var(--ink); }
+/* odometer wheels */
+.stat-num.odo { display: inline-flex; align-items: baseline; }
+.odo-col { display: inline-block; height: 1em; overflow: hidden; }
+.odo-strip { display: inline-flex; flex-direction: column; line-height: 1; transform: translateY(0); transition: transform 1.05s var(--ease-out); }
+.odo-strip i { font-style: normal; height: 1em; }
+
+/* ── editorial split: text↔canvas ── */
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: center; }
+.split .statement { font-size: clamp(34px, 4.6vw, 58px); line-height: 1.06; margin-bottom: 22px; }
+.yaml-card { position: relative; font-family: var(--mono); font-size: 12.5px; line-height: 1.85; padding: 24px 26px; white-space: pre; overflow-x: auto; color: #C9D2DC; }
+.yaml-card .k { color: var(--faint); }
+.yaml-card .s { color: var(--signal); }
+.yaml-card .c { color: #525C68; font-style: italic; }
+.yaml-card .flag { color: var(--amber); font-style: italic; }
+.yaml-card .ln { color: #2E3641; user-select: none; }
+
+/* ── proof ── */
+.proof-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: start; margin-top: 48px; }
+.transcript { padding: 26px 28px; font-size: 16.5px; line-height: 1.7; color: var(--muted); }
+.transcript b { color: var(--ink); font-size: 13.5px; font-weight: 600; }
+.transcript .who { display: block; font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin: 4px 0 14px; }
+.transcript mark { background: rgba(240,176,78,.22); color: var(--ink); padding: 1px 4px; border-radius: 4px; transition: background .8s var(--ease-out); }
+.derivation { display: grid; gap: 14px; }
+.yaml-flag { font-family: var(--mono); font-size: 12.5px; padding: 18px 20px; overflow-x: auto; white-space: pre; color: #C9D2DC; }
+.yaml-flag .flag { color: var(--amber); font-style: italic; transition: opacity .9s var(--ease-out), filter .9s var(--ease-out), letter-spacing .9s var(--ease-out); }
+.flag-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 18px; font-size: 14px; color: var(--muted); }
+.flag-row .glyph { color: var(--amber); font-family: var(--mono); font-size: 15px; }
+.flag-row .doubt { transition: opacity .9s var(--ease-out), filter .9s var(--ease-out), letter-spacing .9s var(--ease-out); }
+.confirmed .doubt, .confirmed .yaml-flag .flag { opacity: 0; filter: blur(9px); letter-spacing: 3px; pointer-events: none; }
+.confirmed .transcript mark { background: transparent; }
+#confirmBtn {
+  margin-left: auto; font-family: var(--mono); font-size: 12.5px; font-weight: 600; color: var(--signal);
+  background: none; border: 1px solid var(--signal-deep); border-radius: 100px; padding: 8px 16px; cursor: pointer;
+  transition: background .18s var(--ease-out), color .18s var(--ease-out), transform .12s var(--ease-out);
+}
+#confirmBtn:hover { background: var(--signal); color: var(--on-signal); }
+#confirmBtn:active { transform: scale(.96); }
+.stamp-ok { font-family: var(--mono); font-weight: 600; font-size: 14px; color: var(--signal); border: 2px solid var(--signal); border-radius: 8px; padding: 5px 14px; transform: rotate(-5deg) scale(1.5); opacity: 0; margin-left: auto; }
+.confirmed .stamp-ok { opacity: 1; transform: rotate(-5deg) scale(1); transition: transform .45s var(--ease-out) .5s, opacity .3s var(--ease-out) .5s; }
+.confirmed #confirmBtn { display: none; }
+#replayBtn { background: none; border: none; font-family: var(--mono); font-size: 12px; color: var(--faint); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; padding: 0; }
+#replayBtn:hover { color: var(--ink); }
+.aside { font-size: 14px; color: var(--faint); max-width: 60ch; margin-top: 24px; }
+
+/* ── run ── */
+.run-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: center; }
+.term { position: relative; font-family: var(--mono); font-size: 14px; line-height: 2.1; padding: 24px 26px; white-space: pre; overflow-x: auto; color: #D7DEE7; }
+.term .p { color: var(--signal); user-select: none; }
+.term .c { color: #525C68; }
+#copyBtn {
+  position: absolute; top: 14px; right: 14px; font-family: var(--mono); font-size: 11.5px; font-weight: 600;
+  color: var(--muted); background: var(--glass); border: 1px solid var(--line-strong); border-radius: 100px;
+  padding: 6px 13px; cursor: pointer; transition: color .18s var(--ease-out), border-color .18s var(--ease-out), transform .12s var(--ease-out);
+}
+#copyBtn:hover { color: var(--ink); border-color: var(--signal); }
+#copyBtn:active { transform: scale(.96); }
+#copyBtn.done { color: var(--signal); border-color: var(--signal-deep); }
+.rules { display: grid; gap: 0; }
+.rule { display: grid; grid-template-columns: 18px 1fr; gap: 16px; padding: 15px 0; border-top: 1px solid var(--line); }
+.rule:last-child { border-bottom: 1px solid var(--line); }
+.rule .tick { width: 8px; height: 8px; border-radius: 2px; background: var(--signal); margin-top: 8px; }
+.rule dt { font-weight: 600; font-size: 15px; margin-bottom: 4px; }
+.rule dd { grid-column: 2; margin: 0; font-size: 14.5px; color: var(--muted); }
+
+/* ── footer ── */
+footer { position: relative; z-index: 1; border-top: 1px solid var(--line); padding: 70px 0 44px; margin-top: 40px; }
+.foot-grid { display: flex; justify-content: space-between; gap: 40px; flex-wrap: wrap; align-items: flex-start; }
+.foot-brand { display: flex; align-items: center; gap: 12px; font-family: var(--display); font-weight: 600; font-size: 18px; margin-bottom: 18px; }
+.ety { font-size: 15px; color: var(--muted); max-width: 46ch; line-height: 1.6; }
+.ety b { color: var(--ink); font-weight: 600; }
+.fine { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-top: 16px; }
+.foot-links { display: flex; gap: 22px; font-family: var(--mono); font-size: 13px; }
+.foot-links a { color: var(--muted); transition: color .2s var(--ease-out); }
+.foot-links a:hover { color: var(--signal); }
+
+/* ── scroll interpolation reveals ── */
+.rv.pre { opacity: 0; transform: translateY(26px); filter: blur(7px); }
+.rv.in { opacity: 1; transform: none; filter: none; transition: opacity .85s var(--ease-in), transform .85s var(--ease-in), filter .85s var(--ease-in); }
+
+/* ── mobile ── */
+@media (max-width: 900px) {
+  .bento { grid-template-columns: 1fr; }
+  .c-map, .c-brief, .c-road, .c-audit, .c-econ { grid-column: 1; grid-row: auto; }
+  .split, .proof-grid, .run-grid { grid-template-columns: 1fr; gap: 36px; }
+  .econ-stats { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 760px) {
+  #nav { top: 12px; }
+  #nav .links { display: none; }
+  #nav .burger { display: block; }
+  #nav .pill { gap: 14px; padding: 8px 9px 8px 16px; }
+  .wrap { padding: 0 20px; }
+  #hero { padding-top: 120px; }
+  .hero-frame .chrome .url { max-width: 52vw; }
+}
+
+/* ── reduced motion: everything already printed ── */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .rv.pre { opacity: 1; transform: none; filter: none; }
+  #menu a { opacity: 1; transform: none; }
+}
+
+/* ── print: the glass house prints on paper ── */
+@media print {
+  :root { --base: #fff; --surface: #fff; --ink: #000; --muted: #222; --faint: #555; --line: #bbb; --line-strong: #999; --glass: transparent; }
+  body { font-size: 12px; }
+  body::before, .orbs, #nav, #menu, .cta-row, #replayBtn, #confirmBtn, #copyBtn { display: none; }
+  .shell { box-shadow: none; border-color: #bbb; }
+  .core { box-shadow: none; border: 1px solid #ddd; }
+  section { padding: 28px 0; }
+  #hero { min-height: 0; padding: 24px 0; }
+  h1, h2, .cell h3, .split .statement { color: #000; }
+  .btn.primary { background: none; color: #000; box-shadow: none; border: 1px solid #000; }
+  .stat.save .stat-num { color: #000; }
+  .stat-num[aria-label] > * { display: none !important; }
+  .stat-num[aria-label]::after { content: attr(aria-label); }
+  .yaml-card, .yaml-flag, .term { color: #000; }
+  .yaml-card .k, .term .c, .yaml-card .c { color: #555; }
+  .yaml-card .flag, .yaml-flag .flag { color: #000; }
+  .stamp-ok { display: none; }
+  .foot-grid::after { content: "jross787.github.io/serigraph, printed from the web, as intended."; font-family: var(--mono); font-size: 10px; color: #555; display: block; width: 100%; margin-top: 16px; }
+}
+</style>
 </head>
 <body>
-<style>
-  :root {
-    --ground: #0b1016;
-    --surface: #141b26;
-    --surface-2: #1a2330;
-    --border: #26313f;
-    --border-strong: #354456;
-    --ink: #e8edf4;
-    --muted: #8fa0b3;
-    --faint: #64748b;
-    --accent: #4cc794;
-    --accent-ink: #081209;
-    --amber: #e8a33d;
-    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
-    --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    color-scheme: dark;
-  }
-  :root[data-theme="light"] { color-scheme: dark; }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body { overflow-x: clip; }
-  .split > *, .trail-step > *, .stats > * { min-width: 0; }
-  body {
-    background: var(--ground);
-    color: var(--ink);
-    font-family: var(--sans);
-    font-size: 16.5px;
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-  }
-  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 28px; }
-  a { color: var(--ink); text-decoration: none; }
-  a:hover { color: var(--accent); }
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
-  p { max-width: 62ch; color: var(--muted); margin: 0 0 1em; }
-  strong { color: var(--ink); font-weight: 600; }
-  h1, h2 { font-family: var(--mono); letter-spacing: -0.02em; text-wrap: balance; color: var(--ink); }
-  h2 { font-size: clamp(21px, 2.6vw, 27px); font-weight: 600; line-height: 1.3; margin: 0 0 18px; }
-  code { font-family: var(--mono); font-size: 0.92em; }
+<a class="skip" href="#main">Skip to content</a>
+<div class="orbs" aria-hidden="true"><i class="o1"></i><i class="o2"></i></div>
 
-  /* ── nav ── */
-  nav { display: flex; align-items: baseline; justify-content: space-between; padding: 26px 0 0; }
-  .wordmark { font-family: var(--mono); font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
-  .wordmark b { color: var(--accent); font-weight: 600; }
-  nav ul { display: flex; gap: 26px; list-style: none; margin: 0; padding: 0; }
-  nav ul a { color: var(--muted); font-size: 14px; }
-
-  /* ── hero ── */
-  header.hero { padding: 96px 0 34px; }
-  h1 {
-    font-size: clamp(34px, 5.4vw, 58px);
-    font-weight: 600;
-    line-height: 1.08;
-    margin: 0 0 22px;
-    max-width: 15ch;
-  }
-  .hero p.sub { font-size: 18.5px; max-width: 42ch; margin-bottom: 34px; }
-  .cta-row { display: flex; gap: 14px; flex-wrap: wrap; }
-  .btn {
-    display: inline-block; font-family: var(--mono); font-size: 14.5px; font-weight: 600;
-    padding: 11px 22px; border-radius: 8px; white-space: nowrap;
-    transition: transform .06s ease;
-  }
-  .btn:active { transform: translateY(1px); }
-  .btn.primary { background: var(--accent); color: var(--accent-ink); }
-  .btn.primary:hover { background: #5ad3a3; color: var(--accent-ink); }
-  .btn.ghost { border: 1px solid var(--border-strong); color: var(--ink); }
-  .btn.ghost:hover { border-color: var(--accent); color: var(--accent); }
-
-  /* ── app frame ── */
-  .frame {
-    border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
-    background: #0e1319; margin: 26px 0 0;
-    animation: rise .5s ease both;
-  }
-  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-  @media (prefers-reduced-motion: reduce) { .frame { animation: none; } }
-  .titlebar {
-    display: flex; justify-content: space-between; align-items: center;
-    background: var(--surface); border-bottom: 1px solid var(--border);
-    padding: 9px 16px; font-family: var(--mono); font-size: 12.5px; color: var(--muted);
-  }
-  .titlebar .stat { color: var(--faint); }
-  .frame svg { display: block; width: 100%; height: auto; }
-
-  /* ── product svg (real render, scoped) ── */
-  .omap .node .shape { fill: #1a2330; stroke: #354456; stroke-width: 1.2; }
-  .omap .node .shape-shadow { fill: rgba(0,0,0,.35); }
-  .omap .node .label { fill: #e9eef5; font-size: 13px; font-weight: 600; font-family: var(--sans); }
-  .omap .node.t-process .shape { stroke: #6aa2f8; }
-  .omap .node.t-decision .shape { stroke: #e8a33d; }
-  .omap .node.t-system .shape { stroke: #a988ec; }
-  .omap .node.t-role .shape { stroke: #46c393; }
-  .omap .node.t-artifact .shape { stroke: #93a5ba; }
-  .omap .node.container .shape { stroke-width: 1.6; }
-  .omap .node .icon-bg { fill: #1b2431; }
-  .omap .node.t-process .icon-bg { fill: #14263f; } .omap .node.t-process .icon-fg { fill: #6aa2f8; stroke: #6aa2f8; }
-  .omap .node.t-decision .icon-bg { fill: #33250e; } .omap .node.t-decision .icon-fg { fill: #e8a33d; stroke: #e8a33d; }
-  .omap .node.t-system .icon-bg { fill: #251a3d; } .omap .node.t-system .icon-fg { fill: #a988ec; stroke: #a988ec; }
-  .omap .node.t-role .icon-bg { fill: #0d2f23; } .omap .node.t-role .icon-fg { fill: #46c393; stroke: #46c393; }
-  .omap .node.t-artifact .icon-bg { fill: #1f2937; } .omap .node.t-artifact .icon-fg { fill: #93a5ba; stroke: #93a5ba; }
-  .omap .node .stack { fill: #1a2330; stroke: #354456; stroke-width: 1.1; opacity: .6; }
-  .omap .node .mini-frame { fill: #1b2431; stroke: #26313f; stroke-width: 1; rx: 7px; }
-  .omap .mini-node { stroke: none; opacity: .9; }
-  .omap .mini-node.t-process { fill: #6aa2f8; }
-  .omap .mini-node.t-decision { fill: #e8a33d; }
-  .omap .mini-node.t-system { fill: #a988ec; }
-  .omap .mini-node.t-role { fill: #46c393; }
-  .omap .mini-node.t-artifact { fill: #93a5ba; }
-  .omap .mini-edge { stroke: #4d5d70; stroke-width: 1; fill: none; opacity: .6; }
-  .omap .node .count-chip-bg { fill: #1b2431; stroke: #26313f; stroke-width: 1; }
-  .omap .node .count-chip-txt { fill: #93a2b5; font-size: 10px; font-weight: 700; }
-  .omap .node .cost-chip-bg { fill: #1b2431; stroke: #26313f; stroke-width: 1; }
-  .omap .node .cost-chip-txt { fill: #93a2b5; font-size: 9.5px; font-weight: 650; font-family: var(--mono); }
-  .omap .edge path.line { stroke: #4d5d70; stroke-width: 1.7; fill: none; }
-  .omap .edge .arrow { fill: #4d5d70; }
-  .omap .edge-label-bg { fill: #0e1319; stroke: #26313f; stroke-width: 1; rx: 7px; }
-  .omap .edge-label { fill: #93a2b5; font-size: 10.5px; font-weight: 600; }
-
-  /* ── sections ── */
-  section { padding: 92px 0 0; }
-  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 52px; align-items: center; margin-top: 34px; }
-  .codeblock {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-    padding: 20px 22px; overflow-x: auto; font-family: var(--mono); font-size: 13.5px;
-    line-height: 1.75; white-space: pre; color: var(--ink);
-  }
-  .codeblock .k { color: var(--muted); }
-  .codeblock .c { color: var(--faint); font-style: italic; }
-  .codeblock .flag { color: var(--amber); font-style: italic; }
-  .rendered { text-align: center; }
-  .rendered svg { width: min(320px, 88%); height: auto; }
-  .rendered .cap { font-family: var(--mono); font-size: 12.5px; color: var(--faint); margin-top: 14px; }
-
-  /* ── importer exhibit ── */
-  .trail { display: grid; gap: 14px; margin-top: 36px; max-width: 780px; min-width: 0; }
-  .trail-step { display: grid; grid-template-columns: 108px 1fr; gap: 18px; align-items: start; }
-  .trail-step .tag { font-family: var(--mono); font-size: 12px; color: var(--faint); padding-top: 14px; text-align: right; }
-  .card {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px;
-  }
-  .card.quote { font-size: 15.5px; color: var(--muted); font-style: italic; }
-  .card.quote b { color: var(--ink); font-style: normal; font-weight: 600; }
-  .card.yaml { font-family: var(--mono); font-size: 13px; overflow-x: auto; white-space: pre; }
-  .flagchip {
-    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    font-size: 14px; color: var(--muted);
-  }
-  .flagchip .glyph { color: var(--amber); font-style: normal; font-family: var(--mono); font-size: 15px; }
-  .flagchip .confirm {
-    margin-left: auto; font-family: var(--mono); font-size: 12.5px; color: var(--accent);
-    border: 1px solid var(--border-strong); border-radius: 7px; padding: 4px 11px; white-space: nowrap;
-  }
-  .aside { font-size: 14.5px; color: var(--faint); max-width: 62ch; margin-top: 26px; }
-
-  /* ── economics band ── */
-  .band { background: var(--surface); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-top: 92px; padding: 72px 0; }
-  .band section, section.in-band { padding: 0; }
-  .stats { display: grid; grid-template-columns: repeat(4, auto); justify-content: space-between; gap: 30px; margin: 40px 0 26px; }
-  .stat-num { font-family: var(--mono); font-size: clamp(26px, 3.6vw, 40px); font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
-  .stat-num.save { color: var(--accent); }
-  .stat-lbl { font-size: 12.5px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 6px; }
-  .coverage { font-size: 14.5px; color: var(--faint); border-left: 2px solid var(--border-strong); padding-left: 14px; }
-
-  /* ── agents / narrow prose ── */
-  .narrow { max-width: 680px; }
-
-  /* ── house rules ── */
-  .rules { display: grid; grid-template-columns: 1fr 1fr; gap: 34px 56px; margin-top: 38px; padding: 0; list-style: none; }
-  .rules dt { font-family: var(--mono); font-size: 15.5px; font-weight: 600; margin-bottom: 6px; }
-  .rules dd { margin: 0; font-size: 15px; color: var(--muted); }
-
-  /* ── terminal ── */
-  .term {
-    background: #0d1219; border: 1px solid var(--border); border-radius: 10px;
-    font-family: var(--mono); font-size: 14px; line-height: 2.0; padding: 22px 26px;
-    overflow-x: auto; white-space: pre; margin-top: 34px;
-  }
-  .term .p { color: var(--accent); user-select: none; }
-  .term .c { color: var(--faint); }
-
-  footer { padding: 88px 0 46px; }
-  footer .ety { font-family: var(--mono); font-size: 13.5px; color: var(--muted); }
-  footer .ety b { color: var(--accent); font-weight: 600; }
-  footer .fine { font-size: 13px; color: var(--faint); margin-top: 10px; }
-
-  @media (max-width: 760px) {
-    .split { grid-template-columns: 1fr; gap: 30px; }
-    .stats { grid-template-columns: repeat(2, 1fr); }
-    .trail-step { grid-template-columns: 1fr; gap: 6px; }
-    .trail-step .tag { text-align: left; padding-top: 0; }
-    .rules { grid-template-columns: 1fr; }
-    header.hero { padding-top: 64px; }
-    nav ul { gap: 18px; }
-  }
-</style>
-
-<div class="wrap">
-  <nav>
-    <a class="wordmark" href="#">serigraph<b>:</b></a>
-    <ul>
-      <li><a href="https://github.com/jross787/opsmap/blob/main/docs/FORMAT.md">Format</a></li>
-      <li><a href="https://github.com/jross787/opsmap/blob/main/docs/DESIGN.md">Design notes</a></li>
-      <li><a href="https://github.com/jross787/opsmap">GitHub</a></li>
-    </ul>
-  </nav>
-
-  <header class="hero">
-    <h1>Your business, as a file.</h1>
-    <p class="sub">Serigraph keeps a company's operating model in one YAML file. Humans get a zoomable map. Agents get the truth.</p>
-    <div class="cta-row">
-      <a class="btn primary" href="#start">Clone and run</a>
-      <a class="btn ghost" href="https://github.com/jross787/opsmap/blob/main/docs/FORMAT.md">Read the format</a>
+<div id="nav">
+  <div class="pill">
+    <a class="brand" href="#hero" aria-label="Serigraph, back to top">
+      <svg width="22" height="22" viewBox="0 0 32 32" fill="none" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="15" width="16" height="11" rx="2.5" stroke="#F2F5F7" stroke-opacity=".28" stroke-width="1.6"/><rect x="8" y="10" width="16" height="11" rx="2.5" stroke="#F2F5F7" stroke-opacity=".55" stroke-width="1.6"/><rect x="11" y="5" width="16" height="11" rx="2.5" stroke="#3DDC97" stroke-width="1.6"/><circle cx="25.5" cy="6.5" r="2.2" fill="#3DDC97"/></svg>
+      Serigraph
+    </a>
+    <div class="links">
+      <a href="#screens">Screens</a>
+      <a href="#proof">Proof</a>
+      <a href="#run">Run</a>
+      <a href="https://github.com/jross787/serigraph">GitHub</a>
+      <a class="cta" href="#run">Clone and run</a>
     </div>
-    <figure class="frame" style="margin-left:0;margin-right:0;">
-      <div class="titlebar"><span>brightside-new-patient-flow.yaml</span><span class="stat">35 nodes &middot; 2 levels &middot; imported from a discovery call</span></div>
-      <svg class="omap" role="img" aria-label="Rendered operations map: first contact, triage decision, booking, and pre-visit prep for a dental clinic" xmlns="http://www.w3.org/2000/svg" viewBox="-14 171 1772 351"><g class="edges"><g class="edge"><path d="M510.3665771484375,212.87080880900143 L612.7314453125,212.87080880900143 Q622.7314453125,212.87080880900143 632.6245237701178,214.32923214652018 L746.88232421875,231.1729520646145" class="line"></path><polygon points="0,-4 8,0 0,4" transform="translate(746.88232421875,231.1729520646145) rotate(8.386059906113804)" class="arrow"></polygon><rect x="539.0314453125" y="203.37080880900143" width="167.4" height="19" rx="8" class="edge-label-bg"></rect><text x="622.7314453125" y="216.37080880900143" text-anchor="middle" class="edge-label">basics and chief complaint</text></g><g class="edge"><path d="M865.4388372850049,283.87080880900146 L973.5137010758433,396.8933163760102 Q980.4248046875,404.12080880900146 990.4248046875,404.12080880900146 L1043.21533203125,404.12080880900146" class="line"></path><polygon points="0,-4 8,0 0,4" transform="translate(1043.21533203125,404.12080880900146) rotate(0)" class="arrow"></polygon><rect x="952.7748046875" y="394.62080880900146" width="55.300000000000004" height="19" rx="8" class="edge-label-bg"></rect><text x="980.4248046875" y="407.62080880900146" text-anchor="middle" class="edge-label">routine</text></g><g class="edge"><path d="M1238.70068359375,404.12080880900146 L1379.0108642578125,404.12080880900146 Q1389.0108642578125,404.12080880900146 1398.8927894905319,405.6529816761881 L1539.321044921875,427.4261035822171" class="line"></path><polygon points="0,-4 8,0 0,4" transform="translate(1539.321044921875,427.4261035822171) rotate(8.813419340969785)" class="arrow"></polygon><rect x="1290.5608642578125" y="394.62080880900146" width="196.9" height="19" rx="8" class="edge-label-bg"></rect><text x="1389.0108642578125" y="407.62080880900146" text-anchor="middle" class="edge-label">booked about two-plus weeks out</text></g><g class="edge"><path d="M85.28665975182705,394.12080880900146 L239.40978108368682,220.35212198404514 Q246.0452880859375,212.87080880900143 256.0452880859375,212.87080880900143 L368.3538818359375,212.87080880900143" class="line"></path><polygon points="0,-4 8,0 0,4" transform="translate(368.3538818359375,212.87080880900143) rotate(0)" class="arrow"></polygon><rect x="153.4952880859375" y="203.37080880900143" width="185.10000000000002" height="19" rx="8" class="edge-label-bg"></rect><text x="246.0452880859375" y="216.37080880900143" text-anchor="middle" class="edge-label">calls web leads back same day</text></g><g class="edge"><path d="M124,418.12080880900146 L236.0452880859375,418.12080880900146 Q246.0452880859375,418.12080880900146 256.0452880859375,418.12080880900146 L429.3602294921875,418.12080880900146 Q439.3602294921875,418.12080880900146 449.3602294921875,418.12080880900146 L612.7314453125,418.12080880900146 Q622.7314453125,418.12080880900146 630.3089124534296,411.59532095535155 L778.6239987099902,283.87080880900146" class="line"></path><polygon points="0,-4 8,0 0,4" transform="translate(778.6239987099902,283.87080880900146) rotate(-40.73404615466229)" class="arrow"></polygon><rect x="355.6602294921875" y="408.62080880900146" width="167.4" height="19" rx="8" class="edge-label-bg"></rect><text x="439.3602294921875" y="421.62080880900146" text-anchor="middle" class="edge-label">triages on the intake call</text></g><g class="edge"><path d="M124,435.5889895756403 L236.44392055631093,468.3255017487606 Q246.0452880859375,471.12080880900146 256.0452880859375,471.12080880900146 L429.3602294921875,471.12080880900146 Q439.3602294921875,471.12080880900146 449.3602294921875,471.12080880900146 L612.7314453125,471.12080880900146 Q622.7314453125,471.12080880900146 632.7314453125,471.12080880900146 L816.233642578125,471.12080880900146 Q826.233642578125,471.12080880900146 836.233642578125,471.12080880900146 L970.4248046875,471.12080880900146 Q980.4248046875,471.12080880900146 990.4248046875,471.12080880900146 L1130.9580078125,471.12080880900146 Q1140.9580078125,471.12080880900146 1150.9580078125,471.12080880900146 L1379.0108642578125,471.12080880900146 Q1389.0108642578125,471.12080880900146 1398.9456405496148,469.9805368976398 L1539.321044921875,453.86883735350415" class="line"></path><polygon points="0,-4 8,0 0,4" transform="translate(1539.321044921875,453.86883735350415) rotate(-6.547518114943112)" class="arrow"></polygon><rect x="724.833642578125" y="461.62080880900146" width="202.8" height="19" rx="8" class="edge-label-bg"></rect><text x="826.233642578125" y="474.62080880900146" text-anchor="middle" class="edge-label">runs verifications every morning</text></g></g><g class="nodes"><g transform="translate(368.3538818359375,188.87080880900143)" class="node t-process"><rect width="142.0126953125" height="48" rx="10" class="shape"></rect><g transform="translate(11,12)"><rect width="24" height="24" rx="7" class="icon-bg"></rect><path d="M2.5 8h7.5M7.5 4.5 11 8l-3.5 3.5M12.5 3v10" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" transform="translate(3.2727272727272725,3.2727272727272725) scale(1.0909090909090908)" class="icon-fg" style="fill: none;"></path></g><text x="44" y="28.5" text-anchor="start" class="label"><tspan x="44" dy="0">First contact</tspan></text><g transform="translate(2,53)" class="cost-chip"><rect width="111.19999999999999" height="16" rx="8" class="cost-chip-bg"></rect><text x="8" y="11.5" class="cost-chip-txt">$1.6k → $46.80/mo</text></g></g><g transform="translate(746.88232421875,201.87080880900143)" class="node t-decision"><polygon points="79.351318359375,0 158.70263671875,41 79.351318359375,82 0,41" class="shape"></polygon><text x="79.351318359375" y="37" text-anchor="middle" class="label"><tspan x="79.351318359375" dy="0">Emergency or</tspan><tspan x="79.351318359375" dy="17">routine?</tspan></text></g><g transform="translate(1043.21533203125,372.12080880900146)" class="node t-process"><rect width="195.4853515625" height="64" rx="10" class="shape"></rect><g transform="translate(11,20)"><rect width="24" height="24" rx="7" class="icon-bg"></rect><path d="M2.5 8h7.5M7.5 4.5 11 8l-3.5 3.5M12.5 3v10" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" transform="translate(3.2727272727272725,3.2727272727272725) scale(1.0909090909090908)" class="icon-fg" style="fill: none;"></path></g><text x="44" y="28" text-anchor="start" class="label"><tspan x="44" dy="0">Book comprehensive</tspan><tspan x="44" dy="17">exam</tspan></text></g><g transform="translate(1539.321044921875,386.3791911909986)" class="node t-process container"><rect x="5" y="5" width="196" height="112.4832352360057" rx="13" class="stack"></rect><rect width="196" height="112.4832352360057" rx="13" class="shape"></rect><g transform="translate(13,10)"><rect width="24" height="24" rx="7" class="icon-bg"></rect><path d="M2.5 8h7.5M7.5 4.5 11 8l-3.5 3.5M12.5 3v10" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" transform="translate(3.2727272727272725,3.2727272727272725) scale(1.0909090909090908)" class="icon-fg" style="fill: none;"></path></g><text x="45" y="26" text-anchor="start" class="label"><tspan x="45" dy="0">Pre-visit prep</tspan></text><rect x="13" y="39" width="170" height="57.48323523600569" class="mini-frame"></rect><g transform="translate(13,39) scale(0.21133542366178562)"><path d="M202.3798828125,48.959506696746324 L303.71021462617875,29.508144220255815 Q311.5667724609375,28 319.5667724609375,28 L459.57861328125,28" stroke-width="6.624540153952205" class="mini-edge"></path><path d="M202.3798828125,87.04049330325367 L303.71021462617875,106.49185577974418 Q311.5667724609375,108 319.5667724609375,108 L420.753662109375,108" stroke-width="6.624540153952205" class="mini-edge"></path><path d="M214.62451171875,240 L312.5916748046875,240 Q320.5916748046875,240 328.5916748046875,240 L426.558837890625,240" stroke-width="6.624540153952205" class="mini-edge"></path><rect x="4" y="44" width="198.3798828125" height="48" rx="12" class="mini-node t-process"></rect><rect x="459.57861328125" y="4" width="120" height="48" rx="12" class="mini-node t-system"></rect><rect x="420.753662109375" y="84" width="197.64990234375" height="48" rx="12" class="mini-node t-artifact"></rect><rect x="4" y="216" width="210.62451171875" height="48" rx="12" class="mini-node t-process"></rect><rect x="426.558837890625" y="208" width="145.630859375" height="64" rx="16" class="mini-node t-artifact"></rect><rect x="648.189697265625" y="208" width="156.21875" height="64" rx="16" class="mini-node t-system"></rect></g><g transform="translate(149.5,86.4832352360057)" style="cursor: zoom-in;"><rect width="36.5" height="19" rx="9.5" class="count-chip-bg"></rect><text x="9" y="13.5" class="count-chip-txt">6</text><path d="M2 8h8M6 4l4 4-4 4" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" transform="translate(18.5,3.5) scale(0.75)" class="count-chip-txt" stroke="currentColor" style="stroke: currentcolor;"></path></g></g><g transform="translate(4,394.12080880900146)" class="node t-role"><rect width="120" height="48" rx="24" class="shape"></rect><g transform="translate(11,12)"><rect width="24" height="24" rx="7" class="icon-bg"></rect><path d="M8 7.5a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2zM2.8 13.6c.6-2.9 2.7-4 5.2-4s4.6 1.1 5.2 4" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" transform="translate(3.2727272727272725,3.2727272727272725) scale(1.0909090909090908)" class="icon-fg" style="fill: none;"></path></g><text x="44" y="28.5" text-anchor="start" class="label"><tspan x="44" dy="0">Marisol</tspan></text></g><g transform="translate(1577.321044921875,282.25)" class="node t-role"><rect width="120" height="48" rx="24" class="shape"></rect><g transform="translate(11,12)"><rect width="24" height="24" rx="7" class="icon-bg"></rect><path d="M8 7.5a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2zM2.8 13.6c.6-2.9 2.7-4 5.2-4s4.6 1.1 5.2 4" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" transform="translate(3.2727272727272725,3.2727272727272725) scale(1.0909090909090908)" class="icon-fg" style="fill: none;"></path></g><text x="44" y="28.5" text-anchor="start" class="label"><tspan x="44" dy="0">Doctors</tspan></text></g></g></svg>
-    </figure>
-  </header>
-
-  <section>
-    <h2>Edit the map or edit the file. Same thing.</h2>
-    <p>Every drag, rename, and connection writes the smallest possible change to the YAML. Hand-written comments survive every edit. <code>git diff</code> shows exactly what changed about how the business runs, line by line.</p>
-    <div class="split">
-      <div class="codeblock"><span class="k">- id:</span> first-contact
-  <span class="k">type:</span> process
-  <span class="k">label:</span> First contact
-  <span class="k">cost:</span>
-    <span class="k">runs:</span> 260
-    <span class="k">human:</span> {minutes: 9, rate: 42}
-    <span class="k">agent:</span> {perRun: 0.18, setup: 900}</div>
-      <div class="rendered">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="-10 -10 190 100" class="omap" role="img" aria-label="The First contact process node with its cost chip"><g transform="translate(0,0)" class="node t-process"><rect width="142.0126953125" height="48" rx="10" class="shape"></rect><g transform="translate(11,12)"><rect width="24" height="24" rx="7" class="icon-bg"></rect><path d="M2.5 8h7.5M7.5 4.5 11 8l-3.5 3.5M12.5 3v10" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" transform="translate(3.2727272727272725,3.2727272727272725) scale(1.0909090909090908)" class="icon-fg" style="fill: none;"></path></g><text x="44" y="28.5" text-anchor="start" class="label"><tspan x="44" dy="0">First contact</tspan></text><g transform="translate(2,53)" class="cost-chip"><rect width="111.19999999999999" height="16" rx="8" class="cost-chip-bg"></rect><text x="8" y="11.5" class="cost-chip-txt">$1.6k → $46.80/mo</text></g></g></svg>
-        <div class="cap">the same seven lines, rendered</div>
-      </div>
-    </div>
-  </section>
-
-  <section>
-    <h2>Paste the discovery call. Review what it heard.</h2>
-    <p>The importer builds the map only from what was said. Hedged or implied items carry a flag in the file itself, and on the canvas, until you confirm or correct them. A transcript with no process in it gets an error, not an invented map.</p>
-    <div class="trail">
-      <div class="trail-step">
-        <span class="tag">the client says</span>
-        <div class="card quote"><b>Karen:</b> Marisol runs the verifications every morning for anyone coming in the next... I think she works two days out?</div>
-      </div>
-      <div class="trail-step">
-        <span class="tag">the file records</span>
-        <div class="card yaml">- id: insurance-verification  <span class="flag"># uncertain: "two days out" was Karen's guess</span></div>
-      </div>
-      <div class="trail-step">
-        <span class="tag">the canvas shows</span>
-        <div class="card flagchip"><span class="glyph">&#9873;</span> uncertain &middot; "two days out" was Karen's guess <span class="confirm">&#10003; Mark confirmed</span></div>
-      </div>
-    </div>
-    <p class="aside">The model call happens server side. Keys never reach the browser, the YAML, or an export. Point it at the Anthropic API, at any local model over stdin, or at nothing: the app runs fully offline with the importer switched off.</p>
-  </section>
-</div>
-
-<div class="band">
-  <div class="wrap">
-    <section class="in-band">
-      <h2>The same file prices the automation.</h2>
-      <p>Give any step a run count, minutes, and a rate, then what an agent costs per run. The rollup recomputes live as you type, in the file and on the canvas.</p>
-      <div class="stats">
-        <div><div class="stat-num">$6,001</div><div class="stat-lbl">human / month</div></div>
-        <div><div class="stat-num">$190</div><div class="stat-lbl">agents / month</div></div>
-        <div><div class="stat-num save">$5,812</div><div class="stat-lbl">saved / month</div></div>
-        <div><div class="stat-num">19 days</div><div class="stat-lbl">payback on $3,500</div></div>
-      </div>
-      <p class="coverage">Computed from 2 of 23 steps costed so far, and the bar says so. Steps with missing inputs stay out of every total: a blank is a blank, never a zero.</p>
-    </section>
+    <button class="burger" id="burger" aria-label="Open menu" aria-expanded="false"><i></i><i></i></button>
   </div>
 </div>
-
-<div class="wrap">
-  <section class="narrow">
-    <h2>Agents read the same file. Next, they propose to it.</h2>
-    <p>A map is a contract: five node types, validated structure, stable ids, provenance flags. An LLM agent can already read and write every map here, and its change arrives as a text diff a human can review.</p>
-    <p>The roadmap runs one direction: propose, approve, audit. The operating model stays governed while agents take on more of the operating.</p>
-  </section>
-
-  <section>
-    <h2>House rules</h2>
-    <dl class="rules">
-      <div><dt>The file is the truth.</dt><dd>The canvas is a view. Any editor, any agent, any diff tool works on the real thing.</dd></div>
-      <div><dt>Unknown is never zero.</dt><dd>Missing inputs exclude a step from every total. Coverage is always stated.</dd></div>
-      <div><dt>Never fabricate.</dt><dd>Imported items the transcript only implies are flagged with the reason for doubt.</dd></div>
-      <div><dt>Secrets stay server side.</dt><dd>No key in the browser, the YAML, or an export. Offline is a feature, not a failure.</dd></div>
-      <div><dt>Zero runtime dependencies.</dt><dd>Two vendored libraries. No install, no build. Clone and run must survive years.</dd></div>
-      <div><dt>Structure over styling.</dt><dd>Five node types, and only five. A curated vocabulary is what keeps maps machine-readable.</dd></div>
-    </dl>
-  </section>
-
-  <section id="start">
-    <h2>Runs on your machine, in one command.</h2>
-    <div class="term"><span class="p">$</span> git clone https://github.com/jross787/opsmap
-<span class="p">$</span> cd opsmap
-<span class="p">$</span> npm start
-<span class="c"># importer (optional): export ANTHROPIC_API_KEY first,</span>
-<span class="c"># or point OPSMAP_LLM_CMD at any local model. Everything else works offline.</span></div>
-  </section>
-
-  <footer>
-    <div class="ety"><b>serigraph</b> (n.): a print made by the silkscreen process.</div>
-    <div class="fine">Local-first, text-first, honest about what it doesn't know.</div>
-  </footer>
+<div id="menu" aria-hidden="true">
+  <nav>
+    <a href="#screens">Screens</a>
+    <a href="#proof">Proof</a>
+    <a href="#run">Run</a>
+    <a href="https://github.com/jross787/serigraph">GitHub</a>
+    <a href="#run">Clone and run</a>
+  </nav>
 </div>
 
+<main id="main">
+
+<!-- ═══ HERO ═══ -->
+<header id="hero">
+  <div class="wrap">
+    <p class="eyebrow rv"><span class="dot"></span>The operating model as a file</p>
+    <h1 class="rv">How your business runs, as <span class="plate">one file.</span></h1>
+    <p class="hero-sub rv">Serigraph maps every step, handoff, and cost into a single YAML file. Humans get a zoomable map. Agents get the truth.</p>
+    <div class="cta-row rv">
+      <a class="btn primary" href="#run">Clone and run <span class="island"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg></span></a>
+      <a class="btn ghost" href="https://github.com/jross787/serigraph/blob/main/docs/FORMAT.md">Read the format <span class="island"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg></span></a>
+    </div>
+    <div class="hero-frame shell rv">
+      <div class="core">
+        <div class="chrome">
+          <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="url">localhost:4700/#/map/brightside-demo</span>
+        </div>
+        <svg class="map" role="img" aria-label="Rendered operations map: first contact, triage decision, booking, and pre-visit prep for a dental clinic" xmlns="http://www.w3.org/2000/svg" viewBox="-14 171 1772 351"><g class="edges"><g class="edge"><path d="M510.3665771484375,212.87080880900143 L612.7314453125,212.87080880900143 Q622.7314453125,212.87080880900143 632.6245237701178,214.32923214652018 L746.88232421875,231.1729520646145" class="line"></path><polygon points="0,-4 8,0 0,4" transform="translate(746.88232421875,231.1729520646145) rotate(8.386059906113804)" class="arrow"></polygon><rect x="539.0314453125" y="203.37080880900143" width="167.4" height="19" rx="8" class="edge-label-bg"></rect><text x="622.7314453125" y="216.37080880900143" text-anchor="middle" class="edge-label">basics and chief complaint</text></g><g class="edge"><path d="M865.4388372850049,283.87080880900146 L973.5137010758433,396.8933163760102 Q980.4248046875,404.12080880900146 990.4248046875,404.12080880900146 L1043.21533203125,404.12080880900146" class="line"></path><polygon points="0,-4 8,0 0,4" transform="translate(1043.21533203125,404.12080880900146) rotate(0)" class="arrow"></polygon><rect x="952.7748046875" y="394.62080880900146" width="55.300000000000004" height="19" rx="8" class="edge-label-bg"></rect><text x="980.4248046875" y="407.62080880900146" text-anchor="middle" class="edge-label">routine</text></g><g class="edge"><path d="M1238.70068359375,404.12080880900146 L1379.0108642578125,404.12080880900146 Q1389.0108642578125,404.12080880900146 1398.8927894905319,405.6529816761881 L1539.321044921875,427.4261035822171" class="line"></path><polygon points="0,-4 8,0 0,4" transform="translate(1539.321044921875,427.4261035822171) rotate(8.813419340969785)" class="arrow"></polygon><rect x="1290.5608642578125" y="394.62080880900146" width="196.9" height="19" rx="8" class="edge-label-bg"></rect><text x="1389.0108642578125" y="407.62080880900146" text-anchor="middle" class="edge-label">booked about two-plus weeks out</text></g><g class="edge"><path d="M85.28665975182705,394.12080880900146 L239.40978108368682,220.35212198404514 Q246.0452880859375,212.87080880900143 256.0452880859375,212.87080880900143 L368.3538818359375,212.87080880900143" class="line"></path><polygon points="0,-4 8,0 0,4" transform="translate(368.3538818359375,212.87080880900143) rotate(0)" class="arrow"></polygon><rect x="153.4952880859375" y="203.37080880900143" width="185.10000000000002" height="19" rx="8" class="edge-label-bg"></rect><text x="246.0452880859375" y="216.37080880900143" text-anchor="middle" class="edge-label">calls web leads back same day</text></g><g class="edge"><path d="M124,418.12080880900146 L236.0452880859375,418.12080880900146 Q246.0452880859375,418.12080880900146 256.0452880859375,418.12080880900146 L429.3602294921875,418.12080880900146 Q439.3602294921875,418.12080880900146 449.3602294921875,418.12080880900146 L612.7314453125,418.12080880900146 Q622.7314453125,418.12080880900146 630.3089124534296,411.59532095535155 L778.6239987099902,283.87080880900146" class="line"></path><polygon points="0,-4 8,0 0,4" transform="translate(778.6239987099902,283.87080880900146) rotate(-40.73404615466229)" class="arrow"></polygon><rect x="355.6602294921875" y="408.62080880900146" width="167.4" height="19" rx="8" class="edge-label-bg"></rect><text x="439.3602294921875" y="421.12080880900146" text-anchor="middle" class="edge-label">triages on the intake call</text></g><g class="edge"><path d="M124,435.5889895756403 L236.44392055631093,468.3255017487606 Q246.0452880859375,471.12080880900146 256.0452880859375,471.12080880900146 L429.3602294921875,471.12080880900146 Q439.3602294921875,471.12080880900146 449.3602294921875,471.12080880900146 L612.7314453125,471.12080880900146 Q622.7314453125,471.12080880900146 632.7314453125,471.12080880900146 L816.233642578125,471.12080880900146 Q826.233642578125,471.12080880900146 836.233642578125,471.12080880900146 L970.4248046875,471.12080880900146 Q980.4248046875,471.12080880900146 990.4248046875,471.12080880900146 L1130.9580078125,471.12080880900146 Q1140.9580078125,471.12080880900146 1150.9580078125,471.12080880900146 L1379.0108642578125,471.12080880900146 Q1389.0108642578125,471.12080880900146 1398.9456405496148,469.9805368976398 L1539.321044921875,453.86883735350415" class="line"></path><polygon points="0,-4 8,0 0,4" transform="translate(1539.321044921875,453.86883735350415) rotate(-6.547518114943112)" class="arrow"></polygon><rect x="724.833642578125" y="461.62080880900146" width="202.8" height="19" rx="8" class="edge-label-bg"></rect><text x="826.233642578125" y="474.62080880900146" text-anchor="middle" class="edge-label">runs verifications every morning</text></g></g><g class="nodes"><g transform="translate(368.3538818359375,188.87080880900143)" class="node t-process"><rect width="142.0126953125" height="48" rx="10" class="shape"></rect><g transform="translate(11,12)"><rect width="24" height="24" rx="7" class="icon-bg"></rect><path d="M2.5 8h7.5M7.5 4.5 11 8l-3.5 3.5M12.5 3v10" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" transform="translate(3.2727272727272725,3.2727272727272725) scale(1.0909090909090908)" class="icon-fg" style="fill: none;"></path></g><text x="44" y="28.5" text-anchor="start" class="label"><tspan x="44" dy="0">First contact</tspan></text><g transform="translate(2,53)" class="cost-chip"><rect width="111.19999999999999" height="16" rx="8" class="cost-chip-bg"></rect><text x="8" y="11.5" class="cost-chip-txt">$1.6k → $46.80/mo</text></g></g><g transform="translate(746.88232421875,201.87080880900143)" class="node t-decision"><polygon points="79.351318359375,0 158.70263671875,41 79.351318359375,82 0,41" class="shape"></polygon><text x="79.351318359375" y="37" text-anchor="middle" class="label"><tspan x="79.351318359375" dy="0">Emergency or</tspan><tspan x="79.351318359375" dy="17">routine?</tspan></text></g><g transform="translate(1043.21533203125,372.12080880900146)" class="node t-process"><rect width="195.4853515625" height="64" rx="10" class="shape"></rect><g transform="translate(11,20)"><rect width="24" height="24" rx="7" class="icon-bg"></rect><path d="M2.5 8h7.5M7.5 4.5 11 8l-3.5 3.5M12.5 3v10" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" transform="translate(3.2727272727272725,3.2727272727272725) scale(1.0909090909090908)" class="icon-fg" style="fill: none;"></path></g><text x="44" y="28" text-anchor="start" class="label"><tspan x="44" dy="0">Book comprehensive</tspan><tspan x="44" dy="17">exam</tspan></text></g><g transform="translate(1539.321044921875,386.3791911909986)" class="node t-process container"><rect x="5" y="5" width="196" height="112.4832352360057" rx="13" class="stack"></rect><rect width="196" height="112.4832352360057" rx="13" class="shape"></rect><g transform="translate(13,10)"><rect width="24" height="24" rx="7" class="icon-bg"></rect><path d="M2.5 8h7.5M7.5 4.5 11 8l-3.5 3.5M12.5 3v10" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" transform="translate(3.2727272727272725,3.2727272727272725) scale(1.0909090909090908)" class="icon-fg" style="fill: none;"></path></g><text x="45" y="26" text-anchor="start" class="label"><tspan x="45" dy="0">Pre-visit prep</tspan></text><rect x="13" y="39" width="170" height="57.48323523600569" class="mini-frame"></rect><g transform="translate(13,39) scale(0.21133542366178562)"><path d="M202.3798828125,48.959506696746324 L303.71021462617875,29.508144220255815 Q311.5667724609375,28 319.5667724609375,28 L459.57861328125,28" stroke-width="6.624540153952205" class="mini-edge"></path><path d="M202.3798828125,87.04049330325367 L303.71021462617875,106.49185577974418 Q311.5667724609375,108 319.5667724609375,108 L420.753662109375,108" stroke-width="6.624540153952205" class="mini-edge"></path><path d="M214.62451171875,240 L312.5916748046875,240 Q320.5916748046875,240 328.5916748046875,240 L426.558837890625,240" stroke-width="6.624540153952205" class="mini-edge"></path><rect x="4" y="44" width="198.3798828125" height="48" rx="12" class="mini-node t-process"></rect><rect x="459.57861328125" y="4" width="120" height="48" rx="12" class="mini-node t-system"></rect><rect x="420.753662109375" y="84" width="197.64990234375" height="48" rx="12" class="mini-node t-artifact"></rect><rect x="4" y="216" width="210.62451171875" height="48" rx="12" class="mini-node t-process"></rect><rect x="426.558837890625" y="208" width="145.630859375" height="64" rx="16" class="mini-node t-artifact"></rect><rect x="648.189697265625" y="208" width="156.21875" height="64" rx="16" class="mini-node t-system"></rect></g><g transform="translate(149.5,86.4832352360057)"><rect width="36.5" height="19" rx="9.5" class="count-chip-bg"></rect><text x="9" y="13.5" class="count-chip-txt">6</text><path d="M2 8h8M6 4l4 4-4 4" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" transform="translate(18.5,3.5) scale(0.75)" class="count-chip-txt" stroke="currentColor" style="stroke: currentcolor;"></path></g></g><g transform="translate(4,394.12080880900146)" class="node t-role"><rect width="120" height="48" rx="24" class="shape"></rect><g transform="translate(11,12)"><rect width="24" height="24" rx="7" class="icon-bg"></rect><path d="M8 7.5a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2zM2.8 13.6c.6-2.9 2.7-4 5.2-4s4.6 1.1 5.2 4" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" transform="translate(3.2727272727272725,3.2727272727272725) scale(1.0909090909090908)" class="icon-fg" style="fill: none;"></path></g><text x="44" y="28.5" text-anchor="start" class="label"><tspan x="44" dy="0">Marisol</tspan></text></g><g transform="translate(1577.321044921875,282.25)" class="node t-role"><rect width="120" height="48" rx="24" class="shape"></rect><g transform="translate(11,12)"><rect width="24" height="24" rx="7" class="icon-bg"></rect><path d="M8 7.5a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2zM2.8 13.6c.6-2.9 2.7-4 5.2-4s4.6 1.1 5.2 4" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" transform="translate(3.2727272727272725,3.2727272727272725) scale(1.0909090909090908)" class="icon-fg" style="fill: none;"></path></g><text x="44" y="28.5" text-anchor="start" class="label"><tspan x="44" dy="0">Doctors</tspan></text></g></g></svg>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ═══ BENTO: four impressions + economics ═══ -->
+<section id="screens">
+  <div class="wrap">
+    <p class="eyebrow rv"><span class="dot"></span>The screens</p>
+    <h2 class="rv">Four impressions of one file.</h2>
+    <p class="lede rv" style="margin-top:18px;">Nothing is exported or copied. Each view is pulled from the same master and can never disagree with it.</p>
+    <div class="bento">
+      <div class="cell shell c-map rv"><div class="core">
+        <span class="tag"><i></i>Map</span>
+        <h3>The process as a graph.</h3>
+        <p>Zoom into any depth and edit directly. Drag, rename, or connect a node and the smallest possible change writes back to the file, comments intact.</p>
+        <div class="vig v-mapmini" aria-hidden="true"><i class="a"></i><i class="b"></i><i class="c"></i><i class="d"></i><i class="e"></i><u style="left:30%;top:36px;width:9%"></u><u style="left:48%;top:36px;width:8%"></u><u style="left:28%;top:64px;width:14%;transform:rotate(24deg)"></u><u style="left:52%;top:64px;width:10%;transform:rotate(-22deg)"></u></div>
+      </div></div>
+      <div class="cell shell c-brief rv"><div class="core">
+        <span class="tag"><i></i>Brief</span>
+        <h3>The graph as a PRD.</h3>
+        <p>Goals, problems, requirements, acceptance criteria, evidence, risks. Download it as clean Markdown.</p>
+        <div class="vig v-lines" aria-hidden="true"><b class="h"></b><b></b><b></b><b></b><b></b></div>
+      </div></div>
+      <div class="cell shell c-road rv"><div class="core">
+        <span class="tag"><i></i>Roadmap</span>
+        <h3>The graph as a plan.</h3>
+        <p>Now, Next, Later lanes with transparent RICE scoring: every input stays visible and nothing hides inside the score.</p>
+        <div class="vig v-lanes" aria-hidden="true"><span class="l1">NOW<i></i><i></i></span><span class="l2">NEXT<i></i><i></i></span><span class="l3">LATER<i></i><i></i></span></div>
+      </div></div>
+      <div class="cell shell c-audit rv"><div class="core">
+        <span class="tag"><i></i>Audit</span>
+        <h3>The graph as a check.</h3>
+        <p>Deterministic readiness: ownership, proof, traceability, dependencies, cycles. No model opinion, just structure.</p>
+        <div class="vig v-checks" aria-hidden="true"><em><span>ownership</span><span class="ok">pass</span></em><em><span>traceability</span><span class="ok">pass</span></em><em><span>evidence</span><span class="warn">2 gaps</span></em><em><span>cycles</span><span class="ok">none</span></em></div>
+      </div></div>
+      <div class="cell shell c-econ rv"><div class="core">
+        <span class="tag"><i></i>Economics</span>
+        <h3>The file prices the automation.</h3>
+        <p>Runs, minutes, rates, agent cost per run. The rollup recomputes live, and unknowns stay out of every total.</p>
+        <div class="econ-stats">
+          <div class="stat"><div class="stat-num" data-odo="6001" data-prefix="$">$6,001</div><div class="stat-lbl">human / month</div></div>
+          <div class="stat"><div class="stat-num" data-odo="190" data-prefix="$">$190</div><div class="stat-lbl">agents / month</div></div>
+          <div class="stat save"><div class="stat-num" data-odo="5812" data-prefix="$">$5,812</div><div class="stat-lbl">saved / month</div></div>
+          <div class="stat"><div class="stat-num" data-odo="19" data-suffix=" days">19 days</div><div class="stat-lbl">payback on $3,500</div></div>
+        </div>
+        <p class="econ-note">From the Brightside map, <strong>2 of 23 steps</strong> costed so far, and the bar says so. A blank is a blank, never a zero.</p>
+      </div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ EDITORIAL SPLIT: text↔canvas ═══ -->
+<section id="file">
+  <div class="wrap split">
+    <div>
+      <p class="eyebrow rv"><span class="dot"></span>Text and canvas</p>
+      <h2 class="statement rv">The file is the truth.</h2>
+      <p class="lede rv">Edit the map or edit the file; they are the same thing. A drag writes one line. A rename touches one field. <code>git diff</code> shows exactly what changed about how the business runs.</p>
+    </div>
+    <div class="shell rv"><div class="core">
+      <div class="yaml-card"><span class="ln">1  </span><span class="k">- id:</span> insurance-verification  <span class="flag"># uncertain: "two days out" was Karen's guess</span>
+<span class="ln">2  </span>  <span class="k">type:</span> process
+<span class="ln">3  </span>  <span class="k">label:</span> Run daily verifications
+<span class="ln">4  </span>  <span class="k">cost:</span>
+<span class="ln">5  </span>    <span class="k">runs:</span> <span class="s">220</span>
+<span class="ln">6  </span>    <span class="k">human:</span> {minutes: <span class="s">14</span>}
+<span class="ln">7  </span>    <span class="k">agent:</span> {perRun: <span class="s">0.42</span>, setup: <span class="s">2600</span>}
+<span class="ln">8  </span><span class="c"># what it costs a person, what it would cost an agent, beside the step itself</span></div>
+    </div></div>
+  </div>
+</section>
+
+<!-- ═══ PROOF ═══ -->
+<section id="proof">
+  <div class="wrap">
+    <p class="eyebrow rv"><span class="dot"></span>The proof</p>
+    <h2 class="rv">Paste the discovery call. Review what it heard.</h2>
+    <p class="lede rv" style="margin-top:18px;">The importer builds the map only from what was said. Anything merely implied carries its reason for doubt until a human clears it. Try it:</p>
+    <div class="proof-grid" id="proofGrid">
+      <div class="shell rv"><div class="core transcript"><b>Karen</b><span class="who">discovery call, Brightside Dental</span>Marisol runs the verifications every morning for anyone coming in the next… <mark>I think she works two days out?</mark></div></div>
+      <div class="derivation rv">
+        <div class="shell"><div class="core yaml-flag">- id: insurance-verification  <span class="flag"># uncertain: "two days out" was Karen's guess</span></div></div>
+        <div class="shell"><div class="core flag-row"><span class="glyph">&#9873;</span><span class="doubt">uncertain: "two days out" was Karen's guess</span><button id="confirmBtn" type="button">Mark confirmed</button><span class="stamp-ok" aria-hidden="true">CONFIRMED</span></div></div>
+      </div>
+    </div>
+    <p class="aside rv">A transcript with no process in it gets an error, not an invented map. Keys never reach the browser, the YAML, or an export, and the app runs fully offline with the importer switched off. <button id="replayBtn" type="button">run the proof again</button></p>
+  </div>
+</section>
+
+<!-- ═══ RUN ═══ -->
+<section id="run">
+  <div class="wrap run-grid">
+    <div>
+      <p class="eyebrow rv"><span class="dot"></span>Your machine</p>
+      <h2 class="statement rv" style="font-size:clamp(30px,4vw,48px);margin-bottom:22px;">One command.<br>No account.</h2>
+      <p class="lede rv">Local-first: client data and transcripts never leave the machine. It needs Node 18 and two vendored libraries. Nothing to install, nothing to build.</p>
+      <dl class="rules rv" style="margin-top:34px;">
+        <div class="rule"><span class="tick"></span><dt>The file is the truth.</dt><dd>Any editor, any agent, any diff tool works on the real thing.</dd></div>
+        <div class="rule"><span class="tick"></span><dt>Unknown is never zero.</dt><dd>Missing inputs stay out of every total. Coverage is always stated.</dd></div>
+        <div class="rule"><span class="tick"></span><dt>Never fabricate.</dt><dd>Implied imports carry their reason for doubt until confirmed.</dd></div>
+        <div class="rule"><span class="tick"></span><dt>Secrets stay server side.</dt><dd>No key in the browser, the YAML, or an export.</dd></div>
+        <div class="rule"><span class="tick"></span><dt>Agents propose, humans approve.</dt><dd>Every agent change arrives as a reviewable text diff.</dd></div>
+      </dl>
+    </div>
+    <div class="shell rv"><div class="core">
+      <div class="term"><span class="p">$</span> git clone https://github.com/jross787/serigraph
+<span class="p">$</span> cd serigraph
+<span class="p">$</span> npm start
+
+<span class="c"># importer (optional): export ANTHROPIC_API_KEY,</span>
+<span class="c"># or point OPSMAP_LLM_CMD at any local model.</span>
+<span class="c"># everything else works offline.</span><button id="copyBtn" type="button">copy</button></div>
+    </div></div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <div class="foot-brand">
+          <svg width="24" height="24" viewBox="0 0 32 32" fill="none" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="15" width="16" height="11" rx="2.5" stroke="#F2F5F7" stroke-opacity=".28" stroke-width="1.6"/><rect x="8" y="10" width="16" height="11" rx="2.5" stroke="#F2F5F7" stroke-opacity=".55" stroke-width="1.6"/><rect x="11" y="5" width="16" height="11" rx="2.5" stroke="#3DDC97" stroke-width="1.6"/><circle cx="25.5" cy="6.5" r="2.2" fill="#3DDC97"/></svg>
+          Serigraph
+        </div>
+        <div class="ety"><b>serigraph</b> (n.): a print made by the silkscreen process. One master, many impressions, each in register.</div>
+        <div class="fine">One file. Every impression. Set in Clash Display, Geist &amp; Geist Mono.</div>
+      </div>
+      <div class="foot-links">
+        <a href="https://github.com/jross787/serigraph/blob/main/docs/FORMAT.md">Format</a>
+        <a href="https://github.com/jross787/serigraph/blob/main/docs/DESIGN.md">Design notes</a>
+        <a href="https://github.com/jross787/serigraph/blob/main/docs/BRAND.md">Brand</a>
+        <a href="https://github.com/jross787/serigraph">GitHub</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var clamp = function (v, a, b) { return Math.min(b, Math.max(a, v)); };
+
+  /* ── floating menu: burger morph + staggered reveal ── */
+  var nav = document.getElementById("nav");
+  var menu = document.getElementById("menu");
+  var burger = document.getElementById("burger");
+  function setMenu(open) {
+    nav.classList.toggle("open", open);
+    menu.classList.toggle("open", open);
+    menu.setAttribute("aria-hidden", String(!open));
+    burger.setAttribute("aria-expanded", String(open));
+    document.body.style.overflow = open ? "hidden" : "";
+  }
+  burger.addEventListener("click", function () { setMenu(!menu.classList.contains("open")); });
+  menu.addEventListener("click", function (ev) {
+    if (ev.target.closest("a")) setMenu(false);
+  });
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && menu.classList.contains("open")) setMenu(false);
+  });
+
+  /* ── scroll interpolation reveals ── */
+  var rvs = Array.prototype.slice.call(document.querySelectorAll(".rv"));
+  if (!reduced && "IntersectionObserver" in window) {
+    rvs.forEach(function (el) { el.classList.add("pre"); });
+    var io = new IntersectionObserver(function (entries) {
+      var batch = entries.filter(function (e) { return e.isIntersecting; });
+      batch.forEach(function (en, i) {
+        var el = en.target;
+        el.style.transitionDelay = Math.min(i * 70, 280) + "ms";
+        el.classList.add("in");
+        io.unobserve(el);
+      });
+    }, { threshold: 0.18, rootMargin: "0px 0px -6% 0px" });
+    rvs.forEach(function (el) { io.observe(el); });
+  }
+
+  /* ── proof: wash out the doubt ── */
+  var proofGrid = document.getElementById("proofGrid");
+  var confirmBtn = document.getElementById("confirmBtn");
+  var replayBtn = document.getElementById("replayBtn");
+  var proved = false;
+  function confirmProof() { proofGrid.classList.add("confirmed"); proved = true; }
+  confirmBtn.addEventListener("click", confirmProof);
+  replayBtn.addEventListener("click", function () {
+    proofGrid.classList.remove("confirmed");
+    setTimeout(confirmProof, reduced ? 0 : 700);
+  });
+  if (!reduced && "IntersectionObserver" in window) {
+    var pio = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (en.isIntersecting && !proved) { setTimeout(confirmProof, 1600); pio.disconnect(); }
+      });
+    }, { threshold: 0.55 });
+    pio.observe(proofGrid);
+  }
+
+  /* ── economics: per-digit odometer wheels ── */
+  var odos = Array.prototype.slice.call(document.querySelectorAll(".stat-num[data-odo]"));
+  if (!reduced) {
+    odos.forEach(function (el) {
+      var formatted = parseInt(el.dataset.odo, 10).toLocaleString("en-US");
+      var prefix = el.dataset.prefix || "", suffix = el.dataset.suffix || "";
+      el.textContent = "";
+      el.setAttribute("aria-label", prefix + formatted + suffix);
+      if (prefix) { var pf = document.createElement("span"); pf.textContent = prefix; pf.setAttribute("aria-hidden", "true"); el.appendChild(pf); }
+      var strips = [];
+      formatted.split("").forEach(function (ch, i) {
+        if (/\d/.test(ch)) {
+          var col = document.createElement("span"); col.className = "odo-col"; col.setAttribute("aria-hidden", "true");
+          var strip = document.createElement("span"); strip.className = "odo-strip";
+          for (var d = 0; d <= 9; d++) { var it = document.createElement("i"); it.textContent = String(d); strip.appendChild(it); }
+          strip.style.transitionDelay = (i * 80) + "ms";
+          strip.dataset.d = ch;
+          col.appendChild(strip); el.appendChild(col); strips.push(strip);
+        } else {
+          var lit = document.createElement("span"); lit.textContent = ch; lit.setAttribute("aria-hidden", "true"); el.appendChild(lit);
+        }
+      });
+      if (suffix) { var sf = document.createElement("span"); sf.textContent = suffix; sf.setAttribute("aria-hidden", "true"); el.appendChild(sf); }
+      el._strips = strips;
+    });
+  }
+  function runOdometers() {
+    odos.forEach(function (el) {
+      (el._strips || []).forEach(function (strip) { strip.style.transform = "translateY(-" + strip.dataset.d + "em)"; });
+    });
+  }
+  if (!reduced && "IntersectionObserver" in window) {
+    var eio = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) { if (en.isIntersecting) { runOdometers(); eio.disconnect(); } });
+    }, { threshold: 0.4 });
+    eio.observe(document.querySelector(".econ-stats"));
+  } else if (!reduced) { runOdometers(); }
+
+  /* ── copy the run commands ── */
+  var copyBtn = document.getElementById("copyBtn");
+  copyBtn.addEventListener("click", function () {
+    var text = "git clone https://github.com/jross787/serigraph && cd serigraph && npm start";
+    function settle(ok) {
+      copyBtn.textContent = ok ? "copied" : "copy failed";
+      copyBtn.classList.toggle("done", ok);
+      setTimeout(function () { copyBtn.textContent = "copy"; copyBtn.classList.remove("done"); }, 1800);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { settle(true); }, function () { settle(false); });
+    } else { settle(false); }
+  });
+})();
+</script>
 </body>
 </html>

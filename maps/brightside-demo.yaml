@@ -10,8 +10,8 @@ nodes:
     description: Patients either call or fill out the form on the website — roughly a third arrive by web form now. Marisol checks the web forms first thing every morning and calls back, usually same day.
     cost:
       runs: 260
-      human: {minutes: 9, rate: 42}
-      agent: {perRun: 0.18, setup: 900}
+      human: { minutes: 9, rate: 42 }
+      agent: { perRun: 0.18, setup: 900 }
   - id: triage
     type: decision
     label: Emergency or routine?
@@ -38,13 +38,14 @@ nodes:
     type: process
     label: Book comprehensive exam
     description: Routine new patients book a ninety-minute comprehensive exam — x-rays plus the exam plus usually a cleaning if the gums allow it. Currently books out about two to two-and-a-half weeks.
+    position: { x: 1492, y: 241 }
   - id: pre-visit-prep
     type: process
     label: Pre-visit prep
     description: Everything between booking and the visit — insurance verification, appointment reminders, and online paperwork.
     children:
       nodes:
-        - id: insurance-verification  # uncertain: "two days out" was Karen's guess
+        - id: insurance-verification # uncertain: "two days out" was Karen's guess
           type: process
           label: Insurance verification
           description: Marisol runs verifications every morning for anyone coming in about two days out, then keys whatever comes back into Dentrix for the front desk.
@@ -75,7 +76,7 @@ nodes:
         - from: insurance-verification
           to: insurance-breakdown
           label: results keyed into Dentrix
-        - from: reminders  # inferred: paperwork link delivery via reminder texts implied
+        - from: reminders # inferred: paperwork link delivery via reminder texts implied
           to: online-paperwork
           label: link sent to new patients
   - id: comprehensive-exam
@@ -138,15 +139,15 @@ nodes:
     description: After the visit the notes get signed off, claims batch out through the clearinghouse, and denials loop until paid or the balance goes to the patient.
     cost:
       runs: 340
-      human: {minutes: 14}
-      agent: {perRun: 0.42, setup: 2600}
+      human: { minutes: 14 }
+      agent: { perRun: 0.42, setup: 2600 }
     children:
       nodes:
         - id: chart-signoff
           type: process
           label: Chart sign-off
           description: The doctor signs off on the chart notes, supposedly the same day.
-        - id: claim-submission  # uncertain: Tue/Fri batch days stated tentatively
+        - id: claim-submission # uncertain: Tue/Fri batch days stated tentatively
           type: process
           label: Batch and submit claims
           description: Dana batches the claims and sends them through the clearinghouse, roughly Tuesdays and Fridays, attaching x-rays and perio charts for payers that require them.
@@ -231,7 +232,7 @@ edges:
   - from: comprehensive-exam
     to: treatment-planning
     label: doctor finds needed work
-  - from: comprehensive-exam  # inferred: no-findings path to checkout never stated
+  - from: comprehensive-exam # inferred: no-findings path to checkout never stated
     to: recall
     label: no further treatment
   - from: emergency-visit
@@ -240,13 +241,14 @@ edges:
   - from: treatment-planning
     to: treatment-visit
     label: signed plan
+    via: { x: 3155, y: 61 }
   - from: treatment-visit
     to: billing
     label: completed procedures
   - from: marisol
     to: first-contact
     label: calls web leads back same day
-  - from: marisol  # inferred: Marisol implied to make the triage call
+  - from: marisol # inferred: Marisol implied to make the triage call
     to: triage
     label: triages on the intake call
   - from: marisol
@@ -267,3 +269,4 @@ edges:
   - from: treatment-planning
     to: dentrix
     label: recommended procedures entered
+    via: { x: 3164, y: 182 }

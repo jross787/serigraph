@@ -2,7 +2,7 @@
 // Serves the app, reads/writes map files, pushes file changes to the
 // browser over SSE, and builds standalone HTML exports.
 import { createServer } from 'node:http';
-import { promises as fs, watch, existsSync } from 'node:fs';
+import { promises as fs, watch, existsSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -11,10 +11,19 @@ import { parseMap, MAP_MODES } from '../shared/model.js';
 import { parseProjectIndex, PROJECT_INDEX_FILE } from '../shared/projects.js';
 import { collectProvenance } from '../shared/provenance.js';
 import { buildExport } from './export.js';
-import { callLLM, resolveProvider, callTranscription } from './llm.js';
+import { callLLM, resolveProvider, callTranscription, killLlmChildren } from './llm.js';
 import { importTranscript, ImportError } from './importer.js';
 import { chatEdit, ChatError } from './chat.js';
 import { readSettings, writeSettings } from './settings.js';
+import {
+  AgentError,
+  forgetAgent,
+  getAgent,
+  killAllAgents,
+  listAgents,
+  spawnAgent,
+  stopAgent,
+} from './agents.js';
 import {
   WorkbenchError,
   createWorkbenchShare,
@@ -22,26 +31,15 @@ import {
   pushWorkbench,
   watchWorkbench,
 } from './workbench-sync.js';
+import { ROOT } from './env.js';
 
-// overridable so tests can boot the server against a temp workspace
-const ROOT = process.env.OPSMAP_ROOT
-  ? path.resolve(process.env.OPSMAP_ROOT)
-  : path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
-// .env next to the repo root carries secrets like ANTHROPIC_API_KEY — this is
-// how the double-clicked Mac app picks them up, since it launches without a
-// shell. Real environment variables always win; the file only fills gaps.
-try {
-  const envFile = await fs.readFile(path.join(ROOT, '.env'), 'utf8');
-  for (const line of envFile.split('\n')) {
-    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
-    if (!m) continue;
-    const value = m[2].replace(/^["']|["']$/g, '');
-    if (process.env[m[1]] === undefined) process.env[m[1]] = value;
-  }
-} catch { /* no .env — fine */ }
-
-const MAPS_DIR = path.join(ROOT, 'maps');
+// OPSMAP_MAPS_DIR points the server at a different maps directory (used by
+// the concurrent-save test to fire real PUTs at a throwaway folder); when
+// unset, maps/ next to the server source is the source of truth.
+const MAPS_DIR = process.env.OPSMAP_MAPS_DIR
+  ? path.resolve(process.env.OPSMAP_MAPS_DIR)
+  : path.join(ROOT, 'maps');
 const TEMPLATES_DIR = path.join(ROOT, 'templates');
 const PROJECTS_DIR = path.join(ROOT, 'projects');
 const TRASH_DIR = path.join(ROOT, '.serigraph-trash');
@@ -105,6 +103,27 @@ async function readBody(req, limit = 20 * 1024 * 1024) {
 }
 
 const hashOf = (s) => createHash('sha1').update(s).digest('hex').slice(0, 16);
+
+// Atomic file write: a uniquely named temp file in the SAME directory (same
+// volume, so the rename can't tear), fsync'd before it replaces the target —
+// a crash mid-write leaves the old file or the new one, never half of one.
+let tmpFileCounter = 0;
+async function writeFileAtomic(absPath, data) {
+  const tmp = `${absPath}.tmp-${process.pid}-${tmpFileCounter++}`;
+  let handle;
+  try {
+    handle = await fs.open(tmp, 'w');
+    await handle.writeFile(data, 'utf8');
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await fs.rename(tmp, absPath);
+  } catch (error) {
+    if (handle) { try { await handle.close(); } catch { /* best effort */ } }
+    try { await fs.rm(tmp, { force: true }); } catch { /* best effort */ }
+    throw error;
+  }
+}
 
 async function listDir(dir) {
   try {
@@ -173,6 +192,49 @@ async function resolveMapPath(id) {
   return null;
 }
 
+// optimistic-concurrency validator for map saves: content hash + byte size +
+// mtime. The hash matters: two same-size writes inside one millisecond tick
+// would otherwise mint identical etags and a client could not tell its own
+// write from an overwrite (size-mtimeMs alone collided in review).
+async function etagFor(file) {
+  const [source, stat] = await Promise.all([fs.readFile(file, 'utf8'), fs.stat(file)]);
+  const hash = createHash('sha1').update(source).digest('base64url').slice(0, 12);
+  return `${stat.size}-${stat.mtimeMs}-${hash}`;
+}
+
+// etag over an already-read source and handle stat — GET uses this so the
+// served bytes and the etag describe the same open file, never two different
+// versions of a path that a concurrent rename swapped between the calls.
+function etagForSource(source, stat) {
+  const hash = createHash('sha1').update(source).digest('base64url').slice(0, 12);
+  return `${stat.size}-${stat.mtimeMs}-${hash}`;
+}
+
+// map saves serialize per file: the If-Match check and the atomic write must
+// happen as one unit, or two tabs holding the same etag can both pass and the
+// later rename silently wins (found by all three reviewers; live-reproduced).
+const mapSaveLocks = new Map();
+function withSaveLock(key, fn) {
+  const prev = mapSaveLocks.get(key) ?? Promise.resolve();
+  const run = prev.then(fn, fn); // run whatever the previous save did
+  const tail = run.then(() => {}, () => {});
+  mapSaveLocks.set(key, tail);
+  tail.then(() => { if (mapSaveLocks.get(key) === tail) mapSaveLocks.delete(key); });
+  return run;
+}
+
+// GET path: open once, read bytes and stat from the same handle so a
+// concurrent atomic rename can never pair one version's source with the
+// other version's etag.
+async function readMapWithEtag(file) {
+  const fh = await fs.open(file, 'r');
+  try {
+    const [source, stat] = await Promise.all([fh.readFile('utf8'), fh.stat()]);
+    return { source, etag: etagForSource(source, stat) };
+  } finally {
+    await fh.close();
+  }
+}
 // parsed index for one project folder; empty defaults when absent/unreadable
 async function readProjectIndex(dir) {
   try {
@@ -210,7 +272,16 @@ async function projectIndex() {
 
 // in-memory move log, old id -> new id: an open tab asking for the old id
 // gets the map back with a movedTo pointer instead of an error
+// Cap the log: the oldest entry (first inserted key) drops once it exceeds
+// 1000 moves, so a very long-running server cannot grow the Map forever.
 const movedFrom = new Map();
+const MOVED_FROM_LIMIT = 1000;
+function recordMove(oldId, newId) {
+  if (!movedFrom.has(oldId) && movedFrom.size >= MOVED_FROM_LIMIT) {
+    movedFrom.delete(movedFrom.keys().next().value);
+  }
+  movedFrom.set(oldId, newId);
+}
 
 function followMoves(id) {
   const seen = new Set([id]);
@@ -285,7 +356,7 @@ async function moveIntoTrash(source, metadata) {
   await fs.mkdir(pending);
   let moved = false;
   try {
-    await fs.writeFile(path.join(pending, 'entry.json'), `${JSON.stringify(metadata, null, 2)}\n`, 'utf8');
+    await writeFileAtomic(path.join(pending, 'entry.json'), `${JSON.stringify(metadata, null, 2)}\n`);
     await fs.rename(source, path.join(pending, 'payload'));
     moved = true;
     await fs.rename(pending, destination);
@@ -377,6 +448,7 @@ async function restoreTrashItem(id) {
       }
     } else {
       await fs.mkdir(MAPS_DIR, { recursive: true });
+      watchMapsDir();
     }
     target = restoredMapPath(metadata);
   } else {
@@ -424,20 +496,55 @@ async function primeHashes() {
   }
 }
 
-function watchDir(dir, onChange) {
+// fs.watch handles die on outside filesystem events (a watched folder being
+// moved to Trash, say). Respawn on error after a short backoff, capped at
+// WATCH_RESPAWN_MAX respawns per hour per directory — past the cap, warn once
+// and give up rather than spin on a genuinely gone folder.
+const WATCH_RESPAWN_DELAY_MS = 1000;
+const WATCH_RESPAWN_MAX = 5;
+const WATCH_RESPAWN_WINDOW_MS = 60 * 60 * 1000;
+const allWatchers = new Set(); // every live watch handle, closed on shutdown
+
+function watchDir(dir, onChange, filter = (filename) => /\.ya?ml$/.test(filename)) {
   if (!existsSync(dir)) return null;
-  let watcher;
-  try {
-    watcher = watch(dir, (eventType, filename) => {
-      if (filename && /\.ya?ml$/.test(filename)) onChange(filename);
-    });
-  } catch { return null; } // fs.watch unsupported - live reload degrades gracefully
-  // watcher errors arrive asynchronously and must never take the server down
-  watcher.on('error', (e) => {
-    console.warn(`[serigraph] file watcher for ${path.basename(dir)} stopped (${e.code ?? e.message}); live reload off, server unaffected`);
-    try { watcher.close(); } catch { /* already closed */ }
-  });
-  return watcher;
+  let watcher = null;
+  let closed = false;
+  let respawnTimer = null;
+  const failures = []; // recent failure timestamps, for the hourly cap
+  const onFail = (e) => {
+    if (watcher) { try { watcher.close(); } catch { /* already closed */ } watcher = null; }
+    if (closed) return;
+    const now = Date.now();
+    while (failures.length && now - failures[0] > WATCH_RESPAWN_WINDOW_MS) failures.shift();
+    if (failures.length >= WATCH_RESPAWN_MAX) {
+      console.warn(`[serigraph] file watcher for ${path.basename(dir)} kept failing (${e?.code ?? e?.message ?? 'unknown error'}); live reload off for this folder, server unaffected`);
+      return;
+    }
+    failures.push(now);
+    respawnTimer = setTimeout(attach, WATCH_RESPAWN_DELAY_MS);
+  };
+  const attach = () => {
+    respawnTimer = null;
+    if (closed) return;
+    try {
+      watcher = watch(dir, (eventType, filename) => {
+        if (filename && filter(filename)) onChange(filename);
+      });
+    } catch (e) { onFail(e); return; } // fs.watch unsupported, or the dir vanished between checks
+    watcher.on('error', onFail);
+  };
+  attach();
+  const handle = {
+    close() {
+      if (closed) return;
+      closed = true;
+      if (respawnTimer) { clearTimeout(respawnTimer); respawnTimer = null; }
+      if (watcher) { try { watcher.close(); } catch { /* already closed */ } watcher = null; }
+      allWatchers.delete(handle);
+    },
+  };
+  allWatchers.add(handle);
+  return handle;
 }
 
 // Project folders come and go at runtime. Keep their watchers addressable so
@@ -450,6 +557,15 @@ function watchProjectDir(slug) {
   if (watcher) watchedProjects.set(slug, watcher);
 }
 
+// maps/ may not exist when the server boots (fresh workspace), so the startup
+// watchDir is a no-op. Track the watcher and re-attach the moment the folder
+// appears; without this, live reload stays dead for the whole session.
+let mapsWatcher = null;
+function watchMapsDir() {
+  if (mapsWatcher) return;
+  mapsWatcher = watchDir(MAPS_DIR, (filename) => scheduleMapChange(MAPS_DIR, filename));
+}
+
 function unwatchProjectDir(slug) {
   const watcher = watchedProjects.get(slug);
   if (watcher) {
@@ -458,13 +574,35 @@ function unwatchProjectDir(slug) {
   watchedProjects.delete(slug);
 }
 
+// The projects/ root itself is watched too: a project folder created (or
+// removed) directly on disk gets its own watcher and a library-changed
+// broadcast without a server restart. Folder events carry no .yaml extension,
+// hence the pass-through filter.
+function watchProjectsRoot() {
+  return watchDir(PROJECTS_DIR, (filename) => {
+    const slug = String(filename).split(/[\\/]/)[0];
+    if (!safeSlug(slug)) return;
+    let isDir = false;
+    try { isDir = statSync(path.join(PROJECTS_DIR, slug)).isDirectory(); } catch { /* gone between event and stat */ }
+    if (isDir) {
+      if (!watchedProjects.has(slug)) {
+        watchProjectDir(slug);
+        broadcast({ type: 'library-changed' });
+      }
+    } else if (watchedProjects.has(slug)) {
+      unwatchProjectDir(slug);
+      broadcast({ type: 'library-changed' });
+    }
+  }, () => true);
+}
+
 // create projects/<slug>/ and a minimal index when either is missing, and
 // make sure the file watcher covers the folder
 async function ensureProject(slug, name = slug) {
   const dir = path.join(PROJECTS_DIR, slug);
   await fs.mkdir(dir, { recursive: true });
   if (!existsSync(path.join(dir, PROJECT_INDEX_FILE))) {
-    await fs.writeFile(path.join(dir, PROJECT_INDEX_FILE), `# ${name} project\nname: ${JSON.stringify(name)}\n`, 'utf8');
+    await writeFileAtomic(path.join(dir, PROJECT_INDEX_FILE), `# ${name} project\nname: ${JSON.stringify(name)}\n`);
   }
   watchProjectDir(slug);
 }
@@ -572,7 +710,8 @@ async function handleApi(req, res, url) {
       return json(res, 200, [...await mapSummaries(MAPS_DIR), ...nested.flat()]);
     }
     if (req.method === 'POST') {
-      const body = JSON.parse(await readBody(req) || '{}');
+      let body;
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { return json(res, 400, { error: 'invalid JSON body' }); }
       const name = String(body.name || '').trim();
       const mode = body.mode == null ? 'process' : String(body.mode);
       const project = body.project == null ? null : String(body.project).trim();
@@ -588,11 +727,14 @@ async function handleApi(req, res, url) {
       const elements = mode === 'freeform' ? '\nelements: []\n' : '';
       const purpose = mode === 'freeform' ? 'map' : 'operations map';
       const source = `# ${name} - ${purpose}\nname: ${JSON.stringify(name)}\n${modeLine}description: ""\n${elements}\nnodes: []\n\nedges: []\n`;
-      if (project) await ensureProject(project); else await fs.mkdir(MAPS_DIR, { recursive: true });
-      await fs.writeFile(mapPathFor(id), source, 'utf8');
+      if (project) await ensureProject(project); else { await fs.mkdir(MAPS_DIR, { recursive: true }); watchMapsDir(); }
+      const target = mapPathFor(id);
+      await writeFileAtomic(target, source);
       // fileHashes deliberately NOT updated here: the watcher must see the
       // change and broadcast it so other tabs pick the new map up
-      return json(res, 201, { id, project });
+      const etag = await etagFor(target); // lets a create-then-save flow send If-Match immediately
+      res.setHeader('ETag', etag);
+      return json(res, 201, { id, project, etag });
     }
   }
 
@@ -625,7 +767,7 @@ async function handleApi(req, res, url) {
       if (project) await ensureProject(project); else await fs.mkdir(MAPS_DIR, { recursive: true });
       // rename(2) keeps the move atomic — maps/ and projects/ share one volume
       await fs.rename(file, mapPathFor(newId));
-      movedFrom.set(id, newId);
+      recordMove(id, newId);
       return json(res, 200, { id: newId, project });
     }
 
@@ -638,16 +780,18 @@ async function handleApi(req, res, url) {
 
     if (req.method === 'GET') {
       if (file) {
-        const source = await fs.readFile(file, 'utf8');
-        return json(res, 200, { id, source });
+        const { source, etag } = await readMapWithEtag(file);
+        res.setHeader('ETag', etag);
+        return json(res, 200, { id, source, etag });
       }
       // after a move the old id keeps answering, so open tabs learn the new
       // location from movedTo instead of erroring
       const movedTo = followMoves(id);
       const movedFile = movedTo ? await resolveMapPath(movedTo) : null;
       if (movedFile) {
-        const source = await fs.readFile(movedFile, 'utf8');
-        return json(res, 200, { id: movedTo, source, movedTo });
+        const { source, etag } = await readMapWithEtag(movedFile);
+        res.setHeader('ETag', etag);
+        return json(res, 200, { id: movedTo, source, movedTo, etag });
       }
       return json(res, 404, { error: `no map "${id}" (looked for ${path.relative(ROOT, mapPathFor(id))})` });
     }
@@ -657,16 +801,30 @@ async function handleApi(req, res, url) {
       if (typeof body?.source !== 'string') return json(res, 400, { error: 'body must be { source: string }' });
       const { errors } = parseMap(body.source);
       if (errors.length) return json(res, 422, { error: 'refusing to save an invalid map', errors });
+      // the browser proves it based its edit on the current file via If-Match;
+      // a mismatch means the file changed on disk under it (editor, sync,
+      // another tab) — the client offers keep-mine/load-theirs from there.
+      // A target that doesn't exist yet has nothing to conflict with: create.
+      // The check and the write run under one per-file lock so two requests
+      // holding the same etag cannot both pass (first wins, rest get 409).
       const target = file ?? mapPathFor(id);
-      const tmp = target + '.tmp-' + process.pid;
-      if (id.includes('/')) await ensureProject(id.slice(0, id.indexOf('/')));
-      else await fs.mkdir(MAPS_DIR, { recursive: true });
-      await fs.writeFile(tmp, body.source, 'utf8');
-      await fs.rename(tmp, target);
-      // fileHashes deliberately NOT updated here: the watcher must detect the
-      // write and broadcast to OTHER tabs; the writing tab ignores the echo
-      // because the fetched source matches what it already has
-      return json(res, 200, { ok: true });
+      const saveResult = await withSaveLock(target, async () => {
+        if (file) {
+          const ifMatch = req.headers['if-match'];
+          if (!ifMatch) return json(res, 428, { error: 'If-Match required', code: 'precondition' });
+          if (ifMatch !== await etagFor(file)) {
+            return json(res, 409, { error: 'Map changed on disk', code: 'conflict' });
+          }
+        }
+        if (id.includes('/')) await ensureProject(id.slice(0, id.indexOf('/')));
+        else { await fs.mkdir(MAPS_DIR, { recursive: true }); watchMapsDir(); }
+        await writeFileAtomic(target, body.source);
+        return json(res, 200, { ok: true, etag: await etagFor(target) });
+      });
+      // fileHashes deliberately NOT updated by the write: the watcher must
+      // detect the change and broadcast to OTHER tabs; the writing tab
+      // ignores the echo because the fetched source matches what it has
+      return saveResult;
     }
   }
 
@@ -714,6 +872,11 @@ async function handleApi(req, res, url) {
       const result = await importTranscript(body.transcript, { llm: callLLM });
       return json(res, 200, result);
     } catch (e) {
+      // a missing provider is a setup problem, not an upstream failure: 400
+      // with code+hint intact so the import dialog can render the guidance
+      if (e?.code === 'llm-no-provider') {
+        return json(res, 400, { error: e.message, code: e.code, hint: e.hint });
+      }
       const status = e instanceof ImportError ? e.status : 502;
       console.error('[serigraph] import failed:', e.message);
       return json(res, status, { error: e.message });
@@ -749,6 +912,42 @@ async function handleApi(req, res, url) {
     }
   }
 
+  // ── Agent Trail: live coding-agent sessions ───────────────────────
+  if (parts[1] === 'agents' && parts.length === 2) {
+    if (req.method === 'GET') return json(res, 200, listAgents());
+    if (req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON body' }); }
+      try {
+        const agent = spawnAgent({
+          harness: body?.harness,
+          prompt: body?.prompt,
+          repoPath: body?.repoPath,
+          allowEdits: body?.allowEdits === true,
+        }, { onEvent: broadcast });
+        return json(res, 201, agent);
+      } catch (e) {
+        if (e instanceof AgentError) return json(res, e.status, { error: e.message });
+        throw e;
+      }
+    }
+  }
+  if (parts[1] === 'agents' && parts.length >= 3) {
+    const id = decodeURIComponent(parts[2]);
+    if (parts.length === 3 && req.method === 'GET') {
+      try { return json(res, 200, getAgent(id)); }
+      catch (e) { if (e instanceof AgentError) return json(res, e.status, { error: e.message }); throw e; }
+    }
+    if (parts.length === 4 && parts[3] === 'stop' && req.method === 'POST') {
+      try { return json(res, 200, await stopAgent(id)); }
+      catch (e) { if (e instanceof AgentError) return json(res, e.status, { error: e.message }); throw e; }
+    }
+    if (parts.length === 3 && req.method === 'DELETE') {
+      try { forgetAgent(id); return json(res, 200, { ok: true }); }
+      catch (e) { if (e instanceof AgentError) return json(res, e.status, { error: e.message }); throw e; }
+    }
+  }
+
   // voice transcription — audio goes to the configured provider, never to the browser
   if (parts[1] === 'transcribe' && req.method === 'POST') {
     let body;
@@ -763,6 +962,7 @@ async function handleApi(req, res, url) {
       return json(res, 502, { error: e.message });
     }
   }
+
 
   if (parts[1] === 'templates' && req.method === 'GET') {
     const out = [];
@@ -802,10 +1002,10 @@ async function handleStatic(req, res, url) {
   let pathname = decodeURIComponent(url.pathname);
   if (pathname === '/') pathname = '/app/index.html';
   const filePath = path.join(ROOT, path.normalize(pathname));
-  if (!filePath.startsWith(ROOT + path.sep)) { res.writeHead(403); return res.end('forbidden'); }
+  if (!filePath.startsWith(ROOT + path.sep)) return json(res, 403, { error: 'forbidden' });
   const allowed = ['app', 'vendor', 'shared', 'docs'];
   const top = path.relative(ROOT, filePath).split(path.sep)[0];
-  if (!allowed.includes(top)) { res.writeHead(404); return res.end('not found'); }
+  if (!allowed.includes(top)) return json(res, 404, { error: 'not found' });
   try {
     const data = await fs.readFile(filePath);
     res.writeHead(200, {
@@ -814,8 +1014,7 @@ async function handleStatic(req, res, url) {
     });
     res.end(data);
   } catch {
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end(`not found: ${pathname}`);
+    json(res, 404, { error: `not found: ${pathname}` });
   }
 }
 
@@ -824,8 +1023,7 @@ const server = createServer(async (req, res) => {
   // DNS-rebinding guard: a page at evil.example that resolves to 127.0.0.1
   // arrives with its own Host header; refuse anything that isn't local
   if (!LAN && !LOCAL_HOSTS.test(req.headers.host ?? '')) {
-    res.writeHead(403, { 'Content-Type': 'text/plain' });
-    return res.end('forbidden: unrecognized Host header (start with --lan to serve beyond localhost)');
+    return json(res, 403, { error: 'forbidden: unrecognized Host header (start with --lan to serve beyond localhost)' });
   }
   try {
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
@@ -835,10 +1033,10 @@ const server = createServer(async (req, res) => {
       // the "project/" prefix is reserved so it can never shadow a map export
       if (rest.startsWith('project/')) {
         const slug = rest.slice('project/'.length);
-        if (!safeSlug(slug)) { res.writeHead(400); return res.end('invalid project slug'); }
-        if (!existsSync(path.join(PROJECTS_DIR, slug))) { res.writeHead(404); return res.end(`no project "${slug}"`); }
+        if (!safeSlug(slug)) return json(res, 400, { error: 'invalid project slug' });
+        if (!existsSync(path.join(PROJECTS_DIR, slug))) return json(res, 404, { error: `no project "${slug}"` });
         const { index, name, maps } = await projectMetaFor(slug);
-        if (!maps.length) { res.writeHead(404); return res.end(`project "${slug}" has no maps to export`); }
+        if (!maps.length) return json(res, 404, { error: `project "${slug}" has no maps to export` });
         // the bundle opens on the lead map: first in the index's "order:", else first file
         const leadId = index.order.map((s) => `${slug}/${s}`).find((mid) => maps.some((m) => m.id === mid));
         const primary = maps.find((m) => m.id === leadId) ?? maps[0];
@@ -853,9 +1051,9 @@ const server = createServer(async (req, res) => {
         return res.end(html);
       }
       const id = rest;
-      if (!safeId(id)) { res.writeHead(400); return res.end('invalid map id'); }
+      if (!safeId(id)) return json(res, 400, { error: 'invalid map id' });
       const file = await resolveMapPath(id);
-      if (!file) { res.writeHead(404); return res.end(`no map "${id}"`); }
+      if (!file) return json(res, 404, { error: `no map "${id}"` });
       const projectMeta = id.includes('/') ? await projectMetaFor(id.slice(0, id.indexOf('/'))) : null;
       const html = await buildExport(ROOT, id, await fs.readFile(file, 'utf8'), projectMeta);
       const preview = url.searchParams.get('preview') === '1';
@@ -881,6 +1079,27 @@ function openBrowser(urlStr) {
   catch { /* best effort */ }
 }
 
+// ---------------------------------------------------------------- shutdown
+// SIGINT/SIGTERM: close the HTTP server, close every file watcher, kill any
+// spawned LLM child processes, then exit. SSE sockets would keep
+// server.close() waiting forever, so open connections are torn down first.
+let shuttingDown = false;
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n[serigraph] ${signal} — closing server, watchers, and LLM processes`);
+  try { server.close(); } catch { /* never listened */ }
+  server.closeAllConnections?.();
+  for (const handle of [...allWatchers]) { try { handle.close(); } catch { /* best effort */ } }
+  for (const res of sseClients) { try { res.end(); } catch { /* already gone */ } }
+  sseClients.clear();
+  killLlmChildren();
+  killAllAgents();
+  process.exit(0);
+}
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+
 async function start(port, attempt = 0) {
   server.once('error', (e) => {
     if (e.code === 'EADDRINUSE' && attempt < 10) {
@@ -893,8 +1112,12 @@ async function start(port, attempt = 0) {
   });
   server.listen(port, BIND_HOST, async () => {
     await primeHashes();
-    watchDir(MAPS_DIR, (f) => scheduleMapChange(MAPS_DIR, f));
+    watchMapsDir();
     watchDir(TEMPLATES_DIR, () => broadcast({ type: 'templates-changed' }));
+    // the projects/ root must exist for its watcher to attach — projectIndex
+    // already treats a missing dir as zero projects, so creating it is a no-op
+    await fs.mkdir(PROJECTS_DIR, { recursive: true });
+    watchProjectsRoot();
     for (const project of await projectIndex()) watchProjectDir(project.slug);
     const urlStr = `http://localhost:${port}/`;
     console.log('');

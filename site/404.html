@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="description" content="This page was never pulled from the master. Serigraph: one file, every impression.">
+<meta name="theme-color" content="#060708">
+<title>404: Serigraph</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23060708'/%3E%3Cg fill='none' stroke-linejoin='round'%3E%3Crect x='5' y='15' width='16' height='11' rx='2.5' stroke='%23F2F5F7' stroke-opacity='.28' stroke-width='1.6'/%3E%3Crect x='8' y='10' width='16' height='11' rx='2.5' stroke='%23F2F5F7' stroke-opacity='.55' stroke-width='1.6'/%3E%3Crect x='11' y='5' width='16' height='11' rx='2.5' stroke='%233DDC97' stroke-width='1.6'/%3E%3Ccircle cx='25.5' cy='6.5' r='2.2' fill='%233DDC97'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=clash-display@500,600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;600&display=swap">
+<style>
+  :root {
+    --base: #060708; --surface: #0C0E11; --glass: rgba(255,255,255,.04);
+    --line: rgba(255,255,255,.08); --line-strong: rgba(255,255,255,.16);
+    --ink: #F2F5F7; --muted: #A7AEB8; --faint: #6B7380;
+    --signal: #3DDC97; --on-signal: #06110C;
+    --display: "Clash Display", "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+    --sans: "Geist", ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100svh; display: grid; place-items: center; position: relative;
+    background: var(--base); color: var(--ink); font-family: var(--sans);
+    -webkit-font-smoothing: antialiased; padding: 40px 24px; text-align: center; overflow: hidden;
+  }
+  .orbs { position: fixed; inset: 0; pointer-events: none; }
+  .orbs i { position: absolute; border-radius: 50%; filter: blur(90px); width: 52vw; height: 52vw; left: -16vw; top: -24vw; background: radial-gradient(circle, rgba(61,220,151,.12), transparent 65%); }
+  main { position: relative; }
+  .mark { display: inline-block; margin-bottom: 34px; }
+  .code { font-family: var(--display); font-weight: 600; letter-spacing: -0.03em; font-size: clamp(96px, 20vw, 200px); line-height: 1; user-select: none; }
+  .code em { font-style: normal; color: var(--signal); }
+  h1 { font-family: var(--display); font-weight: 600; font-size: clamp(21px, 3vw, 28px); letter-spacing: -0.01em; margin: 22px 0 12px; }
+  p { color: var(--muted); max-width: 42ch; margin: 0 auto 34px; font-size: 16.5px; line-height: 1.6; }
+  a.home {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-family: var(--sans); font-size: 15px; font-weight: 600;
+    background: var(--signal); color: var(--on-signal); border-radius: 100px; padding: 8px 8px 8px 22px;
+    text-decoration: none; transition: background .2s var(--ease-out), transform .12s var(--ease-out);
+  }
+  a.home:hover { background: #5CE6AC; }
+  a.home:active { transform: scale(.98); }
+  a.home .island { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: rgba(6,17,12,.16); transition: transform .22s var(--ease-out); }
+  a.home:hover .island { transform: translate(2px, -2px) scale(1.06); }
+  .fine { position: absolute; bottom: 22px; left: 0; right: 0; font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+  @media print { .orbs { display: none; } a.home { border: 1px solid #000; background: none; color: #000; } body { background: #fff; color: #000; } p { color: #333; } }
+</style>
+</head>
+<body>
+  <div class="orbs" aria-hidden="true"><i></i></div>
+  <main>
+    <svg class="mark" width="40" height="40" viewBox="0 0 32 32" fill="none" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="15" width="16" height="11" rx="2.5" stroke="#F2F5F7" stroke-opacity=".28" stroke-width="1.6"/><rect x="8" y="10" width="16" height="11" rx="2.5" stroke="#F2F5F7" stroke-opacity=".55" stroke-width="1.6"/><rect x="11" y="5" width="16" height="11" rx="2.5" stroke="#3DDC97" stroke-width="1.6"/><circle cx="25.5" cy="6.5" r="2.2" fill="#3DDC97"/></svg>
+    <div class="code" aria-hidden="true">4<em>0</em>4</div>
+    <h1>This page was never pulled from the master.</h1>
+    <p>The address you asked for is not in the file. The press is otherwise working perfectly.</p>
+    <a class="home" href="/">Back to the press <span class="island"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg></span></a>
+  </main>
+  <div class="fine">serigraph (n.): a print made by the silkscreen process</div>
+</body>
+</html>
