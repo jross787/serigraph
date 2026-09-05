@@ -110,8 +110,7 @@ function wireCanvasEvents() {
       .then((ok) => { if (ok) ui.toast('Released — back to auto-layout'); });
   });
 
-  // a finished edge drag pins the route through the drop point; a dragged
-  // straight edge becomes curved (the via only makes sense on a bend)
+  // Save exactly the style and rounded waypoint used by the drag preview.
   bus.on('edge-routed', (index, via, style) => {
     if (state.presenting || state.standalone) return;
     ctrl.commit(() => {

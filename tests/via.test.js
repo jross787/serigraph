@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { parseMap } from '../shared/model.js';
 import { state } from '../app/state.js';
 import * as edit from '../app/edit.js';
+import { routeDragged, routeStyled } from '../app/layout.js';
 
 const BASE = `# via test map — top comment
 name: Routes
@@ -48,6 +49,31 @@ function reserialize() {
 }
 
 beforeEach(() => load());
+
+test('dragged routes keep their shape and serialize the exact preview', () => {
+  const a = { x: 0, y: 0, w: 200, h: 64, node: {} };
+  const b = { x: 600, y: 200, w: 200, h: 64, node: {} };
+  const point = { x: 360.4, y: 109.7 };
+  assert.equal(routeDragged(a, b, { route: 'straight' }, point), null, 'straight bend is a no-op');
+  for (const [edge, expected] of [
+    [{}, 'stepped'],
+    [{ via: { x: 320, y: 100 } }, 'curved'],
+    ...['angled', 'stepped', 'curved'].map(route => [{ route }, route]),
+  ]) {
+    const preview = routeDragged(a, b, edge, point);
+    assert.equal(preview.style, expected);
+    assert.deepEqual(preview.via, { x: 360, y: 110 });
+    edit.setEdgeVia(null, 0, preview.via);
+    edit.setEdgeRoute(null, 0, preview.style);
+    const saved = reserialize().model.root.edges[0];
+    const restored = routeStyled(a, b, saved.via, saved.route);
+    assert.deepEqual(restored.points, preview.points);
+    assert.deepEqual(restored.labelPos, preview.labelPos);
+    if (expected === 'stepped') {
+      assert.ok(preview.points.slice(1).every((p, i) => p.x === preview.points[i].x || p.y === preview.points[i].y));
+    }
+  }
+});
 
 test('parseMap reads via as the edge model field', () => {
   const { model, errors } = parseMap(BASE);

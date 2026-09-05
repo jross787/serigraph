@@ -285,7 +285,7 @@ The rules:
 
 ## Pinned edge routes (optional)
 
-Edges route automatically, and dragging an edge line in the app pins its route by writing a `via` point on that edge. An optional `route` field picks the shape of the line. You can also author both by hand:
+Edges route automatically. Dragging an automatic edge pins a right-angle bend with `via` and `route: stepped`; an explicitly chosen shape is preserved. A straight edge cannot be bent by dragging—choose another shape first. Existing via-only curves retain their meaning. You can also author both fields by hand:
 
 ```yaml
 edges:

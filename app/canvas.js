@@ -5,7 +5,7 @@
 import { bus, state } from './state.js';
 import { ancestryOf } from '../shared/model.js';
 import { nodeCost, compactMoney } from '../shared/cost.js';
-import { layoutScope, miniTransform, edgePath, smoothEdgePath, routeDirect, routeStyled, routeAutomaticEdges, EDGE_LABEL_SIZE, edgeLabelText, invalidateLayouts } from './layout.js';
+import { layoutScope, miniTransform, edgePath, smoothEdgePath, routeDirect, routeStyled, routeDragged, routeAutomaticEdges, EDGE_LABEL_SIZE, edgeLabelText, invalidateLayouts } from './layout.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const el = (tag, attrs = {}, cls = '') => {
@@ -1591,8 +1591,8 @@ function wirePointer() {
     const byId = new Map(currentLayout.nodes.map((n) => [n.id, n]));
     const a = byId.get(drag.le.edge.from), b = byId.get(drag.le.edge.to);
     if (!a || !b) return;
-    const style = drag.le.edge.route === 'straight' ? 'curved' : (drag.le.edge.route ?? 'curved');
-    const route = routeStyled(a, b, w, style);
+    const route = routeDragged(a, b, drag.le.edge, w);
+    if (!route) return;
     const smooth = route.smooth ? smoothEdgePath(route.points) : null;
     const d = smooth ? smooth.d : edgePath(route.points);
     drag.el.querySelector('path.hit')?.setAttribute('d', d);
@@ -1614,7 +1614,8 @@ function wirePointer() {
       label.setAttribute('x', route.labelPos.x);
       label.setAttribute('y', route.labelPos.y);
     }
-    drag.via = w;
+    drag.via = route.via;
+    drag.style = route.style;
   };
 
   // an interrupted drag mutated the cached layout — rebuild it from the model
@@ -1857,9 +1858,7 @@ function wirePointer() {
       }
       if (finishedEdgeDrag) {
         if (finishedEdgeDrag.via) {
-          // dragging a straight edge bends it — the via only makes sense curved
-          const style = finishedEdgeDrag.le.edge.route === 'straight' ? 'curved' : null;
-          bus.emit('edge-routed', finishedEdgeDrag.le.index, finishedEdgeDrag.via, style);
+          bus.emit('edge-routed', finishedEdgeDrag.le.index, finishedEdgeDrag.via, finishedEdgeDrag.style);
         }
         return;
       }

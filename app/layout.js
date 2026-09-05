@@ -324,6 +324,15 @@ export function routeStyled(a, b, via, style) {
   return routeVia(a, b, via);
 }
 
+// New manual bends use right angles. Preserve legacy via-only curves, but
+// never turn an explicitly straight connection into another shape by dragging.
+export function routeDragged(a, b, edge, point) {
+  if (edge.route === 'straight') return null;
+  const style = edge.route ?? (edge.via ? 'curved' : 'stepped');
+  const via = { x: Math.round(point.x), y: Math.round(point.y) };
+  return { ...routeStyled(a, b, via, style), via, style };
+}
+
 // Push auto nodes out of (inflated) pinned rects, minimal-displacement axis
 // first. Deterministic; pinned nodes never move. Returns ids it moved.
 function resolvePinnedOverlaps(nodes, movedIds, margin = 18) {
