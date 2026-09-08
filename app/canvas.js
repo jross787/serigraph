@@ -5,7 +5,9 @@
 import { bus, state } from './state.js';
 import { ancestryOf } from '../shared/model.js';
 import { nodeCost, compactMoney } from '../shared/cost.js';
-import { layoutScope, miniTransform, edgePath, smoothEdgePath, routeDirect, routeStyled, invalidateLayouts } from './layout.js';
+import { icon, TYPE_ICONS } from './icons.js';
+import { nodeObservation } from './github.js';
+import { layoutScope, miniTransform, edgePath, smoothEdgePath, routeDirect, routeStyled, routeDragged, routeAutomaticEdges, EDGE_LABEL_SIZE, edgeLabelText, invalidateLayouts, wrapText, fitText, CARD_FONT } from './layout.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const el = (tag, attrs = {}, cls = '') => {
@@ -13,18 +15,6 @@ const el = (tag, attrs = {}, cls = '') => {
   for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
   if (cls) n.setAttribute('class', cls);
   return n;
-};
-
-// 16px stroke icons per type (decision uses its diamond shape instead)
-export const ICONS = {
-  process: 'M2.5 8h7.5M7.5 4.5 11 8l-3.5 3.5M12.5 3v10',
-  system: 'M4 4.5h8v7H4zM6.5 4.5v-2M9.5 4.5v-2M6.5 13.5v-2M9.5 13.5v-2M2 7h2M2 9.5h2M12 7h2M12 9.5h2',
-  role: 'M8 7.5a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2zM2.8 13.6c.6-2.9 2.7-4 5.2-4s4.6 1.1 5.2 4',
-  artifact: 'M3.5 2h6l3 3v9h-9zM9.5 2v3h3M5.5 8.5h5M5.5 11h5',
-  decision: 'M8 2l6 6-6 6-6-6z',
-  item: 'M3 3h10v10H3z',
-  database: 'M3 4c0-1.1 2.2-2 5-2s5 .9 5 2v8c0 1.1-2.2 2-5 2s-5-.9-5-2zM3 4c0 1.1 2.2 2 5 2s5-.9 5-2M3 8c0 1.1 2.2 2 5 2s5-.9 5-2',
-  api: 'M5.5 3H3v10h2.5M10.5 3H13v10h-2.5M7 5.5h2M6.5 8h3M7 10.5h2',
 };
 
 let svg, viewport, layersG, gridPattern, gridRect;
@@ -162,7 +152,7 @@ function showMoveOutBar() {
   const parentLabel = owner?.ownerId
     ? state.model.byId.get(owner.ownerId)?.label ?? owner.ownerId
     : state.model.name;
-  moveOutBar.textContent = `⤴ Drop here to move out to “${parentLabel}”`;
+  moveOutBar.replaceChildren(icon('arrow-bend-up-left', 16), document.createTextNode(` Drop here to move out to “${parentLabel}”`));
   moveOutBar.hidden = false;
 }
 function hideMoveOutBar() {
@@ -394,7 +384,7 @@ export function zoomBy(factor, cx = vw / 2, cy = vh / 2) {
 // current theme, plus every stylesheet rule that targets canvas marks. Rules
 // with pseudo-classes (hover/focus state) and app-chrome id selectors are
 // skipped — they neither apply nor belong in a standalone file.
-const EXPORT_SELECTORS = ['.node', '.edge', '.grid-dots', '.bundle', '.scope', '.peer', '.identity', '.icon', '.type-chip', '.count-chip', '.sel-ring', '.stack', '.shape', '.link-dot', '.marquee', '#griddots'];
+const EXPORT_SELECTORS = ['.node', '.edge', '.grid-dots', '.bundle', '.scope', '.peer', '.identity', '.icon', '.type-chip', '.count-chip', '.sel-ring', '.stack', '.shape', '.marquee', '#griddots'];
 function exportStylesheet() {
   const cs = getComputedStyle(document.documentElement);
   const vars = [];
@@ -424,6 +414,7 @@ function exportStylesheet() {
 export function getCanvasSvgString() {
   if (!state.model || !svg) return null;
   const clone = svg.cloneNode(true);
+  clone.querySelectorAll('.github-observation').forEach(node => node.remove());
   clone.removeAttribute('class');
   clone.removeAttribute('tabindex');
   // the page stylesheet never travels with the file: embed the theme's
@@ -549,16 +540,21 @@ function nodeShape(n) {
   return el('rect', { width: w, height: h, rx: 7 }, 'shape');
 }
 
+function badgeIcon(name, cls, size) {
+  const glyph = icon(name, size);
+  glyph.setAttribute('x', -size / 2);
+  glyph.setAttribute('y', -size / 2);
+  glyph.classList.add(cls);
+  return glyph;
+}
+
 function iconChip(type, x, y, size = 24) {
   const g = el('g', { transform: `translate(${x},${y})` });
   g.appendChild(el('rect', { width: size, height: size, rx: 5 }, 'icon-bg'));
-  const s = size / 22;
-  const p = el('path', {
-    d: ICONS[type], fill: 'none', 'stroke-width': 1.6,
-    'stroke-linecap': 'round', 'stroke-linejoin': 'round',
-    transform: `translate(${3 * s},${3 * s}) scale(${s})`,
-  }, 'icon-fg');
-  p.style.fill = 'none';
+  const p = icon(TYPE_ICONS[type], size - 6);
+  p.setAttribute('x', 3);
+  p.setAttribute('y', 3);
+  p.classList.add('icon-fg');
   g.appendChild(p);
   return g;
 }
@@ -596,6 +592,22 @@ function truncateLabel(text, maxChars) {
   return `${value.slice(0, Math.max(1, maxChars - 1)).trimEnd()}…`;
 }
 
+// Card previews use authored metadata only. Link order chooses the launch
+// destination; other references remain available in the inspector.
+export function nodeCardDetails(node) {
+  const description = String(node.description || '').replace(/\s+/g, ' ').trim();
+  let launch = null;
+  for (const link of node.links ?? []) {
+    try {
+      const url = new URL(link.url);
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) continue;
+      launch = { url: url.href, label: link.label?.trim() || url.hostname };
+      break;
+    } catch { /* Invalid/relative references never become launch actions. */ }
+  }
+  return { description, launch };
+}
+
 const MINI_NODE_CAP = 90;
 
 // actor tag — who performs this step: a human, a computer, or both.
@@ -604,35 +616,53 @@ const ACTOR_TAGS = {
     manual: {
       cls: 'at-manual',
       label: 'Human — done by hand',
-      glyph: 'M10 8.4a2.7 2.7 0 1 0 0-5.4 2.7 2.7 0 0 0 0 5.4zM4.4 17c.2-3.4 2.5-5.1 5.6-5.1s5.4 1.7 5.6 5.1',
+      glyph: 'user',
     },
     automated: {
       cls: 'at-automated',
       label: 'Computer — done by an agent',
-      glyph: 'M4.6 4.8h10.8v8.2H4.6zM8 16.4h4M10 13v3.4',
+      glyph: 'desktop',
     },
     assisted: {
       cls: 'at-assisted',
       label: 'Human + computer — assisted',
-      glyph: 'M6.8 7.3a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4zM2.6 15.4c.2-2.9 2-4.4 4.2-4.4 1 0 1.8.2 2.5.7M11.4 8.2h6.2v4.9h-6.2zM13 16h3M14.5 13.1V16',
+      glyph: 'users',
     },
     'at-risk': {
       cls: 'at-risk',
       label: 'At risk — needs attention',
-      glyph: 'M10 4.4 16.8 16H3.2zM10 8.6v3.6m0 2v.2',
+      glyph: 'warning-circle',
     },
   };
 
 
+function cardText(n, details, launch) {
+  const observed = !!nodeObservation(n.id);
+  const labelWidth = launch ? n.w - 84 : 132;
+  const lines = (launch || observed) ? wrapText(n.node.label, labelWidth, CARD_FONT, observed ? 1 : 2).map(line => fitText(line, labelWidth)) : n.lines;
+  const totalH = lines.length * 17 + (details.description ? 16 : 0);
+  const startY = (n.h - totalH) / 2 + 13 + (observed && details.description ? 4 : 0);
+  const text = [textLines(lines, 44, startY, 'label')];
+  if (details.description) {
+    const width = n.w - 44 - (ACTOR_TAGS[n.node.automation] ? 40 : 14);
+    const font = '500 10.5px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
+    text.push(textLines([fitText(details.description, width, font)], 44, startY + lines.length * 17, 'node-summary'));
+  }
+  return text;
+}
+
 function buildNode(n) {
   const node = n.node;
   const isContainer = !!node.children;
+  const details = nodeCardDetails(node);
+  const launch = node.type === 'decision' && !isContainer ? null : details.launch;
   const g = el('g', { transform: `translate(${n.x},${n.y})` },
     `node t-${node.type}${isContainer ? ' container' : ''}${state.selectedId === node.id ? ' selected' : ''}${state.selectionIds.has(node.id) ? ' multi-selected' : ''}`);
   g.dataset.id = node.id;
   g.setAttribute('tabindex', '0');
   g.setAttribute('role', 'button');
   g.setAttribute('aria-label', `${node.label} (${node.type})`);
+  if (details.description) g.setAttribute('aria-description', details.description);
 
   // selection ring
   const ringPad = 5;
@@ -666,7 +696,8 @@ function buildNode(n) {
     g.appendChild(el('rect', { x: 5, y: 5, width: n.w, height: n.h, rx: 8 }, 'stack'));
     g.appendChild(nodeShape(n));
     g.appendChild(iconChip(node.type, 13, 10));
-    g.appendChild(textLines(n.lines, 45, 26, 'label', 'start', 19));
+    const lines = launch ? wrapText(node.label, n.w - 87, CARD_FONT, 2).map(line => fitText(line, n.w - 87)) : n.lines;
+    g.appendChild(textLines(lines, 45, 26, 'label', 'start', 19));
     const desc = summaryLines(node.description);
     if (desc.length) g.appendChild(textLines(desc, 14, 58, 'node-summary', 'start', 15));
     const meta = el('text', { x: 14, y: n.h - 15 }, 'node-meta');
@@ -693,13 +724,9 @@ function buildNode(n) {
     const ct = el('text', { x: 9, y: 13.5 }, 'count-chip-txt');
     ct.textContent = label;
     chip.appendChild(ct);
-    const zi = el('path', {
-      d: 'M2 8h8M6 4l4 4-4 4', fill: 'none', 'stroke-width': 1.8,
-      'stroke-linecap': 'round', 'stroke-linejoin': 'round',
-      transform: `translate(${chipW - 18},${3.5}) scale(0.75)`,
-    }, 'count-chip-txt');
-    zi.style.stroke = 'currentColor';
-    zi.setAttribute('stroke', 'currentColor');
+    const zi = icon('arrow-right', 11);
+    zi.setAttribute('x', chipW - 17); zi.setAttribute('y', 4);
+    zi.classList.add('count-chip-icon');
     chip.appendChild(zi);
     const title = el('title');
     title.textContent = state.model?.mode === 'freeform'
@@ -717,8 +744,7 @@ function buildNode(n) {
       g.appendChild(el('path', { d: `M${n.w - 13},0 V13 H${n.w}` }, 'artifact-fold'));
     }
     g.appendChild(iconChip(node.type, 11, (n.h - 24) / 2));
-    const totalH = n.lines.length * 17;
-    g.appendChild(textLines(n.lines, 44, (n.h - totalH) / 2 + 13, 'label'));
+    g.append(...cardText(n, details, launch));
   }
 
   // provenance badge — this element was inferred from a transcript, not
@@ -727,10 +753,7 @@ function buildNode(n) {
   if (flagNote) {
     const fb = el('g', { transform: 'translate(6,-2)' }, 'flag-badge');
     fb.appendChild(el('circle', { r: 9 }, 'flag-bg'));
-    fb.appendChild(el('path', {
-      d: 'M-2.5 4.5 v-9 h5.5 l-1.8 2.2 1.8 2.2 h-4.3',
-      'stroke-linejoin': 'round',
-    }, 'flag-glyph'));
+    fb.appendChild(badgeIcon('flag', 'flag-glyph', 12));
     const ft = el('title');
     ft.textContent = `Inferred, not stated: ${flagNote} — open the panel to confirm`;
     fb.appendChild(ft);
@@ -741,7 +764,7 @@ function buildNode(n) {
   if (actorTag) {
     const tag = el('g', { transform: `translate(${n.w - 14},${n.h - 14})` }, `actor-tag ${actorTag.cls}`);
     tag.appendChild(el('circle', { r: 10 }, 'actor-bg'));
-    tag.appendChild(el('path', { d: actorTag.glyph, transform: 'translate(-10,-10) scale(0.94)' }, 'actor-glyph'));
+    tag.appendChild(badgeIcon(actorTag.glyph, 'actor-glyph', 14));
     const at = el('title');
     at.textContent = actorTag.label;
     tag.appendChild(at);
@@ -752,10 +775,7 @@ function buildNode(n) {
   if (node.position) {
     const pb = el('g', { transform: `translate(${n.w - 6},${-2})` }, 'pin-badge');
     pb.appendChild(el('circle', { r: 9.5 }, 'pin-bg'));
-    pb.appendChild(el('path', {
-      d: 'M0 4.6 C-3.2 1 -4.1 -0.6 -4.1 -2.1 A4.1 4.1 0 1 1 4.1 -2.1 C4.1 -0.6 3.2 1 0 4.6 Z',
-    }, 'pin-glyph'));
-    pb.appendChild(el('circle', { cx: 0, cy: -2.1, r: 1.5 }, 'pin-dot'));
+    pb.appendChild(badgeIcon('push-pin', 'pin-glyph', 12));
     const pt = el('title');
     if (state.standalone) {
       pt.textContent = 'Pinned position';
@@ -774,25 +794,11 @@ function buildNode(n) {
     const x = n.w - (node.position ? 29 : 7);
     const nb = el('g', { transform: `translate(${x},${-2})` }, 'local-note-badge');
     nb.appendChild(el('circle', { r: 9 }, 'local-note-bg'));
-    nb.appendChild(el('path', {
-      d: 'M-3.5-3h7v5.5h-3.8l-2.7 2.2V2.5h-.5z',
-      'stroke-linejoin': 'round',
-    }, 'local-note-glyph'));
+    nb.appendChild(badgeIcon('chat-text', 'local-note-glyph', 12));
     const nt = el('title');
     nt.textContent = `Note for this group: ${node.note}`;
     nb.appendChild(nt);
     g.appendChild(nb);
-  }
-
-  if (node.links.length) {
-    const lg = el('path', {
-      d: 'M6.5 9.5l3-3M5 7l-1.8 1.8a2.3 2.3 0 0 0 3.2 3.2L8.2 10M8 5l1.8-1.8a2.3 2.3 0 0 1 3.2 3.2L11.2 8',
-      fill: 'none', 'stroke-width': 1.5, 'stroke-linecap': 'round',
-      transform: `translate(${n.w - 20},${n.h - 19})`,
-    }, 'link-dot');
-    lg.setAttribute('stroke', 'currentColor');
-    lg.style.color = 'var(--faint)';
-    g.appendChild(lg);
   }
 
   // cost chip for process maps
@@ -827,11 +833,77 @@ function buildNode(n) {
     port.appendChild(pt);
     g.appendChild(port);
   }
+  const observation = observationBadge(n);
+  if (observation) g.append(observation);
+  if (launch) {
+    // The inspect button and external link are siblings, not nested buttons.
+    const group = el('g', { transform: g.getAttribute('transform'), role: 'group', 'aria-label': node.label }, g.getAttribute('class'));
+    group.dataset.id = node.id;
+    g.removeAttribute('transform');
+    g.setAttribute('class', 'node-body');
+    const link = el('a', {
+      href: launch.url, target: '_blank', rel: 'noopener noreferrer', tabindex: '0',
+      transform: `translate(${n.w - 34},8)`,
+      'aria-label': `Open ${launch.label} (new tab)`,
+    }, 'node-launch');
+    link.appendChild(el('rect', { width: 24, height: 24, rx: 5 }, 'node-launch-hit'));
+    const glyph = icon('arrow-square-out', 14);
+    glyph.setAttribute('x', 5); glyph.setAttribute('y', 5);
+    link.appendChild(glyph);
+    const title = el('title'); title.textContent = `Open ${launch.label} (new tab)\n${launch.url}`;
+    link.appendChild(title);
+    // Keep link interaction out of selection, dragging, connect and rename.
+    for (const event of ['pointerdown', 'click', 'dblclick', 'contextmenu']) {
+      link.addEventListener(event, ev => ev.stopPropagation());
+    }
+    link.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter' || ev.key === ' ') ev.stopPropagation();
+    });
+    link.addEventListener('dragstart', ev => ev.preventDefault());
+    group.append(g, link);
+    return group;
+  }
   return g;
 }
 
+function observationBadge(n) {
+  const observation = nodeObservation(n.id);
+  if (!observation) return null;
+  const hasLaunch = (n.node.type !== 'decision' || n.node.children) && nodeCardDetails(n.node).launch;
+  const badge = el('g', { transform: `translate(${n.w - 78 - (hasLaunch ? 30 : 0)},3)`, role: 'img', 'aria-label': observation.detail }, 'github-observation');
+  badge.append(el('rect', { width: 72, height: 14, rx: 3 }));
+  const label = el('text', { x: 36, y: 10, 'text-anchor': 'middle' });
+  label.textContent = observation.label;
+  const title = el('title'); title.textContent = observation.detail;
+  badge.append(label, title);
+  return badge;
+}
+
+bus.on('github-changed', () => {
+  if (!currentLayer) return;
+  for (const node of currentLayer.querySelectorAll('.node')) {
+    const layout = currentLayout.nodes.find(n => n.id === node.dataset.id);
+    if (!layout) continue;
+    const previous = node.querySelector('.github-observation');
+    const badge = observationBadge(layout);
+    previous?.remove();
+    if (badge) node.append(badge);
+    if (!!previous !== !!badge && !layout.node.children && layout.node.type !== 'decision') {
+      const body = node.querySelector('.node-body') ?? node;
+      body.querySelectorAll(':scope > .label, :scope > .node-summary').forEach(text => text.remove());
+      const details = nodeCardDetails(layout.node);
+      body.append(...cardText(layout, details, details.launch));
+    }
+  }
+});
+
 function buildEdge(e) {
-  const g = el('g', {}, 'edge');
+  const from = state.model?.byId.get(e.edge.from)?.label ?? e.edge.from;
+  const to = state.model?.byId.get(e.edge.to)?.label ?? e.edge.to;
+  const g = el('g', {
+    tabindex: '0', role: 'button',
+    'aria-label': `${from} to ${to}${e.edge.label ? `: ${e.edge.label}` : ''}`,
+  }, 'edge');
   g.dataset.index = e.index;
   const smooth = e.smooth ? smoothEdgePath(e.points) : null;
   const d = smooth ? smooth.d : edgePath(e.points);
@@ -852,13 +924,16 @@ function buildEdge(e) {
 
   if (e.edge.label) {
     const label = e.edge.label;
-    const tw = label.length * 7.1 + 21;
+    const { w, h } = EDGE_LABEL_SIZE;
     g.appendChild(el('rect', {
-      x: e.labelPos.x - tw / 2, y: e.labelPos.y - 12, width: tw, height: 24, rx: 12,
+      x: e.labelPos.x - w / 2, y: e.labelPos.y - h / 2, width: w, height: h, rx: 6,
     }, 'edge-label-bg'));
-    const t = el('text', { x: e.labelPos.x, y: e.labelPos.y + 4.3, 'text-anchor': 'middle' }, 'edge-label');
-    t.textContent = label;
+    const t = el('text', { x: e.labelPos.x, y: e.labelPos.y, 'text-anchor': 'middle', 'dominant-baseline': 'middle' }, 'edge-label');
+    t.textContent = edgeLabelText(label);
     g.appendChild(t);
+    const title = el('title');
+    title.textContent = label; // The complete wording also remains in the edge inspector.
+    g.appendChild(title);
   }
 
   // custom-route badge at the via point: click to release back to auto-routing
@@ -866,7 +941,7 @@ function buildEdge(e) {
     const v = e.edge.via;
     const badge = el('g', { transform: `translate(${v.x},${v.y})`, 'data-unroute': e.index }, 'route-badge');
     badge.appendChild(el('circle', { r: 7.5 }, 'route-badge-bg'));
-    badge.appendChild(el('path', { d: 'M-2.8,-2.8 L2.8,2.8 M2.8,-2.8 L-2.8,2.8' }, 'route-badge-glyph'));
+    badge.appendChild(badgeIcon('x', 'route-badge-glyph', 10));
     const title = el('title');
     title.textContent = 'Custom route — click to restore automatic routing';
     badge.appendChild(title);
@@ -882,7 +957,7 @@ function buildEdge(e) {
 // so each stays clickable and draggable; a member with a custom route
 // leaves the bundle automatically.
 function fanMember(points, labelPos, i, n, normal) {
-  const spread = 24; // clears the 20px-tall label pills between neighbors
+  const spread = EDGE_LABEL_SIZE.h + 8;
   const o = (i - (n - 1) / 2) * spread;
   return {
     points: points.map((p) => ({ x: p.x + normal.x * o, y: p.y + normal.y * o })),
@@ -1418,25 +1493,14 @@ export function centerOn(nodeId, ms = 420) {
 
 export const getLayout = () => currentLayout;
 
-// pan the node into view if it's off-screen or hidden by a panel resize
-export function ensureVisible(nodeId, margin = 30) {
-  const instances = state.model?.mode === 'freeform' ? visibleInstances(nodeId) : [];
-  if (instances.length > 1) {
-    const usable = usableViewport();
-    return animateCamera(fitCamera(boundsAround(instances), usable.width <= 700 ? 120 : Math.max(80, margin), 1.05, usable), 320);
-  }
-  const n = currentLayout?.nodes.find((x) => x.id === nodeId);
-  if (!n) return;
-  const x1 = camera.x + n.x * camera.k, y1 = camera.y + n.y * camera.k;
-  const x2 = x1 + n.w * camera.k, y2 = y1 + n.h * camera.k;
-  const usable = usableViewport();
-  if (x1 < margin || y1 < margin || x2 > usable.width - margin || y2 > usable.height - margin) centerOn(nodeId, 320);
-}
-
 // ── selection visuals (no re-render) ─────────────────────────────────
-export function paintSelection() {
+export function paintSelection(followFocus = true) {
   if (!currentLayer) return;
   const selected = state.selectedId;
+  const focused = document.activeElement?.closest?.('.edge:focus-visible');
+  const edgeIndex = focused && currentLayer.contains(focused) ? Number(focused.dataset.index) : state.selectedEdge?.index;
+  const selectedEdge = currentLayout.edges.find(e => e.index === edgeIndex);
+  const endpoints = new Set(selectedEdge ? [selectedEdge.edge.from, selectedEdge.edge.to] : []);
   const probeNodes = new Set(state.probePath?.nodeIds ?? []);
   const probeEdges = new Set(state.probePath?.edgeIndexes ?? []);
   const adjacent = new Set(selected ? [selected] : []);
@@ -1453,26 +1517,32 @@ export function paintSelection() {
   }
   for (const g of currentLayer.querySelectorAll('.node')) {
     g.classList.toggle('selected', g.dataset.id === state.selectedId);
+    g.classList.toggle('relationship-endpoint', endpoints.has(g.dataset.id));
     g.classList.toggle('multi-selected', state.selectionIds.has(g.dataset.id));
     g.classList.toggle('connect-target', !!state.connectFrom && g.dataset.id !== state.connectFrom);
     g.classList.toggle('probe-node', probeNodes.has(g.dataset.id));
     g.classList.toggle('probe-dimmed', probeNodes.size > 0 && !probeNodes.has(g.dataset.id));
-    g.classList.toggle('focus-dimmed', probeNodes.size === 0 && !!selected && !adjacent.has(g.dataset.id));
+    g.classList.toggle('focus-dimmed', probeNodes.size === 0 && (selectedEdge
+      ? !endpoints.has(g.dataset.id) : !!selected && !adjacent.has(g.dataset.id)));
   }
   for (const g of currentLayer.querySelectorAll('.edge')) {
     g.classList.toggle('selected', state.selectedEdge != null && Number(g.dataset.index) === state.selectedEdge.index);
+    g.setAttribute('aria-pressed', String(Number(g.dataset.index) === state.selectedEdge?.index));
     const e = currentLayout.edges.find((x) => x.index === Number(g.dataset.index));
     const isProbeEdge = probeEdges.has(Number(g.dataset.index));
     g.classList.toggle('probe-edge', isProbeEdge);
     g.classList.toggle('probe-dimmed', probeNodes.size > 0 && !isProbeEdge);
-    g.classList.toggle('focus-dimmed', probeNodes.size === 0 && !!selected && e?.edge.from !== selected && e?.edge.to !== selected);
+    g.classList.toggle('focus-dimmed', probeNodes.size === 0 && (selectedEdge
+      ? e?.index !== selectedEdge.index : !!selected && e?.edge.from !== selected && e?.edge.to !== selected));
   }
   svg.classList.toggle('connecting', !!state.connectFrom);
   // focus follows the selection for keyboard users, but only when focus is
   // already inside the canvas — never steal it from panel inputs or dialogs
-  if (state.selectedId && svg.contains(document.activeElement)
+  if (followFocus && state.selectedId && svg.contains(document.activeElement)
+    && !document.activeElement?.closest?.('.edge, .node-launch')
     && document.activeElement?.dataset?.id !== state.selectedId) {
-    currentLayer.querySelector(`.node[data-id="${CSS.escape(state.selectedId)}"]`)?.focus({ preventScroll: true });
+    const node = currentLayer.querySelector(`.node[data-id="${CSS.escape(state.selectedId)}"]`);
+    (node?.querySelector('.node-body') ?? node)?.focus({ preventScroll: true });
   }
 }
 
@@ -1512,13 +1582,16 @@ export function dimExcept(nodeId) {
 
 // ── pointer interactions ─────────────────────────────────────────────
 
-// While a node is being dragged, every edge touching it re-routes live as a
-// direct line; the definitive layout is recomputed on commit.
+// Keep connected labels and arrival ports aligned while dragging. The
+// definitive layout is recomputed on commit; custom routes always win.
 function updateEdgesFor(ln) {
   if (!currentLayout || !currentLayer) return;
   const byId = new Map(currentLayout.nodes.map((n) => [n.id, n]));
+  const changed = new Set();
   for (const e of currentLayout.edges) {
     if (e.edge.from !== ln.id && e.edge.to !== ln.id) continue;
+    changed.add(e);
+    delete e.autoFallback;
     if (e.edge.via || e.edge.route) {
       const a = byId.get(e.edge.from), b = byId.get(e.edge.to);
       const via = e.edge.via ?? routeDirect(a, b).labelPos;
@@ -1526,11 +1599,28 @@ function updateEdgesFor(ln) {
     } else {
       Object.assign(e, routeDirect(byId.get(e.edge.from), byId.get(e.edge.to)));
     }
+  }
+  for (const e of routeAutomaticEdges(currentLayout.nodes, currentLayout.edges)) {
+    changed.add(e);
+  }
+  const bundles = new Set();
+  for (const e of changed) {
     const old = currentLayer.querySelector(`.edge[data-index="${e.index}"]`);
     if (!old) continue;
-    old.closest('.bundle')?.classList.add('open'); // reveal the cables while their node moves
+    const bundle = old.closest('.bundle');
+    if (bundle) { bundles.add(bundle); continue; }
     const fresh = buildEdge(e);
     fresh.setAttribute('class', old.getAttribute('class'));
+    old.replaceWith(fresh);
+  }
+  for (const old of bundles) {
+    const members = currentLayout.edges.filter((e) => old.querySelector(`.edge[data-index="${e.index}"]`));
+    const fresh = buildBundle(members, currentLayout);
+    fresh.setAttribute('class', old.getAttribute('class'));
+    fresh.classList.add('open');
+    for (const edge of fresh.querySelectorAll('.edge')) {
+      edge.setAttribute('class', old.querySelector(`.edge[data-index="${edge.dataset.index}"]`).getAttribute('class'));
+    }
     old.replaceWith(fresh);
   }
 }
@@ -1568,8 +1658,8 @@ function wirePointer() {
     const byId = new Map(currentLayout.nodes.map((n) => [n.id, n]));
     const a = byId.get(drag.le.edge.from), b = byId.get(drag.le.edge.to);
     if (!a || !b) return;
-    const style = drag.le.edge.route === 'straight' ? 'curved' : (drag.le.edge.route ?? 'curved');
-    const route = routeStyled(a, b, w, style);
+    const route = routeDragged(a, b, drag.le.edge, w);
+    if (!route) return;
     const smooth = route.smooth ? smoothEdgePath(route.points) : null;
     const d = smooth ? smooth.d : edgePath(route.points);
     drag.el.querySelector('path.hit')?.setAttribute('d', d);
@@ -1586,13 +1676,13 @@ function wirePointer() {
     const labelBg = drag.el.querySelector('.edge-label-bg');
     const label = drag.el.querySelector('.edge-label');
     if (labelBg && label) {
-      const tw = Number(labelBg.getAttribute('width'));
-      labelBg.setAttribute('x', route.labelPos.x - tw / 2);
-      labelBg.setAttribute('y', route.labelPos.y - 10);
+      labelBg.setAttribute('x', route.labelPos.x - EDGE_LABEL_SIZE.w / 2);
+      labelBg.setAttribute('y', route.labelPos.y - EDGE_LABEL_SIZE.h / 2);
       label.setAttribute('x', route.labelPos.x);
-      label.setAttribute('y', route.labelPos.y + 3.8);
+      label.setAttribute('y', route.labelPos.y);
     }
-    drag.via = w;
+    drag.via = route.via;
+    drag.style = route.style;
   };
 
   // an interrupted drag mutated the cached layout — rebuild it from the model
@@ -1835,9 +1925,7 @@ function wirePointer() {
       }
       if (finishedEdgeDrag) {
         if (finishedEdgeDrag.via) {
-          // dragging a straight edge bends it — the via only makes sense curved
-          const style = finishedEdgeDrag.le.edge.route === 'straight' ? 'curved' : null;
-          bus.emit('edge-routed', finishedEdgeDrag.le.index, finishedEdgeDrag.via, style);
+          bus.emit('edge-routed', finishedEdgeDrag.le.index, finishedEdgeDrag.via, finishedEdgeDrag.style);
         }
         return;
       }
@@ -1987,15 +2075,18 @@ function wirePointer() {
 }
 
 // ── keyboard access ──────────────────────────────────────────────────
-// A focused node behaves like a click target: Enter/Space selects it.
+// Focused map objects behave like click targets: Enter/Space selects them.
 function wireNodeKeyboard() {
+  svg.addEventListener('focusin', () => paintSelection(false));
+  svg.addEventListener('focusout', () => queueMicrotask(() => paintSelection(false)));
   svg.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Enter' && ev.key !== ' ') return;
-    const nodeEl = ev.target?.closest?.('.node');
-    if (!nodeEl || !currentLayer?.contains(nodeEl)) return;
+    const target = ev.target?.closest?.('.node, .edge');
+    if (!target || !currentLayer?.contains(target)) return;
     ev.preventDefault(); // Space would scroll the page
     ev.stopPropagation();
-    bus.emit('node-click', nodeEl.dataset.id, ev);
+    if (target.classList.contains('edge')) bus.emit('edge-click', Number(target.dataset.index));
+    else bus.emit('node-click', target.dataset.id, ev);
   });
 }
 
@@ -2063,7 +2154,7 @@ function setMinimapCollapsed(collapsed) {
   minimapBox?.classList.toggle('minimap-collapsed', collapsed);
   try { localStorage.setItem('opsmap.minimapHidden', collapsed ? '1' : '0'); } catch { /* storage blocked */ }
   if (minimapToggle) {
-    minimapToggle.textContent = collapsed ? '+' : '-';
+    minimapToggle.replaceChildren(icon(collapsed ? 'plus' : 'minus', 12));
     minimapToggle.title = collapsed ? 'Show minimap' : 'Hide minimap';
     minimapToggle.setAttribute('aria-label', minimapToggle.title);
     minimapToggle.setAttribute('aria-pressed', collapsed ? 'true' : 'false');

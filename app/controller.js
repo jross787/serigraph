@@ -252,6 +252,16 @@ export async function loadTrash() {
 // parse source into state (doc + model + errors); no rendering
 function adoptSource(source) {
   const { doc, model, errors } = parseMap(source);
+  const sel = state.selectedEdge;
+  if (sel) {
+    const previous = state.model && scopeOf(state.model, sel.scopeId)?.edges;
+    const next = model && scopeOf(model, sel.scopeId)?.edges;
+    const before = previous?.[sel.index], after = next?.[sel.index];
+    // Keep inspection through route edits/undo, never retarget a deleted edge.
+    const parallel = previous?.filter(edge => edge.from === before?.from && edge.to === before?.to).length > 1;
+    if (!before || !after || previous.length !== next.length || before.from !== after.from || before.to !== after.to
+      || (parallel && before.label !== after.label)) state.selectedEdge = null;
+  }
   state.source = source;
   state.doc = doc;
   state.model = model;
@@ -410,7 +420,7 @@ export async function commit(mutator, { select = undefined, historyLabel = 'edit
 
   recordRevision(after, revisionLabel(action));
 
-  if (select !== undefined) state.selectedId = select;
+  if (select !== undefined) { state.selectedId = select; state.selectedEdge = null; }
   refreshView();
   return true;
 }
@@ -456,7 +466,6 @@ function refreshView() {
       if (!state.model.byId.has(id)) state.selectionIds.delete(id);
     }
   }
-  if (state.selectedEdge) state.selectedEdge = null;
   canvas.showScope(state.model, state.scopeId);
   canvas.paintSelection();
   writeHash();
@@ -624,7 +633,7 @@ export function selectNode(nodeId) {
   state.selectedId = nodeId;
   state.selectedEdge = null;
   canvas.paintSelection();
-  canvas.focusOn(nodeId);
+  // Inspection does not navigate. Search/deep links still explicitly focus.
   writeHash();
   bus.emit('selection-changed');
 }

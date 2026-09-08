@@ -11,6 +11,23 @@ function measure(text, font = `600 ${FONT}`) {
   return mctx.measureText(text).width;
 }
 
+function ellipsize(text, maxWidth, font) {
+  while (text && measure(text + '…', font) > maxWidth) text = text.slice(0, -1).trimEnd();
+  return text + '…';
+}
+
+// One footprint for connection labels, shared by layout, rendering and drag.
+export const EDGE_LABEL_SIZE = { w: 192, h: 28 };
+const EDGE_LABEL_FONT = '600 11px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
+export function edgeLabelText(text) {
+  const width = EDGE_LABEL_SIZE.w - 24;
+  return fitText(text, width, EDGE_LABEL_FONT);
+}
+
+export function fitText(text, maxWidth, font = CARD_FONT) {
+  return measure(text, font) <= maxWidth ? text : ellipsize(text, maxWidth, font);
+}
+
 export function wrapText(text, maxWidth, font = `600 ${FONT}`, maxLines = 3) {
   const words = String(text).split(/\s+/).filter(Boolean);
   const lines = [];
@@ -28,15 +45,15 @@ export function wrapText(text, maxWidth, font = `600 ${FONT}`, maxLines = 3) {
   if (lines.length < maxLines && line) lines.push(line);
   const used = lines.join(' ');
   if (used.length < words.join(' ').length) {
-    let last = lines[lines.length - 1] ?? '';
-    while (last && measure(last + '…', font) > maxWidth) last = last.slice(0, -1).trimEnd();
-    lines[lines.length - 1] = (last || '') + '…';
+    lines[lines.length - 1] = ellipsize(lines[lines.length - 1] ?? '', maxWidth, font);
   }
   return lines;
 }
 
 // ── node sizing ──────────────────────────────────────────────────────
 const HEADER_FONT = '650 14px ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif';
+// Match the full-size .node .label typography; overview labels are smaller.
+export const CARD_FONT = '650 14.25px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
 
 function sizeNode(node, model) {
   const isContainer = !!node.children;
@@ -52,11 +69,12 @@ function sizeNode(node, model) {
     const lw = Math.max(...lines.map((l) => measure(l)), 40);
     return { w: Math.max(120, Math.min(148, lw + 40)), h: Math.max(88, lines.length * 17 + 44), lines };
   }
-  const lines = wrapText(node.label, 148, `600 ${FONT}`, 3);
-  const lw = Math.max(...lines.map((l) => measure(l)), 30);
-  const w = Math.max(120, Math.min(220, lw + 64));
-  const h = Math.max(48, lines.length * 17 + 30);
-  return { w, h, lines };
+  // Peer cards share a footprint; reserve room for the icon and corner badges.
+  const labelWidth = 132;
+  // Also cap unbroken names that exceed wrapText's word-based limit.
+  const lines = wrapText(node.label, labelWidth, CARD_FONT, 2)
+    .map((line) => fitText(line, labelWidth));
+  return { w: 200, h: 64, lines };
 }
 
 // ── connected components + dagre + shelf packing ────────────────────
@@ -90,8 +108,11 @@ function layoutComponent(comp, sized) {
     g.setNode(n.id, { width: s.w, height: s.h });
   }
   comp.edges.forEach((e, i) => {
-    const labelW = e.label ? measure(e.label, '600 12px "SFMono-Regular", "SF Mono", Menlo, monospace') + 24 : 0;
-    g.setEdge(e.from, e.to, { width: labelW, height: e.label ? 26 : 0, labelpos: 'c' }, 'e' + i);
+    g.setEdge(e.from, e.to, {
+      width: e.label ? EDGE_LABEL_SIZE.w : 0,
+      height: e.label ? EDGE_LABEL_SIZE.h : 0,
+      labelpos: 'c',
+    }, 'e' + i);
   });
   dagre.layout(g);
 
@@ -142,8 +163,8 @@ function shelfPack(blocks, gap = 72) {
 // center at exactly those scope coordinates. Everything else keeps the
 // dagre layout (computed over the FULL graph, pinned nodes included, so
 // pinning one node never reshuffles its siblings), then gets pushed out
-// from under pinned nodes, and edges that touch a moved node re-route as
-// direct lines. With zero pinned nodes none of this runs.
+// from under pinned nodes. Automatic routes are then rebuilt in clear
+// horizontal corridors without changing any node positions.
 
 const centerOf = (n) => ({ x: n.x + n.w / 2, y: n.y + n.h / 2 });
 
@@ -171,6 +192,99 @@ export function routeDirect(a, b) {
   const p1 = boundaryPoint(a, centerOf(b));
   const p2 = boundaryPoint(b, centerOf(a));
   return { points: [p1, p2], labelPos: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 } };
+}
+
+// Give a clear left/right corridor a shared label column and separate,
+// ordered arrival ports. Keep dagre/custom routes for tight or obstructed
+// corridors, fan-out, self-loops and same-pair bundles; this is not a general router.
+export function routeAutomaticEdges(nodes, edges) {
+  const routed = new Set();
+  // Reconsider previous automatic geometry when any node moves into its
+  // corridor. The fallback stays layout-only; it never changes map data.
+  for (const e of edges) {
+    if (e.autoFallback && !e.edge.via && !e.edge.route) {
+      Object.assign(e, e.autoFallback);
+      delete e.autoFallback;
+      routed.add(e);
+    }
+  }
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const pairCounts = new Map();
+  const outgoingCounts = new Map();
+  const pairKey = (e) => [e.edge.from, e.edge.to].sort().join('\u0000');
+  for (const e of edges) {
+    pairCounts.set(pairKey(e), (pairCounts.get(pairKey(e)) ?? 0) + 1);
+    outgoingCounts.set(e.edge.from, (outgoingCounts.get(e.edge.from) ?? 0) + 1);
+  }
+  const groups = new Map();
+  for (const e of edges) {
+    if (e.edge.via || e.edge.route || e.edge.from === e.edge.to
+      || pairCounts.get(pairKey(e)) > 1 || outgoingCounts.get(e.edge.from) > 1) continue;
+    const a = byId.get(e.edge.from), b = byId.get(e.edge.to);
+    if (!a || !b) continue;
+    const gap = e.edge.label ? EDGE_LABEL_SIZE.w + 48 : 48;
+    const direction = b.x - (a.x + a.w) >= gap ? 1 : a.x - (b.x + b.w) >= gap ? -1 : 0;
+    if (!direction) continue;
+    const key = `${b.id}\u0000${direction}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ e, a, b, direction });
+  }
+
+  for (const group of groups.values()) {
+    group.sort((a, b) => centerOf(a.a).y - centerOf(b.a).y || a.e.index - b.e.index);
+    const { b, direction } = group[0];
+    // Work in a left-to-right coordinate system, then mirror if necessary.
+    const start = Math.max(...group.map(({ a }) => direction > 0 ? a.x + a.w : -a.x));
+    const end = direction > 0 ? b.x : -(b.x + b.w);
+    const labeled = group.some(({ e }) => e.edge.label);
+    const labelX = start + 16 + EDGE_LABEL_SIZE.w / 2;
+    const firstTurn = labeled ? labelX + EDGE_LABEL_SIZE.w / 2 + 12 : start + 24;
+    const lastTurn = end - 16;
+    if (firstTurn > lastTurn) continue;
+    const laneStep = Math.min(12, (lastTurn - firstTurn) / Math.max(1, group.length - 1));
+    const portStep = Math.min(8, (b.h - 16) / Math.max(1, group.length - 1));
+    const lanes = [...group].sort((a, c) =>
+      Math.abs(centerOf(a.a).y - centerOf(b).y) - Math.abs(centerOf(c.a).y - centerOf(b).y)
+      || a.e.index - c.e.index);
+    const proposed = group.map((entry, i) => {
+      const { a, e } = entry;
+      const sy = centerOf(a).y;
+      const ty = centerOf(b).y + (i - (group.length - 1) / 2) * portStep;
+      const turn = (lastTurn - (group.length - 1 - lanes.indexOf(entry)) * laneStep) * direction;
+      const targetInset = b.node?.type === 'decision' && !b.node.children
+        ? Math.abs(ty - centerOf(b).y) * b.w / b.h : 0;
+      const points = [
+        { x: direction > 0 ? a.x + a.w : a.x, y: sy },
+        { x: turn, y: sy },
+        { x: turn, y: ty },
+        { x: (end + targetInset) * direction, y: ty },
+      ].filter((p, j, all) => !j || p.x !== all[j - 1].x || p.y !== all[j - 1].y);
+      const labelPos = {
+        x: e.edge.label ? labelX * direction : (points[0].x + turn) / 2,
+        y: sy,
+      };
+      return { e, a, points, labelPos };
+    });
+    const blocked = proposed.some(({ e, a, points, labelPos }) => nodes.some((n) => {
+      if (n === a || n === b) return false;
+      const x1 = n.x - 8, y1 = n.y - 8, x2 = n.x + n.w + 8, y2 = n.y + n.h + 8;
+      if (e.edge.label && labelPos.x + EDGE_LABEL_SIZE.w / 2 > x1
+        && labelPos.x - EDGE_LABEL_SIZE.w / 2 < x2
+        && labelPos.y + EDGE_LABEL_SIZE.h / 2 > y1 && labelPos.y - EDGE_LABEL_SIZE.h / 2 < y2) return true;
+      return points.slice(1).some((p, i) => {
+        const q = points[i];
+        return p.x === q.x
+          ? p.x > x1 && p.x < x2 && Math.max(p.y, q.y) > y1 && Math.min(p.y, q.y) < y2
+          : p.y > y1 && p.y < y2 && Math.max(p.x, q.x) > x1 && Math.min(p.x, q.x) < x2;
+      });
+    }));
+    if (!blocked) for (const { e, points, labelPos } of proposed) {
+      e.autoFallback = { points: e.points, labelPos: e.labelPos, smooth: !!e.smooth };
+      Object.assign(e, { points, labelPos, smooth: false });
+      routed.add(e);
+    }
+  }
+  return routed;
 }
 
 // Route through a user-pinned via point: boundary → via → boundary.
@@ -212,6 +326,15 @@ export function routeStyled(a, b, via, style) {
     return { points, labelPos };
   }
   return routeVia(a, b, via);
+}
+
+// New manual bends use right angles. Preserve legacy via-only curves, but
+// never turn an explicitly straight connection into another shape by dragging.
+export function routeDragged(a, b, edge, point) {
+  if (edge.route === 'straight') return null;
+  const style = edge.route ?? (edge.via ? 'curved' : 'stepped');
+  const via = { x: Math.round(point.x), y: Math.round(point.y) };
+  return { ...routeStyled(a, b, via, style), via, style };
 }
 
 // Push auto nodes out of (inflated) pinned rects, minimal-displacement axis
@@ -341,6 +464,9 @@ export function layoutScope(model, ownerId) {
       const via = e.edge.via ?? routeDirect(a, b).labelPos;
       Object.assign(e, routeStyled(a, b, via, style));
     }
+  }
+  routeAutomaticEdges(nodes, edges);
+  {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const n of nodes) {
       x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y);
@@ -350,6 +476,12 @@ export function layoutScope(model, ownerId) {
       for (const p of e.points) {
         x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y);
         x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y);
+      }
+      if (e.edge.label) {
+        x0 = Math.min(x0, e.labelPos.x - EDGE_LABEL_SIZE.w / 2);
+        y0 = Math.min(y0, e.labelPos.y - EDGE_LABEL_SIZE.h / 2);
+        x1 = Math.max(x1, e.labelPos.x + EDGE_LABEL_SIZE.w / 2);
+        y1 = Math.max(y1, e.labelPos.y + EDGE_LABEL_SIZE.h / 2);
       }
     }
     bounds = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };

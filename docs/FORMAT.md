@@ -221,6 +221,21 @@ Freeform hierarchy uses `relations` on shared elements. The supported types are 
 
 All process-node fields except `id`, `type`, and `label` are optional. `planning` does not replace the node's visual `type`: a requirement can be drawn as a `process`, `artifact`, `system`, or whichever visual form best explains it.
 
+Ordinary map cards preview `description` as one muted line. Whitespace is folded
+and long text is visually shortened; the stored description and full inspector
+text remain unchanged. Missing descriptions do not get generated substitutes.
+Cards keep their fixed dimensions; containers retain their existing summary and
+decision diamonds keep descriptions and links in the inspector.
+
+The card's external-link action opens the first valid absolute HTTP(S) entry in
+`links`, skipping embedded credentials and non-web references. Put the desired
+launch destination first and give it a meaningful label. Its tooltip identifies
+the destination; all links remain in the inspector. It opens a new tab without
+an opener or referrer and does not select, move, connect, or dive into the node.
+No valid web link means no launch action. Freeform placements use these fields
+from their shared element; business descriptions and URLs stay in that private
+workspace, not the generic engine.
+
 `flowPosition` pins a node to a `{ col, row }` cell on the Flow view's ground grid. It is optional, additive, and removable: add it to any node, and delete it to return the node to automatic Flow placement. Only the Flow view reads it; every other view ignores it.
 
 ## Visual node types
@@ -285,7 +300,7 @@ The rules:
 
 ## Pinned edge routes (optional)
 
-Edges route automatically, and dragging an edge line in the app pins its route by writing a `via` point on that edge. An optional `route` field picks the shape of the line. You can also author both by hand:
+Edges route automatically. Dragging an automatic edge pins a right-angle bend with `via` and `route: stepped`; an explicitly chosen shape is preserved. A straight edge cannot be bent by dragging—choose another shape first. Existing via-only curves retain their meaning. You can also author both fields by hand:
 
 ```yaml
 edges:

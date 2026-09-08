@@ -4,6 +4,9 @@
   "description": "Map how a business actually operates \u2014 a zoomable graph of nested, typed nodes backed by plain YAML files.",
   "type": "module",
   "private": true,
+  "serigraph": {
+    "externalLibraryVersion": 1
+  },
   "bin": {
     "serigraph": "tools/serigraph.mjs"
   },

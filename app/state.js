@@ -8,6 +8,7 @@ export const state = {
   trash: [],           // [{id, kind, name, originalId|originalSlug, deletedAt, mapCount}]
 
   mapId: null,
+  libraryId: null,     // opaque server identity; pins this tab to its library
   source: '',          // current YAML source (authoritative)
   doc: null,           // YAML Document (comment-preserving)
   model: null,         // normalized model from parseMap
@@ -35,6 +36,7 @@ export const state = {
   saveStatus: 'idle',  // idle | saving | saved | error
   saveError: '',
   workbench: null,     // active Workbench link metadata; the share key stays browser-local
+  github: null,        // public pilot preferences and ephemeral observations; never serialized
 };
 
 // The project slug of the open map, or null for a root map / no map.

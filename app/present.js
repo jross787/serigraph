@@ -2,6 +2,7 @@
 // spotlight and a narration card — built for talking a client through it.
 import { state, bus } from './state.js';
 import * as canvas from './canvas.js';
+import { icon } from './icons.js';
 
 let steps = [];
 let index = 0;
@@ -61,10 +62,12 @@ function renderHud() {
     node.description ? h('div', 'desc', node.description) : null,
     node.children ? h('p', 'hint', `Contains a sub-map of ${node.stats.childCount} nodes — exit presenting and double-click to explore.`) : null);
 
-  const prev = h('button', '', '←');
+  const prev = h('button', '', icon('arrow-left'));
+  prev.setAttribute('aria-label', 'Previous step');
   prev.title = 'Previous (←)';
   prev.addEventListener('click', () => go(index - 1));
-  const next = h('button', '', '→');
+  const next = h('button', '', icon('arrow-right'));
+  next.setAttribute('aria-label', 'Next step');
   next.title = 'Next (→ or space)';
   next.addEventListener('click', () => go(index + 1));
   const exitB = h('button', 'present-exit', 'Exit');

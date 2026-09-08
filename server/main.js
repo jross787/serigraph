@@ -31,7 +31,10 @@ import {
   pushWorkbench,
   watchWorkbench,
 } from './workbench-sync.js';
-import { ROOT } from './env.js';
+import { ROOT, LIBRARY_ROOT } from './env.js';
+import { createGitHubReader, GITHUB_SOURCE, GITHUB_REFRESH_MS } from './github.js';
+
+const github = process.env.SERIGRAPH_GITHUB_PILOT === '1' ? createGitHubReader() : null;
 
 
 // OPSMAP_MAPS_DIR points the server at a different maps directory (used by
@@ -39,10 +42,12 @@ import { ROOT } from './env.js';
 // unset, maps/ next to the server source is the source of truth.
 const MAPS_DIR = process.env.OPSMAP_MAPS_DIR
   ? path.resolve(process.env.OPSMAP_MAPS_DIR)
-  : path.join(ROOT, 'maps');
+  : path.join(LIBRARY_ROOT, 'maps');
 const TEMPLATES_DIR = path.join(ROOT, 'templates');
-const PROJECTS_DIR = path.join(ROOT, 'projects');
-const TRASH_DIR = path.join(ROOT, '.serigraph-trash');
+const PROJECTS_DIR = path.join(LIBRARY_ROOT, 'projects');
+const TRASH_DIR = path.join(LIBRARY_ROOT, '.serigraph-trash');
+// Browser connections are scoped to a library, not to a reusable localhost port.
+const LIBRARY_ID = createHash('sha256').update(JSON.stringify([LIBRARY_ROOT, MAPS_DIR])).digest('hex');
 const DEFAULT_PORT = Number(process.env.PORT) || 4700;
 const NO_OPEN = process.argv.includes('--no-open') || process.env.OPSMAP_NO_OPEN === '1';
 // maps hold confidential client operations data: serve localhost-only unless
@@ -628,7 +633,7 @@ function scheduleMapChange(dir, filename) {
 // the id the app knows a changed file by: the bare map id for root maps,
 // "<project>/<map>" for project maps, "<project>/projects.yaml" for an index
 function idForPath(p) {
-  const parts = path.relative(ROOT, p).split(path.sep);
+  const parts = path.relative(LIBRARY_ROOT, p).split(path.sep);
   if (parts[0] === 'projects' && parts.length === 3) {
     const base = parts[2].replace(/\.ya?ml$/, '');
     return base === 'projects' ? `${parts[1]}/${parts[2]}` : `${parts[1]}/${base}`;
@@ -638,6 +643,11 @@ function idForPath(p) {
 
 // ---------------------------------------------------------------- routes
 async function handleApi(req, res, url) {
+  res.setHeader('X-Serigraph-Library', LIBRARY_ID);
+  const expectedLibrary = req.headers['x-serigraph-library'];
+  if (expectedLibrary && expectedLibrary !== LIBRARY_ID) {
+    return json(res, 412, { error: 'The active library changed. Reload Serigraph before continuing.' });
+  }
   // requiring JSON makes every write a CORS-preflighted request, so a hostile
   // web page in the same browser can't POST/PUT here as a "simple request"
   if ((req.method === 'POST' || req.method === 'PUT')
@@ -645,6 +655,20 @@ async function handleApi(req, res, url) {
     return json(res, 415, { error: 'Content-Type must be application/json' });
   }
   const parts = url.pathname.split('/').filter(Boolean); // ['api', ...]
+  if (parts[1] === 'github') {
+    if (req.method !== 'GET') return json(res, 405, { error: 'GitHub pilot is read-only.' });
+    if (parts.length === 2) return json(res, 200, { enabled: !!github, ...GITHUB_SOURCE, refreshMs: GITHUB_REFRESH_MS });
+    if (!github) return json(res, 404, { error: 'GitHub pilot is not enabled.' });
+    if (parts.length === 3 && parts[2] === 'observation' && !url.search) {
+      try { return json(res, 200, await github.observation()); }
+      catch (error) { return json(res, error.status || 502, { error: error.retryAt ? error.message : 'GitHub observation unavailable.', retryAt: error.retryAt ?? null }); }
+    }
+    if (parts.length === 4 && parts[2] === 'pulls' && /^\d{1,10}$/.test(parts[3]) && !url.search) {
+      try { return json(res, 200, await github.pullChecks(Number(parts[3]))); }
+      catch (error) { return json(res, error.status || 502, { error: error.retryAt ? error.message : 'Pull request evidence unavailable.', retryAt: error.retryAt ?? null }); }
+    }
+    return json(res, 400, { error: 'Only the approved public source operation is available.' });
+  }
   if (parts[1] === 'workbench' && req.method === 'POST') {
     let body;
     try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON body' }); }
@@ -755,7 +779,7 @@ async function handleApi(req, res, url) {
       const project = body?.project == null ? null : String(body.project).trim();
       if (project !== null && !safeSlug(project)) return json(res, 400, { error: 'invalid project slug' });
       if (project === 'project') return json(res, 400, { error: '"project" is a reserved project slug' });
-      if (!file) return json(res, 404, { error: `no map "${id}" (looked for ${path.relative(ROOT, mapPathFor(id))})` });
+      if (!file) return json(res, 404, { error: `no map "${id}" (looked for ${path.relative(LIBRARY_ROOT, mapPathFor(id))})` });
       const fromProject = id.includes('/') ? id.slice(0, id.indexOf('/')) : null;
       const mapSlug = id.includes('/') ? id.slice(id.indexOf('/') + 1) : id;
       if (project === fromProject) {
@@ -793,7 +817,7 @@ async function handleApi(req, res, url) {
         res.setHeader('ETag', etag);
         return json(res, 200, { id: movedTo, source, movedTo, etag });
       }
-      return json(res, 404, { error: `no map "${id}" (looked for ${path.relative(ROOT, mapPathFor(id))})` });
+      return json(res, 404, { error: `no map "${id}" (looked for ${path.relative(LIBRARY_ROOT, mapPathFor(id))})` });
     }
     if (req.method === 'PUT') {
       let body;

@@ -21,6 +21,8 @@ import {
   SUPPORT_TYPES,
 } from './flow-core.js';
 
+import { icon } from './icons.js';
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const GRID = { col: 2.05, row: 1.8 }; // ground-plane spacing between tiles
 const UNIT = 82; // px per grid step at zoom 1
@@ -242,17 +244,30 @@ function makeBuilding(entry) {
   els.chip = s('rect', { class: `flow-code t-${node.type}`, height: 13, rx: 3 });
   els.chipText = s('text', { class: 'flow-code-text', 'text-anchor': 'middle' }, text(entry.code));
   label.append(els.chip, els.chipText);
-  let markers = '';
-  if (node.children) markers += `▣${node.stats?.childCount ?? ''}`;
-  if (entry.flagged) markers += `${markers ? ' ' : ''}⚑`;
-  if (markers) {
-    els.markers = s('text', { class: `flow-markers${entry.flagged ? ' flagged' : ''}` }, text(markers));
+  let markerWidth = 0;
+  const markers = s('g', { class: `flow-markers${entry.flagged ? ' flagged' : ''}` });
+  if (node.children) {
+    const glyph = icon('stack', 12);
+    glyph.setAttribute('y', -10);
+    const count = String(node.stats?.childCount ?? '');
+    markers.append(glyph, s('text', { x: 14 }, text(count)));
+    markerWidth = 18 + count.length * 7;
+  }
+  if (entry.flagged) {
+    const glyph = icon('flag', 12);
+    glyph.setAttribute('x', markerWidth);
+    glyph.setAttribute('y', -10);
+    markers.append(glyph);
+    markerWidth += 16;
+  }
+  if (markerWidth) {
+    els.markers = markers;
     label.append(els.markers);
   }
   els.labelText = s('text', { class: 'flow-label-text' }, text(truncate(node.label)));
   label.append(els.labelText);
   g.append(label);
-  els.markerText = markers;
+  els.markerWidth = markerWidth;
   entry.els = els;
   return g;
 }
@@ -335,7 +350,7 @@ function updateBuilding(entry) {
 
   // caption: centered under the tile as one line
   const chipW = 22;
-  const markerW = els.markers ? els.markerText.length * 7 + 6 : 0;
+  const markerW = els.markerWidth;
   const labelW = truncate(node.label).length * 5.7;
   const total = chipW + 4 + markerW + labelW;
   const startX = base.x - total / 2;
@@ -346,8 +361,7 @@ function updateBuilding(entry) {
   els.chipText.setAttribute('x', startX + chipW / 2);
   els.chipText.setAttribute('y', y + 9.5);
   if (els.markers) {
-    els.markers.setAttribute('x', startX + chipW + 4);
-    els.markers.setAttribute('y', y + 10);
+    els.markers.setAttribute('transform', `translate(${startX + chipW + 4},${y + 10})`);
   }
   els.labelText.setAttribute('x', startX + chipW + 4 + markerW);
   els.labelText.setAttribute('y', y + 10.5);
@@ -433,7 +447,8 @@ function makeLane(lane) {
     lane.decorEl.append(lane.kindChip);
   }
   if (lane.edge.issue) {
-    lane.issueMark = s('text', { class: 'flow-issue-mark', 'text-anchor': 'middle' }, text('⚠'));
+    lane.issueMark = icon('warning-circle', 14);
+    lane.issueMark.classList.add('flow-issue-mark');
     lane.decorEl.append(lane.issueMark);
   }
   // parallel lanes stagger their chips so they never pile up at one t
@@ -482,8 +497,8 @@ function updateLane(lane) {
   }
   if (lane.issueMark) {
     const at = pointOn(lane, lane.chipT >= 0.6 ? 0.35 : 0.75);
-    lane.issueMark.setAttribute('x', at.x);
-    lane.issueMark.setAttribute('y', at.y + 4);
+    lane.issueMark.setAttribute('x', at.x - 7);
+    lane.issueMark.setAttribute('y', at.y - 7);
   }
 }
 
@@ -961,12 +976,12 @@ function metaRow(label, value) {
 
 function flagSection(note) {
   if (!note) return null;
-  return h('div', { class: 'flow-flag-note' }, h('span', {}, '⚑ Inferred'), h('p', {}, note));
+  return h('div', { class: 'flow-flag-note' }, h('span', {}, icon('flag', 14), ' Inferred'), h('p', {}, note));
 }
 
 function issueSection(issue) {
   if (!issue) return null;
-  return h('div', { class: 'flow-issue-note' }, h('span', {}, '⚠ Known issue'), h('p', {}, issue));
+  return h('div', { class: 'flow-issue-note' }, h('span', {}, icon('warning-circle', 14), ' Known issue'), h('p', {}, issue));
 }
 
 function numberRows(node) {
@@ -1003,10 +1018,10 @@ function connectionRows(node) {
       class: `flow-conn-row${lane.edge.issue ? ' has-issue' : ''}`,
       onclick: () => select({ kind: 'edge', index: lane.index }),
     },
-    h('span', { class: 'flow-conn-dir' }, outboundHere ? '→' : '←'),
+    h('span', { class: 'flow-conn-dir', role: 'img', 'aria-label': outboundHere ? 'Outgoing' : 'Incoming' }, icon(outboundHere ? 'arrow-right' : 'arrow-left', 14)),
     h('span', { class: 'flow-conn-label' }, other.label),
     lane.edge.kind ? h('span', { class: `flow-kind-pill k-${lane.edge.kind}` }, KINDS[lane.edge.kind].glyph) : null,
-    lane.edge.issue ? h('span', { class: 'flow-conn-issue' }, '⚠') : null));
+    lane.edge.issue ? h('span', { class: 'flow-conn-issue', role: 'img', 'aria-label': 'Known issue' }, icon('warning-circle', 14)) : null));
   }
   if (!rows.length) return [];
   return [h('div', { class: 'flow-conn-list' },
@@ -1128,7 +1143,7 @@ function overviewPanel() {
           class: 'flow-issue-item',
           onclick: () => select({ kind: 'edge', index: item.index }),
         },
-        h('span', {}, '⚠'),
+        h('span', {}, icon('warning-circle', 16)),
         h('div', {},
           h('strong', {}, item.label || `${item.from} → ${item.to}`),
           h('small', {}, item.issue))))));
@@ -1142,7 +1157,7 @@ function overviewPanel() {
     keyRow('flow-key-back', 'Loops back'),
     ...(stats.issues.length ? [keyRow('flow-key-issue', 'Known issue')] : []),
     keyRow('flow-key-payload', 'Payload — click one to inspect it'),
-    keyRow('flow-key-flag', '⚑ Inferred, awaiting confirmation')));
+    keyRow('flow-key-flag', 'Inferred, awaiting confirmation')));
   body.push(h('p', { class: 'flow-quiet' },
     'Payload pacing follows the monthly volume recorded in the file. Steps without a volume tick at a neutral rate, and branches split evenly — neither is data.'));
 
@@ -1164,7 +1179,9 @@ function keyRow(cls, label) {
   const svg = s('svg', { viewBox: '0 0 34 12', class: `flow-key-swatch ${cls}` });
   if (cls === 'flow-key-payload') {
     svg.append(s('circle', { cx: 17, cy: 6, r: 4 }));
-  } else if (cls !== 'flow-key-flag') {
+  } else if (cls === 'flow-key-flag') {
+    const flag = icon('flag', 12); flag.setAttribute('x', 11); svg.append(flag);
+  } else {
     svg.append(s('line', { x1: 2, y1: 6, x2: 32, y2: 6 }));
   }
   return h('div', { class: 'flow-key-row' }, svg, h('span', {}, label));
@@ -1205,7 +1222,7 @@ function legendRow(entry) {
   h('span', { class: `flow-code-chip t-${node.type}` }, code),
   h('span', { class: 'flow-legend-label' }, node.label),
   runs != null ? h('span', { class: 'flow-legend-runs' }, `×${runs}`) : null,
-  flagged ? h('span', { class: 'flow-legend-flag', title: flagged }, '⚑') : null);
+  flagged ? h('span', { class: 'flow-legend-flag', title: flagged, role: 'img', 'aria-label': 'Inferred' }, icon('flag', 14)) : null);
 }
 
 function buildLegend() {
@@ -1318,7 +1335,7 @@ function buildTopbar(scope) {
     class: 'flow-btn',
     title: 'Toggle light / dark appearance',
     onclick: () => document.getElementById('btn-theme')?.click(),
-  }, '◐ Theme');
+  }, icon('moon', 16), ' Theme');
   sim.els.pauseBtn = pauseBtn;
   sim.els.stepBtn = stepBtn;
 
@@ -1346,7 +1363,7 @@ function buildTopbar(scope) {
     h('div', { class: 'flow-title' },
       h('span', { class: 'flow-eyebrow' }, 'Runtime topology'),
       h('h2', {}, scopeNode ? scopeNode.label : (state.model.name || state.mapId)),
-      scopeNode ? h('button', { class: 'flow-btn flow-up', onclick: () => ctrl.riseUp(), title: 'Back out one level' }, '⬑ Up') : null),
+      scopeNode ? h('button', { class: 'flow-btn flow-up', onclick: () => ctrl.riseUp(), title: 'Back out one level' }, icon('arrow-bend-up-left', 16), ' Up') : null),
     h('div', { class: 'flow-stats' }, ...statEls),
     h('div', { class: 'flow-controls' }, flowSelect, pauseBtn, stepBtn, resetBtn, themeBtn));
 }

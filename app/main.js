@@ -11,6 +11,8 @@ import * as productWorkspace from './product-workspace.js';
 import { togglePresent, exitPresent } from './present.js';
 import { flowShortcut } from './flow.js';
 import { refresh as refreshAgents, initAgents } from './agents.js';
+import { icon } from './icons.js';
+import { initGitHub } from './github.js';
 
 // ── theme ────────────────────────────────────────────────────────────
 function initTheme() {
@@ -110,8 +112,7 @@ function wireCanvasEvents() {
       .then((ok) => { if (ok) ui.toast('Released — back to auto-layout'); });
   });
 
-  // a finished edge drag pins the route through the drop point; a dragged
-  // straight edge becomes curved (the via only makes sense on a bend)
+  // Save exactly the style and rounded waypoint used by the drag preview.
   bus.on('edge-routed', (index, via, style) => {
     if (state.presenting || state.standalone) return;
     ctrl.commit(() => {
@@ -238,7 +239,7 @@ function wireCanvasEvents() {
 // ── keyboard ─────────────────────────────────────────────────────────
 function isTyping() {
   const el = document.activeElement;
-  return el && (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes(el.tagName) || el.isContentEditable);
+  return el && (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes(el.tagName.toUpperCase()) || el.isContentEditable);
 }
 function dialogOpen() {
   return !!document.querySelector('.dialog-backdrop') || !document.getElementById('search-overlay').hidden;
@@ -321,6 +322,7 @@ function wireKeyboard() {
       return;
     }
     if (isTyping() || dialogOpen() || state.presenting) return;
+    if (ev.target.closest?.('.catalog-detail')) return;
 
     if (meta && !ev.shiftKey && ev.key.toLowerCase() === 'z') { ev.preventDefault(); ctrl.undo(); return; }
     if (meta && ev.shiftKey && ev.key.toLowerCase() === 'z') { ev.preventDefault(); ctrl.redo(); return; }
@@ -339,6 +341,7 @@ function wireKeyboard() {
         if (state.connectFrom) { state.connectFrom = null; state.pendingEdgeLabel = null; canvas.paintSelection(); ui.toast('Connect cancelled'); }
         else if (state.activeTool !== 'select') workbench.cancelTool();
         else if (!document.getElementById('templates-panel').hidden) ui.toggleTemplates(false);
+        else if (ui.closeCatalog()) { /* preserve the map's scope and selection */ }
         else if (state.scopeId != null) ctrl.riseUp(); // one level per press, always
         else if (state.selectedId || state.selectedEdge != null) { ctrl.clearSelection(); ui.hideDetail(); }
         break;
@@ -423,8 +426,12 @@ function wireToolbar() {
 // ── boot ─────────────────────────────────────────────────────────────
 async function boot() {
   initTheme();
+  for (const placeholder of document.querySelectorAll('[data-icon]')) {
+    placeholder.replaceWith(icon(placeholder.dataset.icon, Number(placeholder.getAttribute('width')) || 18));
+  }
   canvas.initCanvas(document.getElementById('canvas'), document.querySelector('#minimap svg'));
   ui.initUI();
+  initGitHub();
   workbench.initWorkbench();
   initWorkbenchSync();
   productWorkspace.initProductWorkspace();

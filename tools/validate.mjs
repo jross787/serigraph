@@ -8,6 +8,8 @@ import { parseMap } from '../shared/model.js';
 import { parseProjectIndex, PROJECT_INDEX_FILE } from '../shared/projects.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const LIBRARY_ROOT = process.env.SERIGRAPH_LIBRARY_DIR
+  ? path.resolve(process.env.SERIGRAPH_LIBRARY_DIR) : ROOT;
 
 // a project index file is not a map
 const INDEX_RE = /^projects\.ya?ml$/;
@@ -15,10 +17,10 @@ const INDEX_RE = /^projects\.ya?ml$/;
 // display name of the project a file belongs to, or null for root maps and
 // templates — used to label PASS lines for project maps
 function projectFor(file) {
-  const rel = path.relative(ROOT, path.resolve(file)).split(path.sep);
+  const rel = path.relative(LIBRARY_ROOT, path.resolve(file)).split(path.sep);
   if (rel.length !== 3 || rel[0] !== 'projects') return null;
   try {
-    const { name } = parseProjectIndex(readFileSync(path.join(ROOT, 'projects', rel[1], PROJECT_INDEX_FILE), 'utf8'));
+    const { name } = parseProjectIndex(readFileSync(path.join(LIBRARY_ROOT, 'projects', rel[1], PROJECT_INDEX_FILE), 'utf8'));
     return name ?? rel[1];
   } catch { return rel[1]; }
 }
@@ -34,17 +36,18 @@ function yamlFiles(dir) {
 let jobs = process.argv.slice(2).map((f) => ({ file: f, label: f }));
 if (!jobs.length) {
   for (const dir of ['maps', 'templates']) {
-    for (const f of yamlFiles(path.join(ROOT, dir))) jobs.push({ file: path.join(ROOT, dir, f), label: path.join(dir, f) });
+    const base = dir === 'templates' ? ROOT : LIBRARY_ROOT;
+    for (const f of yamlFiles(path.join(base, dir))) jobs.push({ file: path.join(base, dir, f), label: path.join(dir, f) });
   }
   let slugs = [];
   try {
-    slugs = readdirSync(path.join(ROOT, 'projects'), { withFileTypes: true })
+    slugs = readdirSync(path.join(LIBRARY_ROOT, 'projects'), { withFileTypes: true })
       .filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch { /* no projects/ yet */ }
   for (const slug of slugs) {
-    for (const f of yamlFiles(path.join(ROOT, 'projects', slug))) {
+    for (const f of yamlFiles(path.join(LIBRARY_ROOT, 'projects', slug))) {
       if (INDEX_RE.test(f)) continue;
-      jobs.push({ file: path.join(ROOT, 'projects', slug, f), label: path.join('projects', slug, f) });
+      jobs.push({ file: path.join(LIBRARY_ROOT, 'projects', slug, f), label: path.join('projects', slug, f) });
     }
   }
 }

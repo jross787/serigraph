@@ -3,7 +3,9 @@ import { state, bus } from './state.js';
 import { api } from './api.js';
 import * as ctrl from './controller.js';
 
-const STORAGE_KEY = 'serigraph-workbench-links-v1';
+// Do not migrate v1 automatically: its map IDs did not identify a workspace.
+// A user must explicitly reconnect those links once after this upgrade.
+const storageKey = () => state.libraryId ? `serigraph-workbench-links-v2:${state.libraryId}` : null;
 let watchGeneration = 0;
 let applyingRemote = false;
 let pushTimer = 0;
@@ -20,28 +22,29 @@ function sourceHash(source) {
 }
 
 function readStoredLinks() {
+  if (!storageKey()) return {};
   try {
-    const links = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    const links = JSON.parse(localStorage.getItem(storageKey()) || '{}');
     return links && typeof links === 'object' && !Array.isArray(links) ? links : {};
   } catch { return {}; }
 }
 
 function storeConnection(connection) {
-  if (!state.mapId || !connection) return;
+  if (!state.mapId || !connection || !storageKey()) return;
   const links = readStoredLinks();
   links[state.mapId] = {
     url: connection.url,
     version: connection.version,
     lastHash: connection.lastHash,
   };
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(links)); } catch { /* browser storage is optional */ }
+  try { localStorage.setItem(storageKey(), JSON.stringify(links)); } catch { /* browser storage is optional */ }
 }
 
 function forgetConnection(mapId = state.mapId) {
-  if (!mapId) return;
+  if (!mapId || !storageKey()) return;
   const links = readStoredLinks();
   delete links[mapId];
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(links)); } catch { /* browser storage is optional */ }
+  try { localStorage.setItem(storageKey(), JSON.stringify(links)); } catch { /* browser storage is optional */ }
 }
 
 function validRemoteSource(source) {

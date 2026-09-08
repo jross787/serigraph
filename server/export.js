@@ -15,6 +15,8 @@ const MODULE_FILES = [
   'app/api.js',
   'app/routes.js',
   'app/layout.js',
+  'app/icons.js',
+  'app/github.js',
   'app/canvas.js',
   'app/edit.js',
   'app/controller.js',
@@ -23,6 +25,7 @@ const MODULE_FILES = [
   'app/flow.js',
   'app/product.js',
   'app/ui.js',
+  'app/catalog.js',
   'app/present.js',
   'app/workbench.js',
   'app/workbench-sync.js',
@@ -61,10 +64,11 @@ export function projectStandalonePayload(projectMeta) {
 export async function buildExport(root, id, mapSource, projectMeta = null) {
   const read = (p) => fs.readFile(path.join(root, p), 'utf8');
 
-  const [html, css, dagre] = await Promise.all([
+  const [html, css, dagre, mark] = await Promise.all([
     read('app/index.html'),
     read('app/styles.css'),
     read('vendor/dagre.min.js'),
+    read('app/serigraph-mark.svg'),
   ]);
 
   const importMap = { imports: {} };
@@ -85,6 +89,7 @@ export async function buildExport(root, id, mapSource, projectMeta = null) {
   // replacement callbacks throughout: user content (map name, YAML source)
   // must never be interpreted as $-replacement patterns
   let out = html;
+  out = out.replaceAll('/app/serigraph-mark.svg', 'data:image/svg+xml;base64,' + Buffer.from(mark).toString('base64'));
   out = out.replace(/<title>.*?<\/title>/, () => `<title>${title.replace(/</g, '&lt;')}</title>`);
   out = out.replace(
     /<link rel="stylesheet" href="\/app\/styles.css">/,
