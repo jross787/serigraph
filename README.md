@@ -2,6 +2,8 @@
 
 **The operating model as a file.** Map how a business actually runs — every function, stage, handoff, cost assumption, and automation opportunity — in one plain YAML file, then use that same graph as an automation plan, product brief, and delivery roadmap. Serigraph renders nested, typed nodes on an elegantly zoomable canvas. Humans can edit the canvas or the text without losing comments; software agents read and write the same source; and the economics of automating a step live beside the step itself. A discovery-call transcript can become the first reviewable draft, with every inference kept visible until a human confirms it.
 
+Current direction: **a living systems map to explore, observe, reconcile, and audit data across APIs and databases before operational agents.** Quick Glance views and detailed reports will share the same evidence. See the [roadmap](docs/ROADMAP.md#current-direction--september-5-2026) for the staged plan and the distinction between existing features and planned capabilities.
+
 ![Serigraph process map](docs/screenshot-1440.png)
 
 ## Run it
