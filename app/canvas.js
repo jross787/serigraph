@@ -7,7 +7,7 @@ import { ancestryOf } from '../shared/model.js';
 import { nodeCost, compactMoney } from '../shared/cost.js';
 import { icon, TYPE_ICONS } from './icons.js';
 import { nodeObservation } from './github.js';
-import { layoutScope, miniTransform, edgePath, smoothEdgePath, routeDirect, routeEdge, routeDragged, routeAutomaticEdges, EDGE_LABEL_SIZE, edgeLabelBubble, invalidateLayouts, wrapText, fitText, CARD_FONT } from './layout.js';
+import { layoutScope, miniTransform, edgePath, smoothEdgePath, routeDirect, routeEdge, routeDragged, routeAutomaticEdges, placeEdgeLabels, labelClearancePath, EDGE_LABEL_SIZE, edgeLabelBubble, invalidateLayouts, wrapText, fitText, CARD_FONT } from './layout.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const el = (tag, attrs = {}, cls = '') => {
@@ -907,8 +907,10 @@ function buildEdge(e) {
   g.dataset.index = e.index;
   const smooth = e.smooth ? smoothEdgePath(e.points) : null;
   const d = smooth ? smooth.d : edgePath(e.points);
-  g.appendChild(el('path', { d }, 'hit'));
-  g.appendChild(el('path', { d }, 'line'));
+  const strokes = el('g', {}, 'edge-paths');
+  strokes.appendChild(el('path', { d }, 'hit'));
+  strokes.appendChild(el('path', { d }, 'line'));
+  g.appendChild(strokes);
 
   const pts = e.points;
   if (pts.length >= 2) {
@@ -916,7 +918,7 @@ function buildEdge(e) {
     const ang = smooth
       ? smooth.endAngle
       : (Math.atan2(b.y - pts[pts.length - 2].y, b.x - pts[pts.length - 2].x) * 180) / Math.PI;
-    g.appendChild(el('polygon', {
+    strokes.appendChild(el('polygon', {
       points: '-8,-3.5 0,0 -8,3.5',
       transform: `translate(${b.x},${b.y}) rotate(${ang})`,
     }, 'arrow'));
@@ -979,6 +981,9 @@ function bundleArrow(b, ang) {
 
 function buildBundle(members, layout) {
   const g = el('g', {}, 'bundle');
+  for (const event of ['pointerenter', 'pointerleave', 'focusin', 'focusout']) {
+    g.addEventListener(event, () => refreshLabelClearance(g.closest('.edges')));
+  }
   const byId = new Map(layout.nodes.map((n) => [n.id, n]));
   const first = members[0].edge;
   const a = byId.get(first.from), b = byId.get(first.to);
@@ -989,12 +994,14 @@ function buildBundle(members, layout) {
   const route = routeDirect(a, b);
   const d = edgePath(route.points);
   const sheath = el('g', {}, 'sheath');
-  sheath.appendChild(el('path', { d }, 'bundle-hit'));
-  sheath.appendChild(el('path', { d, 'stroke-width': 2.2 + members.length * 1.3 }, 'bundle-line'));
+  const strokes = el('g', {}, 'edge-paths');
+  sheath.appendChild(strokes);
+  strokes.appendChild(el('path', { d }, 'bundle-hit'));
+  strokes.appendChild(el('path', { d, 'stroke-width': 2.2 + members.length * 1.3 }, 'bundle-line'));
   const p1 = route.points[0], p2 = route.points[route.points.length - 1];
   const ang = (Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180) / Math.PI;
-  if (members.some((e) => e.edge.from === first.from)) sheath.appendChild(bundleArrow(p2, ang));
-  if (members.some((e) => e.edge.to === first.from)) sheath.appendChild(bundleArrow(p1, ang + 180));
+  if (members.some((e) => e.edge.from === first.from)) strokes.appendChild(bundleArrow(p2, ang));
+  if (members.some((e) => e.edge.to === first.from)) strokes.appendChild(bundleArrow(p1, ang + 180));
   const chip = el('g', { transform: `translate(${route.labelPos.x},${route.labelPos.y})` }, 'bundle-chip');
   chip.appendChild(el('rect', { x: -13, y: -10, width: 26, height: 20, rx: 10 }, 'bundle-chip-bg'));
   const t = el('text', { y: 3.8, 'text-anchor': 'middle' }, 'bundle-chip-txt');
@@ -1010,12 +1017,14 @@ function buildBundle(members, layout) {
   // fan to the OPPOSITE side, not collapse onto the same offset
   const corridorLen = Math.hypot(p2.x - p1.x, p2.y - p1.y) || 1;
   const normal = { x: -(p2.y - p1.y) / corridorLen, y: (p2.x - p1.x) / corridorLen };
-  members.forEach((e, i) => {
+  const fanned = members.map((e, i) => {
     // each member runs along the shared corridor, in its own direction
     const pts = e.edge.from === first.from ? route.points : [...route.points].reverse();
     const fan = fanMember(pts, route.labelPos, i, members.length, normal);
-    mem.appendChild(buildEdge({ ...e, points: fan.points, labelPos: fan.labelPos }));
+    return { ...e, points: fan.points, labelPos: fan.labelPos, smooth: false };
   });
+  placeEdgeLabels(layout.nodes, [...layout.edges.filter(e => !members.includes(e)), ...fanned], fanned);
+  for (const e of fanned) mem.appendChild(buildEdge(e));
   g.appendChild(mem);
   return g;
 }
@@ -1065,6 +1074,38 @@ function renderOwnerLanes(layout) {
   return group;
 }
 
+// Keep annotations in their owning edge for hover, focus, selection and drag.
+// Clip every stroke group in scope coordinates, including its invisible hit
+// path and transformed arrows. Later edges cannot paint through a label or
+// steal its clicks. Hidden bundle members do not leave invisible cutouts.
+let labelClipId = 0;
+function refreshLabelClearance(root, bounds = null) {
+  if (!root) return;
+  const groups = root.matches('.edges') ? [root] : root.querySelectorAll('.edges');
+  for (const group of groups) {
+    let clip = group.querySelector(':scope > defs > clipPath');
+    if (!clip) {
+      const defs = el('defs');
+      clip = el('clipPath', { id: `edge-label-clearance-${++labelClipId}`, clipPathUnits: 'userSpaceOnUse' });
+      clip.appendChild(el('path'));
+      defs.appendChild(clip);
+      group.prepend(defs);
+    }
+    const boxes = [];
+    for (const label of group.querySelectorAll('.edge-label-bg')) {
+      const bundle = label.closest('.bundle');
+      if (bundle && !bundle.matches(':hover, :focus-within, .open') && !bundle.querySelector('.edge.selected')) continue;
+      boxes.push({
+        x: Number(label.getAttribute('x')) - 1, y: Number(label.getAttribute('y')) - 1,
+        w: Number(label.getAttribute('width')) + 2, h: Number(label.getAttribute('height')) + 2,
+      });
+    }
+    const box = bounds ?? group.getBBox();
+    clip.firstElementChild.setAttribute('d', labelClearancePath({ x: box.x, y: box.y, w: box.w ?? box.width, h: box.h ?? box.height }, boxes));
+    for (const strokes of group.querySelectorAll('.edge-paths')) strokes.setAttribute('clip-path', `url(#${clip.id})`);
+  }
+}
+
 function renderScopeContent(model, ownerId) {
   const layout = layoutScope(model, ownerId);
   const layer = el('g', {}, 'scope-content');
@@ -1078,6 +1119,7 @@ function renderScopeContent(model, ownerId) {
   layer.appendChild(lanesG);
   layer.appendChild(edgesG);
   layer.appendChild(nodesG);
+  refreshLabelClearance(edgesG, layout);
   return { layer, layout };
 }
 
@@ -1540,6 +1582,7 @@ export function paintSelection(followFocus = true) {
     g.classList.toggle('focus-dimmed', probeNodes.size === 0 && (selectedEdge
       ? e?.index !== selectedEdge.index : !!selected && e?.edge.from !== selected && e?.edge.to !== selected));
   }
+  refreshLabelClearance(currentLayer);
   svg.classList.toggle('connecting', !!state.connectFrom);
   // focus follows the selection for keyboard users, but only when focus is
   // already inside the canvas — never steal it from panel inputs or dialogs
@@ -1602,6 +1645,7 @@ function updateEdgesFor(ln) {
   for (const e of routeAutomaticEdges(currentLayout.nodes, currentLayout.edges)) {
     changed.add(e);
   }
+  for (const e of placeEdgeLabels(currentLayout.nodes, currentLayout.edges)) changed.add(e);
   const bundles = new Set();
   for (const e of changed) {
     const old = currentLayer.querySelector(`.edge[data-index="${e.index}"]`);
@@ -1622,6 +1666,7 @@ function updateEdgesFor(ln) {
     }
     old.replaceWith(fresh);
   }
+  refreshLabelClearance(currentLayer);
 }
 
 function wirePointer() {
@@ -1659,6 +1704,9 @@ function wirePointer() {
     if (!a || !b) return;
     const route = routeDragged(a, b, drag.le.edge, w);
     if (!route) return;
+    const preview = { ...drag.le, ...route };
+    placeEdgeLabels(currentLayout.nodes, currentLayout.edges.map(e => e === drag.le ? preview : e), [preview]);
+    route.labelPos = preview.labelPos;
     const smooth = route.smooth ? smoothEdgePath(route.points) : null;
     const d = smooth ? smooth.d : edgePath(route.points);
     drag.el.querySelector('path.hit')?.setAttribute('d', d);
@@ -1680,6 +1728,7 @@ function wirePointer() {
       label.setAttribute('x', route.labelPos.x);
       label.setAttribute('y', route.labelPos.y);
     }
+    refreshLabelClearance(currentLayer);
     drag.via = route.via;
     drag.style = route.style;
   };

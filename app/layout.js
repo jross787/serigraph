@@ -145,6 +145,88 @@ function layoutComponent(comp, sized) {
   return { nodes, edges, w: maxX, h: maxY };
 }
 
+// Compact rows reuse Dagre's graph ordering, then wrap each component into
+// alternating rows. This is presentation geometry only: scope membership,
+// edge direction, card dimensions and authored pins/routes remain unchanged.
+function compactComponent(block) {
+  const ordered = [...block.nodes].sort((a, b) => a.x - b.x || a.y - b.y);
+  const columns = Math.max(1, Math.ceil(Math.sqrt(ordered.length / 2)));
+  const width = Math.max(...ordered.map(n => n.w));
+  const height = Math.max(...ordered.map(n => n.h));
+  const gapX = block.edges.some(e => e.edge.label) ? EDGE_LABEL_SIZE.w + 48 : 72;
+  const cells = new Map(ordered.map((n, i) => {
+    const row = Math.floor(i / columns), offset = i % columns;
+    return [n.id, { row, col: row % 2 ? columns - 1 - offset : offset }];
+  }));
+  // Reserve a separate gutter track for every non-adjacent connection at
+  // both ends. Branches, return paths and loops stay outside the card rows.
+  const tracks = new Map();
+  const nextTrack = row => {
+    const track = tracks.get(row) ?? 0;
+    tracks.set(row, track + 1);
+    return track;
+  };
+  const routes = new Map();
+  for (const e of block.edges) {
+    const a = cells.get(e.edge.from), b = cells.get(e.edge.to);
+    const adjacent = a.row === b.row && Math.abs(a.col - b.col) === 1
+      || a.col === b.col && Math.abs(a.row - b.row) === 1;
+    if (!adjacent) routes.set(e, { start: nextTrack(a.row), end: a.row === b.row ? null : nextTrack(b.row) });
+  }
+  const rowTops = [];
+  let y = 0;
+  for (let row = 0; row < Math.ceil(ordered.length / columns); row++) {
+    y += 56 + (tracks.get(row) ?? 0) * 36;
+    rowTops.push(y);
+    y += height;
+  }
+  for (const n of ordered) {
+    const cell = cells.get(n.id);
+    n.x = cell.col * (width + gapX) + (width - n.w) / 2;
+    n.y = rowTops[cell.row] + (height - n.h) / 2;
+  }
+  const byId = new Map(ordered.map(n => [n.id, n]));
+  const right = columns * width + (columns - 1) * gapX;
+  let rail = 0;
+  for (const e of block.edges) {
+    const a = byId.get(e.edge.from), b = byId.get(e.edge.to);
+    const route = routes.get(e);
+    if (!route) {
+      Object.assign(e, routeDirect(a, b));
+      continue;
+    }
+    const ac = centerOf(a), bc = centerOf(b);
+    const ay = rowTops[cells.get(a.id).row] - 28 - route.start * 36;
+    const by = route.end == null ? ay : rowTops[cells.get(b.id).row] - 28 - route.end * 36;
+    const points = [{ x: ac.x, y: a.y }, { x: ac.x, y: ay }];
+    if (a === b || cells.get(a.id).row !== cells.get(b.id).row) {
+      // Cross-row returns use an outside rail, clear of every card. A loop
+      // returns through the side of its own card so its arrow stays visible.
+      const rx = a === b ? a.x + a.w + 24
+        : (ac.x + bc.x < right) ? -36 - rail * 20 : right + 36 + rail * 20;
+      if (a !== b) rail++;
+      points.push({ x: rx, y: ay }, { x: rx, y: a === b ? ac.y : by });
+      if (a === b) points.push({ x: a.x + a.w, y: ac.y });
+      else points.push({ x: bc.x, y: by }, { x: bc.x, y: b.y });
+    } else points.push({ x: bc.x, y: ay }, { x: bc.x, y: b.y });
+    Object.assign(e, { points, labelPos: { x: ac.x, y: ay } });
+  }
+  // Include the outside tracks when packing disconnected components.
+  let x0 = 0, y0 = 0, x1 = right, y1 = y;
+  for (const e of block.edges) {
+    for (const p of e.points) {
+      x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y);
+      x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y);
+    }
+  }
+  for (const n of block.nodes) { n.x -= x0; n.y -= y0; }
+  for (const e of block.edges) {
+    e.points = e.points.map(p => ({ x: p.x - x0, y: p.y - y0 }));
+    e.labelPos = { x: e.labelPos.x - x0, y: e.labelPos.y - y0 };
+  }
+  return { ...block, w: x1 - x0, h: y1 - y0 };
+}
+
 function shelfPack(blocks, gap = 72) {
   const totalArea = blocks.reduce((s, b) => s + (b.w + gap) * (b.h + gap), 0);
   const targetW = Math.max(820, Math.sqrt(totalArea) * 1.75);
@@ -301,6 +383,103 @@ export function routeAutomaticEdges(nodes, edges) {
   return routed;
 }
 
+// Labels belong on their own route, clear of cards, other labels, and other
+// routes (including connections that share an endpoint). Move only the label;
+// authored bends, pins, node geometry and edge direction remain untouched.
+function curvePoint(points, t) {
+  const [a, via, b] = points;
+  const c = { x: 2 * via.x - (a.x + b.x) / 2, y: 2 * via.y - (a.y + b.y) / 2 };
+  return {
+    x: (1 - t) ** 2 * a.x + 2 * (1 - t) * t * c.x + t ** 2 * b.x,
+    y: (1 - t) ** 2 * a.y + 2 * (1 - t) * t * c.y + t ** 2 * b.y,
+  };
+}
+
+function labelRoute(e) {
+  return e.smooth && e.points.length === 3
+    ? Array.from({ length: 65 }, (_, i) => curvePoint(e.points, i / 64)) : e.points;
+}
+
+function segmentHitsBox(a, b, box) {
+  let low = 0, high = 1;
+  for (const [axis, size] of [['x', 'w'], ['y', 'h']]) {
+    const d = b[axis] - a[axis];
+    if (!d) {
+      if (a[axis] < box[axis] || a[axis] > box[axis] + box[size]) return false;
+      continue;
+    }
+    const t1 = (box[axis] - a[axis]) / d, t2 = (box[axis] + box[size] - a[axis]) / d;
+    low = Math.max(low, Math.min(t1, t2)); high = Math.min(high, Math.max(t1, t2));
+    if (low > high) return false;
+  }
+  return true;
+}
+
+export function placeEdgeLabels(nodes, edges, targets = edges) {
+  const changed = new Set();
+  const paths = new Map(edges.map(e => [e, labelRoute(e)]));
+  const sizes = new Map(edges.filter(e => e.edge.label).map(e => [e, edgeLabelBubble(e.edge.label)]));
+  const boxAt = (p, size, pad = 0) => ({ x: p.x - size.w / 2 - pad, y: p.y - size.h / 2 - pad, w: size.w + pad * 2, h: size.h + pad * 2 });
+  const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  for (const e of targets) {
+    const size = sizes.get(e);
+    if (!size) continue;
+    const clear = p => {
+      const box = boxAt(p, size, 8);
+      if (nodes.some(n => overlaps(box, n))) return false;
+      for (const other of edges) {
+        if (other === e) continue;
+        if (sizes.has(other) && overlaps(box, boxAt(other.labelPos, sizes.get(other)))) return false;
+        const points = paths.get(other);
+        if (points.slice(1).some((q, i) => segmentHitsBox(points[i], q, box))) return false;
+      }
+      return true;
+    };
+    if (clear(e.labelPos)) continue;
+    const candidates = [];
+    if (e.smooth && e.points.length === 3) {
+      // Use points on the rendered quadratic, never its control polyline.
+      for (let i = 1; i < 64; i++) candidates.push(curvePoint(e.points, i / 64));
+    } else {
+      for (let i = 1; i < e.points.length; i++) {
+        const a = e.points[i - 1], b = e.points[i];
+        for (let step = 1; step < 16; step++) {
+          const t = step / 16;
+          const p = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+          // Rounded corners are not straight segments of the rendered path.
+          if (Math.hypot(p.x - a.x, p.y - a.y) >= 12 && Math.hypot(p.x - b.x, p.y - b.y) >= 12) candidates.push(p);
+        }
+      }
+    }
+    candidates.sort((a, b) => Math.hypot(a.x - e.labelPos.x, a.y - e.labelPos.y) - Math.hypot(b.x - e.labelPos.x, b.y - e.labelPos.y));
+    const position = candidates.find(clear);
+    if (position) { e.labelPos = position; changed.add(e); }
+  }
+  return changed;
+}
+
+// Clip strokes and their hit targets around the UNION of label rectangles.
+// Horizontal strips avoid the overlapping-hole problem of even-odd masks.
+export function labelClearancePath(bounds, boxes) {
+  const left = bounds.x - 24, right = bounds.x + bounds.w + 24;
+  const top = bounds.y - 24, bottom = bounds.y + bounds.h + 24;
+  const rows = [...new Set([top, bottom, ...boxes.flatMap(b => [Math.max(top, b.y), Math.min(bottom, b.y + b.h)])])]
+    .filter(y => y >= top && y <= bottom).sort((a, b) => a - b);
+  const rect = (x, y, w, h) => `M${x},${y}h${w}v${h}h${-w}Z`;
+  let d = '';
+  for (let i = 1; i < rows.length; i++) {
+    const y = rows[i - 1], h = rows[i] - y;
+    const blocked = boxes.filter(b => b.y < y + h && b.y + b.h > y).sort((a, b) => a.x - b.x);
+    let x = left;
+    for (const b of blocked) {
+      if (b.x > x) d += rect(x, y, Math.min(right, b.x) - x, h);
+      x = Math.max(x, Math.min(right, b.x + b.w));
+    }
+    if (x < right) d += rect(x, y, right - x, h);
+  }
+  return d;
+}
+
 // Route through a user-pinned via point: boundary → via → boundary.
 // `smooth` tells the canvas to draw one continuous cable curve through the
 // via instead of the usual rounded orthogonal path. The label sits at t=0.3
@@ -453,7 +632,10 @@ export function layoutScope(model, ownerId) {
   }
 
   const comps = components(scope.nodes, scope.edges);
-  const blocks = comps.map((c) => layoutComponent(c, sized));
+  const blocks = comps.map((c) => {
+    const block = layoutComponent(c, sized);
+    return scope.layout === 'compact' ? compactComponent(block) : block;
+  });
   const packed = shelfPack(blocks);
 
   const nodes = [], edges = [];
@@ -504,6 +686,7 @@ export function layoutScope(model, ownerId) {
     }
   }
   routeAutomaticEdges(nodes, edges);
+  placeEdgeLabels(nodes, edges);
   {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const n of nodes) {

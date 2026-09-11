@@ -276,6 +276,31 @@ edges:
     issue: Re-keyed from the quote PDF; typos confirmed in 3% of cases.
 ```
 
+## Automatic Process layout (optional)
+
+The **Process** menu offers **Arrange this level → Compact rows** for long
+processes. It wraps each connected component into alternating rows, following
+the existing graph order. Follow the arrows for direction, including branches
+and return paths. **Left to right** restores the default arrangement.
+
+The choice is saved as `layout: compact` at the top level or inside one
+`children` map. It applies only to that level; nested levels keep their own
+layout. Omitting `layout`, or setting `layout: linear`, uses the default.
+Other values are validation errors. The field is available only in Process maps.
+
+```yaml
+name: Review process
+layout: compact
+nodes: []
+edges: []
+```
+
+Changing layout preserves selection, camera, card sizes, pinned centers and
+explicit connection routes. Use **Fit** to frame the arranged level. Pins and
+manual routes can extend beyond the compact rows; release them separately if
+you want those items to follow automatic placement and routing. Flow view and
+owner lanes keep their existing behavior.
+
 ## Pinned positions (optional)
 
 By default the app lays every scope out automatically, and dragging a node in the app pins it by writing this field. You can also author it by hand:
@@ -324,6 +349,7 @@ The rules:
 - In the app, pick the shape under **Route** in the edge panel. Choose **Auto**, or click the badge on the line, to return to automatic routing.
 - Under **Attach to card**, choose **From side** and **To side**. Each **Auto** clears only that attachment; Route **Auto** clears the shape and bend but preserves selected sides.
 - Connection labels shrink to padded, rounded bubbles for short text. Long labels retain the single-line width cap and ellipsis; the full wording stays in the tooltip and inspector. Bubble sizing does not change stored labels or rearrange the map.
+- Labels move along their own connection to clear other cards, labels, and paths when space is available. Pins and authored routes stay unchanged. Connection strokes and click targets leave label faces clear, including when no better label position is available.
 - Write `via` as `via: { x: 700, y: 40 }`. Any other shape is a validation error, and so is an unknown `route`.
 
 ## The cost model (optional) — human vs. agent economics

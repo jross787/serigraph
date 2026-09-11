@@ -181,6 +181,27 @@ function openModeMenu(anchor) {
       },
     }, h('span', { class: 'mi-name' }, label), h('span', { class: 'mi-sub' }, description)));
   }
+  if (state.model.mode === 'process') {
+    const ownerId = state.scopeId;
+    const scope = ownerId == null ? state.model.root : state.model.byId.get(ownerId)?.children;
+    menu.append(h('div', { class: 'tool-flyout-title' }, 'Arrange this level'));
+    for (const [layout, label, description] of [
+      ['linear', 'Left to right', 'Default automatic layout.'],
+      ['compact', 'Compact rows', 'Wrap long processes into rows. Follow the arrows.'],
+    ]) {
+      menu.append(h('button', {
+        class: `menu-item${scope?.layout === layout ? ' current' : ''}`,
+        role: 'menuitemradio',
+        'aria-checked': String(scope?.layout === layout),
+        onClick: () => {
+          closeMenus();
+          if (scope?.layout === layout) return;
+          ctrl.commit(() => edit.setScopeLayout(ownerId, layout), { historyLabel: `arrange this level: ${label.toLowerCase()}` })
+            .then((ok) => { if (ok) toast(`${label} layout saved. Use Fit to see this level.`); });
+        },
+      }, h('span', { class: 'mi-name' }, label), h('span', { class: 'mi-sub' }, description)));
+    }
+  }
   document.body.append(menu);
   setTimeout(() => {
     const close = (ev) => { if (!menu.contains(ev.target)) closeMenus(); };

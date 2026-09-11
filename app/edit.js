@@ -1,7 +1,7 @@
 // Comment-preserving edits against the YAML document. Every function
 // mutates state.doc in place; callers serialize with doc.toString().
 import { isMap, isSeq } from '../vendor/yaml.js';
-import { ancestryOf, scopeOf, EDGE_SIDES } from '../shared/model.js';
+import { ancestryOf, scopeOf, EDGE_SIDES, SCOPE_LAYOUTS } from '../shared/model.js';
 import { stripFlagComments } from '../shared/provenance.js';
 import { state } from './state.js';
 import { getLayout } from './canvas.js';
@@ -196,9 +196,23 @@ export function setMapMode(mode) {
     if (state.doc.getIn(['mode'], true)) state.doc.deleteIn(['mode']);
     if (state.doc.getIn(['elements'], true)) state.doc.deleteIn(['elements']);
   } else {
+    state.doc.deleteIn(['layout']);
     state.doc.setIn(['mode'], mode);
     if (!state.doc.getIn(['elements'], true)) state.doc.setIn(['elements'], state.doc.createNode([]));
   }
+  tidyTopOrder(state.doc);
+}
+
+// Layout belongs to the level being arranged, not its descendants or pins.
+export function setScopeLayout(ownerId, layout) {
+  if (state.model?.mode !== 'process' || !SCOPE_LAYOUTS.includes(layout)) {
+    throw new Error('Choose a Process layout: linear or compact');
+  }
+  const scope = ensureScope(state.doc, ownerId, { create: false });
+  if (!scope) throw new Error('scope not found');
+  const path = [...scope.nodesPath.slice(0, -1), 'layout'];
+  if (layout === 'linear') state.doc.deleteIn(path);
+  else state.doc.setIn(path, layout);
   tidyTopOrder(state.doc);
 }
 
@@ -660,7 +674,7 @@ export function confirmEdgeFlag(ownerId, index) {
 }
 
 // keep the top level predictable across process and product documents
-const TOP_ORDER = ['name', 'description', 'mode', 'document', 'costModel', 'elements', 'nodes', 'edges'];
+const TOP_ORDER = ['name', 'description', 'mode', 'layout', 'document', 'costModel', 'elements', 'nodes', 'edges'];
 function tidyTopOrder(doc) {
   const map = doc.contents;
   if (!isMap(map)) return;
