@@ -3,6 +3,7 @@
 import * as YAML from '../vendor/yaml.js';
 
 export const MAP_MODES = ['process', 'freeform'];
+export const SCOPE_LAYOUTS = ['linear', 'compact'];
 export const ROUTE_STYLES = ['curved', 'straight', 'angled', 'stepped'];
 export const EDGE_SIDES = ['top', 'right', 'bottom', 'left'];
 export const EDGE_KINDS = ['api', 'file', 'manual', 'event'];
@@ -161,7 +162,11 @@ export function parseMap(source) {
     return owners;
   };
 
-  function normalizeScope(rawNodes, rawEdges, ownerId, path, depth, elementMode = false) {
+  function normalizeScope(rawNodes, rawEdges, ownerId, path, depth, elementMode = false, rawLayout) {
+    if (rawLayout !== undefined && (!SCOPE_LAYOUTS.includes(rawLayout) || mode !== 'process')) {
+      err([...path, 'layout'], '"layout:" must be linear or compact in a Process map.');
+    }
+    const layout = rawLayout ?? 'linear';
     const nodes = [];
     const usedElementIds = new Set();
     rawNodes.forEach((raw, i) => {
@@ -481,8 +486,11 @@ export function parseMap(source) {
           err(cpath, `Node "${id}": "children:" must contain "nodes:" and optionally "edges:".`);
           childNodes = []; childEdges = [];
         }
+        if (!childNodes.length && !childEdges.length && mode === 'process' && raw.children.layout !== undefined) {
+          normalizeScope([], [], id, cpath, depth + 1, false, raw.children.layout);
+        }
         if (childNodes.length || childEdges.length || mode === 'freeform') {
-          node.children = normalizeScope(childNodes, childEdges, id, [...npath, 'children'], depth + 1);
+          node.children = normalizeScope(childNodes, childEdges, id, [...npath, 'children'], depth + 1, false, raw.children.layout);
           node.stats.childCount = node.children.nodes.length;
           node.stats.descendantCount = node.children.nodes.reduce(
             (sum, child) => sum + 1 + child.stats.descendantCount, 0);
@@ -556,7 +564,7 @@ export function parseMap(source) {
       });
     });
 
-    return { ownerId, nodes, edges };
+    return { ownerId, nodes, edges, layout };
   }
 
   let elements = [];
@@ -568,7 +576,7 @@ export function parseMap(source) {
   } else if (data.elements != null) {
     err(['elements'], '"elements:" is available only in Freeform maps.');
   }
-  const root = normalizeScope(data.nodes, data.edges, null, [], 0);
+  const root = normalizeScope(data.nodes, data.edges, null, [], 0, false, data.layout);
 
   // Catalog metadata is durable design data, not observed runtime state.
   // Validate its references so canvas edits cannot silently orphan bindings.

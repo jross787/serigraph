@@ -145,6 +145,88 @@ function layoutComponent(comp, sized) {
   return { nodes, edges, w: maxX, h: maxY };
 }
 
+// Compact rows reuse Dagre's graph ordering, then wrap each component into
+// alternating rows. This is presentation geometry only: scope membership,
+// edge direction, card dimensions and authored pins/routes remain unchanged.
+function compactComponent(block) {
+  const ordered = [...block.nodes].sort((a, b) => a.x - b.x || a.y - b.y);
+  const columns = Math.max(1, Math.ceil(Math.sqrt(ordered.length / 2)));
+  const width = Math.max(...ordered.map(n => n.w));
+  const height = Math.max(...ordered.map(n => n.h));
+  const gapX = block.edges.some(e => e.edge.label) ? EDGE_LABEL_SIZE.w + 48 : 72;
+  const cells = new Map(ordered.map((n, i) => {
+    const row = Math.floor(i / columns), offset = i % columns;
+    return [n.id, { row, col: row % 2 ? columns - 1 - offset : offset }];
+  }));
+  // Reserve a separate gutter track for every non-adjacent connection at
+  // both ends. Branches, return paths and loops stay outside the card rows.
+  const tracks = new Map();
+  const nextTrack = row => {
+    const track = tracks.get(row) ?? 0;
+    tracks.set(row, track + 1);
+    return track;
+  };
+  const routes = new Map();
+  for (const e of block.edges) {
+    const a = cells.get(e.edge.from), b = cells.get(e.edge.to);
+    const adjacent = a.row === b.row && Math.abs(a.col - b.col) === 1
+      || a.col === b.col && Math.abs(a.row - b.row) === 1;
+    if (!adjacent) routes.set(e, { start: nextTrack(a.row), end: a.row === b.row ? null : nextTrack(b.row) });
+  }
+  const rowTops = [];
+  let y = 0;
+  for (let row = 0; row < Math.ceil(ordered.length / columns); row++) {
+    y += 56 + (tracks.get(row) ?? 0) * 36;
+    rowTops.push(y);
+    y += height;
+  }
+  for (const n of ordered) {
+    const cell = cells.get(n.id);
+    n.x = cell.col * (width + gapX) + (width - n.w) / 2;
+    n.y = rowTops[cell.row] + (height - n.h) / 2;
+  }
+  const byId = new Map(ordered.map(n => [n.id, n]));
+  const right = columns * width + (columns - 1) * gapX;
+  let rail = 0;
+  for (const e of block.edges) {
+    const a = byId.get(e.edge.from), b = byId.get(e.edge.to);
+    const route = routes.get(e);
+    if (!route) {
+      Object.assign(e, routeDirect(a, b));
+      continue;
+    }
+    const ac = centerOf(a), bc = centerOf(b);
+    const ay = rowTops[cells.get(a.id).row] - 28 - route.start * 36;
+    const by = route.end == null ? ay : rowTops[cells.get(b.id).row] - 28 - route.end * 36;
+    const points = [{ x: ac.x, y: a.y }, { x: ac.x, y: ay }];
+    if (a === b || cells.get(a.id).row !== cells.get(b.id).row) {
+      // Cross-row returns use an outside rail, clear of every card. A loop
+      // returns through the side of its own card so its arrow stays visible.
+      const rx = a === b ? a.x + a.w + 24
+        : (ac.x + bc.x < right) ? -36 - rail * 20 : right + 36 + rail * 20;
+      if (a !== b) rail++;
+      points.push({ x: rx, y: ay }, { x: rx, y: a === b ? ac.y : by });
+      if (a === b) points.push({ x: a.x + a.w, y: ac.y });
+      else points.push({ x: bc.x, y: by }, { x: bc.x, y: b.y });
+    } else points.push({ x: bc.x, y: ay }, { x: bc.x, y: b.y });
+    Object.assign(e, { points, labelPos: { x: ac.x, y: ay } });
+  }
+  // Include the outside tracks when packing disconnected components.
+  let x0 = 0, y0 = 0, x1 = right, y1 = y;
+  for (const e of block.edges) {
+    for (const p of e.points) {
+      x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y);
+      x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y);
+    }
+  }
+  for (const n of block.nodes) { n.x -= x0; n.y -= y0; }
+  for (const e of block.edges) {
+    e.points = e.points.map(p => ({ x: p.x - x0, y: p.y - y0 }));
+    e.labelPos = { x: e.labelPos.x - x0, y: e.labelPos.y - y0 };
+  }
+  return { ...block, w: x1 - x0, h: y1 - y0 };
+}
+
 function shelfPack(blocks, gap = 72) {
   const totalArea = blocks.reduce((s, b) => s + (b.w + gap) * (b.h + gap), 0);
   const targetW = Math.max(820, Math.sqrt(totalArea) * 1.75);
@@ -453,7 +535,10 @@ export function layoutScope(model, ownerId) {
   }
 
   const comps = components(scope.nodes, scope.edges);
-  const blocks = comps.map((c) => layoutComponent(c, sized));
+  const blocks = comps.map((c) => {
+    const block = layoutComponent(c, sized);
+    return scope.layout === 'compact' ? compactComponent(block) : block;
+  });
   const packed = shelfPack(blocks);
 
   const nodes = [], edges = [];

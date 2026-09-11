@@ -276,6 +276,31 @@ edges:
     issue: Re-keyed from the quote PDF; typos confirmed in 3% of cases.
 ```
 
+## Automatic Process layout (optional)
+
+The **Process** menu offers **Arrange this level → Compact rows** for long
+processes. It wraps each connected component into alternating rows, following
+the existing graph order. Follow the arrows for direction, including branches
+and return paths. **Left to right** restores the default arrangement.
+
+The choice is saved as `layout: compact` at the top level or inside one
+`children` map. It applies only to that level; nested levels keep their own
+layout. Omitting `layout`, or setting `layout: linear`, uses the default.
+Other values are validation errors. The field is available only in Process maps.
+
+```yaml
+name: Review process
+layout: compact
+nodes: []
+edges: []
+```
+
+Changing layout preserves selection, camera, card sizes, pinned centers and
+explicit connection routes. Use **Fit** to frame the arranged level. Pins and
+manual routes can extend beyond the compact rows; release them separately if
+you want those items to follow automatic placement and routing. Flow view and
+owner lanes keep their existing behavior.
+
 ## Pinned positions (optional)
 
 By default the app lays every scope out automatically, and dragging a node in the app pins it by writing this field. You can also author it by hand:
