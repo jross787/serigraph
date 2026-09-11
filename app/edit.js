@@ -1,7 +1,7 @@
 // Comment-preserving edits against the YAML document. Every function
 // mutates state.doc in place; callers serialize with doc.toString().
 import { isMap, isSeq } from '../vendor/yaml.js';
-import { ancestryOf, scopeOf } from '../shared/model.js';
+import { ancestryOf, scopeOf, EDGE_SIDES } from '../shared/model.js';
 import { stripFlagComments } from '../shared/provenance.js';
 import { state } from './state.js';
 import { getLayout } from './canvas.js';
@@ -1048,6 +1048,18 @@ export function reverseEdge(edgeRef) {
   const from = item.get('from');
   item.set('from', item.get('to'));
   item.set('to', from);
+  const fromSide = item.get('fromSide', true), toSide = item.get('toSide', true);
+  if (toSide != null) item.set('fromSide', toSide); else item.delete('fromSide');
+  if (fromSide != null) item.set('toSide', fromSide); else item.delete('toSide');
+}
+
+// Attach to a card side; null releases just this endpoint back to Auto.
+export function setEdgeSide(edgeRef, endpoint, side) {
+  if (!['from', 'to'].includes(endpoint)) throw new Error('invalid edge endpoint');
+  if (side != null && !EDGE_SIDES.includes(side)) throw new Error('invalid attachment side');
+  const item = findEdgeItem(state.doc, edgeRef);
+  if (side == null) item.delete(`${endpoint}Side`);
+  else item.set(`${endpoint}Side`, side);
 }
 
 // Point an edge at different endpoints. Both must be sibling nodes of the

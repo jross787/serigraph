@@ -2061,6 +2061,24 @@ function renderEdgeDetail(panel) {
     h('div', { class: 'f-field' }, h('label', {}, freeform ? 'Connection label' : 'Label (what flows / the outcome)'), label));
 
   // route style: automatic, or a pinned shape the user drags around on the canvas
+  const sideSelect = (endpoint, label) => {
+    const select = h('select', {
+      class: 'f-select', 'aria-label': label, disabled: state.standalone ? '' : null,
+    }, ...['auto', 'top', 'right', 'bottom', 'left'].map((side) =>
+      h('option', { value: side }, side[0].toUpperCase() + side.slice(1))));
+    select.value = e[`${endpoint}Side`] ?? 'auto';
+    select.addEventListener('change', () => {
+      if (state.standalone) return;
+      ctrl.commit(() => edit.setEdgeSide(sel, endpoint, select.value === 'auto' ? null : select.value))
+        .then((ok) => { if (ok) renderEdgeDetail(panel); });
+    });
+    return h('label', { class: 'f-field' }, label, select);
+  };
+  body.append(h('div', { class: 'panel-section' },
+    h('h3', {}, 'Attach to card'),
+    sideSelect('from', 'From side'), sideSelect('to', 'To side'),
+    h('p', { class: 'field-help' }, 'Choose where each end meets its card. Auto lets the route decide.')));
+
   const currentRoute = e.route ?? (e.via ? 'curved' : 'auto');
   const pickRoute = (style) => {
     if (state.standalone) return;
