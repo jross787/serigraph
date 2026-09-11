@@ -349,6 +349,7 @@ The rules:
 - In the app, pick the shape under **Route** in the edge panel. Choose **Auto**, or click the badge on the line, to return to automatic routing.
 - Under **Attach to card**, choose **From side** and **To side**. Each **Auto** clears only that attachment; Route **Auto** clears the shape and bend but preserves selected sides.
 - Connection labels shrink to padded, rounded bubbles for short text. Long labels retain the single-line width cap and ellipsis; the full wording stays in the tooltip and inspector. Bubble sizing does not change stored labels or rearrange the map.
+- Labels move along their own connection to clear other cards, labels, and paths when space is available. Pins and authored routes stay unchanged. Connection strokes and click targets leave label faces clear, including when no better label position is available.
 - Write `via` as `via: { x: 700, y: 40 }`. Any other shape is a validation error, and so is an unknown `route`.
 
 ## The cost model (optional) — human vs. agent economics

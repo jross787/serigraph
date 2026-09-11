@@ -383,6 +383,103 @@ export function routeAutomaticEdges(nodes, edges) {
   return routed;
 }
 
+// Labels belong on their own route, clear of cards, other labels, and other
+// routes (including connections that share an endpoint). Move only the label;
+// authored bends, pins, node geometry and edge direction remain untouched.
+function curvePoint(points, t) {
+  const [a, via, b] = points;
+  const c = { x: 2 * via.x - (a.x + b.x) / 2, y: 2 * via.y - (a.y + b.y) / 2 };
+  return {
+    x: (1 - t) ** 2 * a.x + 2 * (1 - t) * t * c.x + t ** 2 * b.x,
+    y: (1 - t) ** 2 * a.y + 2 * (1 - t) * t * c.y + t ** 2 * b.y,
+  };
+}
+
+function labelRoute(e) {
+  return e.smooth && e.points.length === 3
+    ? Array.from({ length: 65 }, (_, i) => curvePoint(e.points, i / 64)) : e.points;
+}
+
+function segmentHitsBox(a, b, box) {
+  let low = 0, high = 1;
+  for (const [axis, size] of [['x', 'w'], ['y', 'h']]) {
+    const d = b[axis] - a[axis];
+    if (!d) {
+      if (a[axis] < box[axis] || a[axis] > box[axis] + box[size]) return false;
+      continue;
+    }
+    const t1 = (box[axis] - a[axis]) / d, t2 = (box[axis] + box[size] - a[axis]) / d;
+    low = Math.max(low, Math.min(t1, t2)); high = Math.min(high, Math.max(t1, t2));
+    if (low > high) return false;
+  }
+  return true;
+}
+
+export function placeEdgeLabels(nodes, edges, targets = edges) {
+  const changed = new Set();
+  const paths = new Map(edges.map(e => [e, labelRoute(e)]));
+  const sizes = new Map(edges.filter(e => e.edge.label).map(e => [e, edgeLabelBubble(e.edge.label)]));
+  const boxAt = (p, size, pad = 0) => ({ x: p.x - size.w / 2 - pad, y: p.y - size.h / 2 - pad, w: size.w + pad * 2, h: size.h + pad * 2 });
+  const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  for (const e of targets) {
+    const size = sizes.get(e);
+    if (!size) continue;
+    const clear = p => {
+      const box = boxAt(p, size, 8);
+      if (nodes.some(n => overlaps(box, n))) return false;
+      for (const other of edges) {
+        if (other === e) continue;
+        if (sizes.has(other) && overlaps(box, boxAt(other.labelPos, sizes.get(other)))) return false;
+        const points = paths.get(other);
+        if (points.slice(1).some((q, i) => segmentHitsBox(points[i], q, box))) return false;
+      }
+      return true;
+    };
+    if (clear(e.labelPos)) continue;
+    const candidates = [];
+    if (e.smooth && e.points.length === 3) {
+      // Use points on the rendered quadratic, never its control polyline.
+      for (let i = 1; i < 64; i++) candidates.push(curvePoint(e.points, i / 64));
+    } else {
+      for (let i = 1; i < e.points.length; i++) {
+        const a = e.points[i - 1], b = e.points[i];
+        for (let step = 1; step < 16; step++) {
+          const t = step / 16;
+          const p = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+          // Rounded corners are not straight segments of the rendered path.
+          if (Math.hypot(p.x - a.x, p.y - a.y) >= 12 && Math.hypot(p.x - b.x, p.y - b.y) >= 12) candidates.push(p);
+        }
+      }
+    }
+    candidates.sort((a, b) => Math.hypot(a.x - e.labelPos.x, a.y - e.labelPos.y) - Math.hypot(b.x - e.labelPos.x, b.y - e.labelPos.y));
+    const position = candidates.find(clear);
+    if (position) { e.labelPos = position; changed.add(e); }
+  }
+  return changed;
+}
+
+// Clip strokes and their hit targets around the UNION of label rectangles.
+// Horizontal strips avoid the overlapping-hole problem of even-odd masks.
+export function labelClearancePath(bounds, boxes) {
+  const left = bounds.x - 24, right = bounds.x + bounds.w + 24;
+  const top = bounds.y - 24, bottom = bounds.y + bounds.h + 24;
+  const rows = [...new Set([top, bottom, ...boxes.flatMap(b => [Math.max(top, b.y), Math.min(bottom, b.y + b.h)])])]
+    .filter(y => y >= top && y <= bottom).sort((a, b) => a - b);
+  const rect = (x, y, w, h) => `M${x},${y}h${w}v${h}h${-w}Z`;
+  let d = '';
+  for (let i = 1; i < rows.length; i++) {
+    const y = rows[i - 1], h = rows[i] - y;
+    const blocked = boxes.filter(b => b.y < y + h && b.y + b.h > y).sort((a, b) => a.x - b.x);
+    let x = left;
+    for (const b of blocked) {
+      if (b.x > x) d += rect(x, y, Math.min(right, b.x) - x, h);
+      x = Math.max(x, Math.min(right, b.x + b.w));
+    }
+    if (x < right) d += rect(x, y, right - x, h);
+  }
+  return d;
+}
+
 // Route through a user-pinned via point: boundary → via → boundary.
 // `smooth` tells the canvas to draw one continuous cable curve through the
 // via instead of the usual rounded orthogonal path. The label sits at t=0.3
@@ -589,6 +686,7 @@ export function layoutScope(model, ownerId) {
     }
   }
   routeAutomaticEdges(nodes, edges);
+  placeEdgeLabels(nodes, edges);
   {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const n of nodes) {
