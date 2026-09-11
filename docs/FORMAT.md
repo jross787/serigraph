@@ -315,7 +315,7 @@ edges:
 
 The rules:
 
-- `route` is one of four shapes. `curved` draws a smooth cable through the via. `angled` draws two straight runs with a rounded corner at the via. `stepped` draws stairs whose middle riser passes through the via. `straight` draws a direct line and ignores the via.
+- `route` is one of four shapes. `curved` draws a smooth cable through the via. `angled` draws two straight runs with a rounded corner at the via. `stepped` draws right-angle runs through both coordinates of the via, adding a detour when needed; its label stays at the via so dragging it follows both axes. `straight` draws a direct line and ignores the via.
 - A `via` with no `route` renders as `curved`. A `route` with no `via` seeds its bend at the midpoint of the direct route.
 - `via` lives in the same coordinate plane as the scope's node `position` values.
 - `fromSide` and `toSide` independently attach to the midpoint of a card's top, right, bottom, or left boundary (the corresponding tip for a decision diamond). Omit a field for automatic attachment; unknown values are validation errors. These settings persist when cards move and swap with endpoints when a connection is reversed.

@@ -50,6 +50,31 @@ function reserialize() {
 
 beforeEach(() => load());
 
+test('stepped connector dragging follows both pointer axes and survives serialization', () => {
+  const a = { x: 0, y: 0, w: 200, h: 64, node: {} };
+  for (const [b, sides, points] of [
+    [{ x: 0, y: 300, w: 200, h: 64, node: {} }, { fromSide: 'bottom', toSide: 'top' },
+      [{ x: -160, y: 180 }, { x: 340, y: 240 }]],
+    [{ x: 600, y: 0, w: 200, h: 64, node: {} }, { fromSide: 'right', toSide: 'left' },
+      [{ x: 320, y: -140 }, { x: 440, y: 200 }]],
+  ]) for (const attachments of [sides, {}]) for (const point of points) {
+    const edge = { route: 'stepped', ...attachments };
+    const before = structuredClone([a, b]);
+    const preview = routeDragged(a, b, edge, point);
+    assert.deepEqual(preview.labelPos, point, 'the bubble follows both pointer axes');
+    assert.ok(preview.points.some((p) => p.x === point.x && p.y === point.y), 'the route passes through the dragged point');
+    assert.ok(preview.points.slice(1).every((p, i) => p.x === preview.points[i].x || p.y === preview.points[i].y));
+    assert.deepEqual([a, b], before, 'dragging the connector never moves its cards');
+    edit.setEdgeRoute(null, 0, preview.style);
+    edit.setEdgeVia(null, 0, preview.via);
+    edit.setEdgeSide({ scopeId: null, index: 0 }, 'from', edge.fromSide ?? null);
+    edit.setEdgeSide({ scopeId: null, index: 0 }, 'to', edge.toSide ?? null);
+    const restored = routeEdge(a, b, reserialize().model.root.edges[0]);
+    assert.deepEqual(restored.points, preview.points);
+    assert.deepEqual(restored.labelPos, point);
+  }
+});
+
 test('attachment sides validate independently and default to Auto', () => {
   assert.equal(state.model.root.edges[0].fromSide, null);
   assert.equal(state.model.root.edges[0].toSide, null);

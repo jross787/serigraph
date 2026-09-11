@@ -318,8 +318,8 @@ export function routeVia(a, b, via, edge = {}) {
 }
 
 // Route by style: curved is the smooth cable through the via; angled is one
-// rounded corner at the via; stepped is a stair whose riser passes through
-// the via on the dominant axis; straight ignores the via entirely.
+// rounded corner at the via; stepped passes through both coordinates of
+// the via, adding a detour when needed; straight ignores the via entirely.
 export function routeStyled(a, b, via, style, edge = {}) {
   if (style === 'straight' || !via) return routeDirect(a, b, edge);
   if (style === 'angled') {
@@ -333,16 +333,34 @@ export function routeStyled(a, b, via, style, edge = {}) {
     const flat = Math.abs(p2.x - p1.x) >= Math.abs(p2.y - p1.y);
     const horizontal = (side) => side ? side === 'left' || side === 'right' : flat;
     const startFlat = horizontal(edge.fromSide), endFlat = horizontal(edge.toSide);
-    const points = startFlat !== endFlat
+    let points = startFlat !== endFlat
       ? [p1, startFlat ? { x: via.x, y: p1.y } : { x: p1.x, y: via.y },
         { x: via.x, y: via.y }, endFlat ? { x: via.x, y: p2.y } : { x: p2.x, y: via.y }, p2]
       : startFlat
-      ? [p1, { x: via.x, y: p1.y }, { x: via.x, y: p2.y }, p2]
-      : [p1, { x: p1.x, y: via.y }, { x: p2.x, y: via.y }, p2];
-    const labelPos = startFlat !== endFlat ? { x: via.x, y: via.y } : startFlat
-      ? { x: via.x, y: (p1.y + p2.y) / 2 }
-      : { x: (p1.x + p2.x) / 2, y: via.y };
-    return { points, labelPos };
+      ? [p1, { x: via.x, y: p1.y }, { x: via.x, y: via.y }, { x: via.x, y: p2.y }, p2]
+      : [p1, { x: p1.x, y: via.y }, { x: via.x, y: via.y }, { x: p2.x, y: via.y }, p2];
+    const axis = startFlat ? 'y' : 'x';
+    const outsideMiddle = via[axis] < Math.min(p1[axis], p2[axis])
+      || via[axis] > Math.max(p1[axis], p2[axis]);
+    if (startFlat === endFlat && outsideMiddle) {
+      // A single stair cannot reach a sideways drag between vertically
+      // aligned cards (or an up/down drag between horizontal cards). Leave
+      // each card briefly, then route the middle run through the pointer.
+      const approach = (node, p, side) => {
+        const runAxis = startFlat ? 'x' : 'y';
+        const center = centerOf(node);
+        const direction = side ? (side === 'left' || side === 'top' ? -1 : 1)
+          : Math.sign(p[runAxis] - center[runAxis]) || Math.sign(via[runAxis] - center[runAxis]) || 1;
+        const distance = (via[runAxis] - p[runAxis]) * direction;
+        const stub = { ...p, [runAxis]: p[runAxis] + direction * (distance > 0 ? Math.min(32, distance / 2) : 32) };
+        const elbow = startFlat ? { x: stub.x, y: via.y } : { x: via.x, y: stub.y };
+        return [p, stub, elbow];
+      };
+      points = [...approach(a, p1, edge.fromSide), { x: via.x, y: via.y },
+        ...approach(b, p2, edge.toSide).reverse()];
+    }
+    points = points.filter((p, i) => !i || p.x !== points[i - 1].x || p.y !== points[i - 1].y);
+    return { points, labelPos: { x: via.x, y: via.y } };
   }
   return routeVia(a, b, via, edge);
 }
