@@ -1745,7 +1745,14 @@ function wirePointer() {
         const edgeEl = ev.target.closest?.('.edge');
         if (edgeEl && currentLayer?.contains(edgeEl)) {
           const le = currentLayout?.edges.find((x) => x.index === Number(edgeEl.dataset.index));
-          if (le) edgeDrag = { le, el: edgeEl, active: false, via: null };
+          if (le) {
+            const stepped = le.edge.route === 'stepped' || (!le.edge.route && !le.edge.via);
+            const onLabel = ev.target.closest?.('.edge-label, .edge-label-bg');
+            const grab = worldAt(ev.clientX, ev.clientY);
+            const offset = stepped && onLabel
+              ? { x: le.labelPos.x - grab.x, y: le.labelPos.y - grab.y } : { x: 0, y: 0 };
+            edgeDrag = { le, el: edgeEl, active: false, via: null, offset };
+          }
         }
       }
       // shift+drag from empty canvas draws a marquee selection box
@@ -1847,7 +1854,8 @@ function wirePointer() {
         connectDrag.targetId = tid;
         setDropHighlight(tid);
       } else if (edgeDrag?.active) {
-        previewEdgeRoute(edgeDrag, worldAt(ev.clientX, ev.clientY));
+        const w = worldAt(ev.clientX, ev.clientY);
+        previewEdgeRoute(edgeDrag, { x: w.x + edgeDrag.offset.x, y: w.y + edgeDrag.offset.y });
       } else if (nodeDrag?.active) {
         nodeDrag.ln.x = nodeDrag.ox + dx / camera.k;
         nodeDrag.ln.y = nodeDrag.oy + dy / camera.k;
