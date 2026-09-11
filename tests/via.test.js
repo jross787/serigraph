@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { parseMap } from '../shared/model.js';
 import { state } from '../app/state.js';
 import * as edit from '../app/edit.js';
-import { routeDragged, routeStyled } from '../app/layout.js';
+import { routeDragged, routeStyled, routeEdge, routeAutomaticEdges } from '../app/layout.js';
 
 const BASE = `# via test map — top comment
 name: Routes
@@ -49,6 +49,86 @@ function reserialize() {
 }
 
 beforeEach(() => load());
+
+test('attachment sides validate independently and default to Auto', () => {
+  assert.equal(state.model.root.edges[0].fromSide, null);
+  assert.equal(state.model.root.edges[0].toSide, null);
+  for (const key of ['fromSide', 'toSide']) {
+    for (const side of ['top', 'right', 'bottom', 'left']) {
+      const result = parseMap(BASE.replace('label: approved', `label: approved\n    ${key}: ${side}`));
+      assert.deepEqual(result.errors, []);
+      assert.equal(result.model.root.edges[1][key], side);
+    }
+    for (const bad of ['auto', 'middle', '3', '{}']) {
+      const result = parseMap(BASE.replace('label: approved', `label: approved\n    ${key}: ${bad}`));
+      assert.ok(result.errors.some((e) => e.message.includes(`"${key}:"`)));
+    }
+  }
+});
+
+test('attachment edits, reversal, rewiring and release preserve unrelated YAML', () => {
+  const ref = { scopeId: null, index: 1 };
+  edit.setEdgeSide(ref, 'from', 'top');
+  edit.setEdgeSide(ref, 'to', 'left');
+  edit.reverseEdge(ref);
+  let saved = reserialize();
+  assert.equal(saved.model.root.edges[1].fromSide, 'left');
+  assert.equal(saved.model.root.edges[1].toSide, 'top');
+  edit.rewireEdge(ref, { from: 'intake', to: 'bind' });
+  edit.setEdgeSide(ref, 'from', null);
+  edit.reverseEdge(ref);
+  saved = reserialize();
+  assert.equal(saved.model.root.edges[1].fromSide, 'top');
+  assert.equal(saved.model.root.edges[1].toSide, null);
+  assert.deepEqual(saved.model.root.edges[1].via, { x: 700, y: 40 });
+  assert.equal(saved.model.root.edges[1].label, 'approved');
+  assert.ok(saved.out.includes('# inline comment'));
+  edit.setEdgeSide(ref, 'from', null);
+  assert.doesNotMatch(reserialize().out, /fromSide:|toSide:/);
+  assert.throws(() => edit.setEdgeSide(ref, 'from', 'middle'), /invalid attachment/);
+  assert.throws(() => edit.setEdgeSide(ref, 'source', 'top'), /invalid edge endpoint/);
+});
+
+test('every route shape and drag preview retains chosen sides, including moved diamonds', () => {
+  const a = { x: 0, y: 0, w: 200, h: 64, node: {} };
+  const b = { x: 600, y: 200, w: 160, h: 100, node: { type: 'decision' } };
+  const port = (n, side) => ({
+    top: { x: n.x + n.w / 2, y: n.y }, right: { x: n.x + n.w, y: n.y + n.h / 2 },
+    bottom: { x: n.x + n.w / 2, y: n.y + n.h }, left: { x: n.x, y: n.y + n.h / 2 },
+  })[side];
+  for (const moved of [false, true]) {
+    if (moved) { a.x += 90; b.y -= 80; }
+    for (const fromSide of ['top', 'right', 'bottom', 'left']) {
+      for (const toSide of ['top', 'right', 'bottom', 'left']) {
+        for (const route of [null, 'straight', 'curved', 'angled', 'stepped']) {
+          const edge = { fromSide, toSide, route };
+          const routes = [routeEdge(a, b, edge)];
+          if (route !== 'straight') routes.push(routeDragged(a, b, edge, { x: 380, y: -60 }));
+          for (const result of routes) {
+            assert.deepEqual(result.points[0], port(a, fromSide));
+            assert.deepEqual(result.points.at(-1), port(b, toSide));
+            if (!route || route === 'stepped') assert.ok(result.points.slice(1).every((p, i) =>
+              p.x === result.points[i].x || p.y === result.points[i].y));
+          }
+        }
+      }
+    }
+  }
+});
+
+test('automatic routing leaves side attachments intact and same-side routes clear card borders', () => {
+  const a = { id: 'a', x: 0, y: 0, w: 200, h: 64, node: {} };
+  const b = { id: 'b', x: 600, y: 0, w: 200, h: 64, node: {} };
+  const edge = { from: 'a', to: 'b', fromSide: 'top', toSide: 'top' };
+  const routed = { index: 0, edge, ...routeEdge(a, b, edge) };
+  const before = structuredClone(routed.points);
+  assert.ok(before[1].y < a.y);
+  routeAutomaticEdges([a, b], [routed]);
+  assert.deepEqual(routed.points, before);
+  const mixed = routeEdge(b, a, { fromSide: 'left', toSide: 'top' });
+  assert.ok(mixed.points[1].x > a.x + a.w, 'mixed-side turn stays between the cards');
+  assert.ok(mixed.points.at(-2).y < a.y, 'arrives from above the top side');
+});
 
 test('dragged routes keep their shape and serialize the exact preview', () => {
   const a = { x: 0, y: 0, w: 200, h: 64, node: {} };
@@ -143,8 +223,10 @@ nodes:
           to: b
 `);
   edit.setEdgeVia('wrap', 0, { x: 100, y: 50 });
+  edit.setEdgeSide({ scopeId: 'wrap', index: 0 }, 'to', 'bottom');
   const { model } = reserialize();
   assert.deepEqual(model.byId.get('wrap').children.edges[0].via, { x: 100, y: 50 });
+  assert.equal(model.byId.get('wrap').children.edges[0].toSide, 'bottom');
 });
 
 test('parseMap reads route as the edge model field', () => {

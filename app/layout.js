@@ -16,12 +16,22 @@ function ellipsize(text, maxWidth, font) {
   return text + '…';
 }
 
-// One footprint for connection labels, shared by layout, rendering and drag.
+// Reserve the existing maximum footprint so shorter bubbles don't rearrange
+// the map or its routes. Rendering shrinks within this envelope.
 export const EDGE_LABEL_SIZE = { w: 192, h: 28 };
 const EDGE_LABEL_FONT = '600 11px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
 export function edgeLabelText(text) {
   const width = EDGE_LABEL_SIZE.w - 24;
   return fitText(text, width, EDGE_LABEL_FONT);
+}
+
+export function edgeLabelBubble(text) {
+  const fitted = edgeLabelText(text);
+  return {
+    text: fitted,
+    w: Math.min(EDGE_LABEL_SIZE.w, Math.max(EDGE_LABEL_SIZE.h, Math.ceil(measure(fitted, EDGE_LABEL_FONT)) + 24)),
+    h: EDGE_LABEL_SIZE.h,
+  };
 }
 
 export function fitText(text, maxWidth, font = CARD_FONT) {
@@ -170,8 +180,12 @@ const centerOf = (n) => ({ x: n.x + n.w / 2, y: n.y + n.h / 2 });
 
 // point where the segment from n's center toward `toward` crosses n's
 // outline (diamond for decisions, bounding rect for everything else)
-function boundaryPoint(n, toward) {
+function boundaryPoint(n, toward, side) {
   const c = centerOf(n);
+  if (side === 'top') return { x: c.x, y: n.y };
+  if (side === 'right') return { x: n.x + n.w, y: c.y };
+  if (side === 'bottom') return { x: c.x, y: n.y + n.h };
+  if (side === 'left') return { x: n.x, y: c.y };
   const dx = toward.x - c.x, dy = toward.y - c.y;
   if (!dx && !dy) return c;
   let s;
@@ -188,9 +202,9 @@ function boundaryPoint(n, toward) {
 
 // Direct edge route between two layout nodes: boundary to boundary.
 // Exported so the canvas can re-route live while a node is being dragged.
-export function routeDirect(a, b) {
-  const p1 = boundaryPoint(a, centerOf(b));
-  const p2 = boundaryPoint(b, centerOf(a));
+export function routeDirect(a, b, edge = {}) {
+  const p1 = boundaryPoint(a, centerOf(b), edge.fromSide);
+  const p2 = boundaryPoint(b, centerOf(a), edge.toSide);
   return { points: [p1, p2], labelPos: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 } };
 }
 
@@ -202,7 +216,7 @@ export function routeAutomaticEdges(nodes, edges) {
   // Reconsider previous automatic geometry when any node moves into its
   // corridor. The fallback stays layout-only; it never changes map data.
   for (const e of edges) {
-    if (e.autoFallback && !e.edge.via && !e.edge.route) {
+    if (e.autoFallback && !e.edge.via && !e.edge.route && !e.edge.fromSide && !e.edge.toSide) {
       Object.assign(e, e.autoFallback);
       delete e.autoFallback;
       routed.add(e);
@@ -218,7 +232,7 @@ export function routeAutomaticEdges(nodes, edges) {
   }
   const groups = new Map();
   for (const e of edges) {
-    if (e.edge.via || e.edge.route || e.edge.from === e.edge.to
+    if (e.edge.via || e.edge.route || e.edge.fromSide || e.edge.toSide || e.edge.from === e.edge.to
       || pairCounts.get(pairKey(e)) > 1 || outgoingCounts.get(e.edge.from) > 1) continue;
     const a = byId.get(e.edge.from), b = byId.get(e.edge.to);
     if (!a || !b) continue;
@@ -291,9 +305,9 @@ export function routeAutomaticEdges(nodes, edges) {
 // `smooth` tells the canvas to draw one continuous cable curve through the
 // via instead of the usual rounded orthogonal path. The label sits at t=0.3
 // along the curve, clear of the bend and the pointer.
-export function routeVia(a, b, via) {
-  const p1 = boundaryPoint(a, via);
-  const p2 = boundaryPoint(b, via);
+export function routeVia(a, b, via, edge = {}) {
+  const p1 = boundaryPoint(a, via, edge.fromSide);
+  const p2 = boundaryPoint(b, via, edge.toSide);
   const c = { x: 2 * via.x - (p1.x + p2.x) / 2, y: 2 * via.y - (p1.y + p2.y) / 2 };
   const t = 0.3;
   const labelPos = {
@@ -306,26 +320,52 @@ export function routeVia(a, b, via) {
 // Route by style: curved is the smooth cable through the via; angled is one
 // rounded corner at the via; stepped is a stair whose riser passes through
 // the via on the dominant axis; straight ignores the via entirely.
-export function routeStyled(a, b, via, style) {
-  if (style === 'straight' || !via) return routeDirect(a, b);
+export function routeStyled(a, b, via, style, edge = {}) {
+  if (style === 'straight' || !via) return routeDirect(a, b, edge);
   if (style === 'angled') {
-    const p1 = boundaryPoint(a, via);
-    const p2 = boundaryPoint(b, via);
+    const p1 = boundaryPoint(a, via, edge.fromSide);
+    const p2 = boundaryPoint(b, via, edge.toSide);
     return { points: [p1, { x: via.x, y: via.y }, p2], labelPos: { x: (p1.x + via.x) / 2, y: (p1.y + via.y) / 2 } };
   }
   if (style === 'stepped') {
-    const p1 = boundaryPoint(a, via);
-    const p2 = boundaryPoint(b, via);
+    const p1 = boundaryPoint(a, via, edge.fromSide);
+    const p2 = boundaryPoint(b, via, edge.toSide);
     const flat = Math.abs(p2.x - p1.x) >= Math.abs(p2.y - p1.y);
-    const points = flat
+    const horizontal = (side) => side ? side === 'left' || side === 'right' : flat;
+    const startFlat = horizontal(edge.fromSide), endFlat = horizontal(edge.toSide);
+    const points = startFlat !== endFlat
+      ? [p1, startFlat ? { x: via.x, y: p1.y } : { x: p1.x, y: via.y },
+        { x: via.x, y: via.y }, endFlat ? { x: via.x, y: p2.y } : { x: p2.x, y: via.y }, p2]
+      : startFlat
       ? [p1, { x: via.x, y: p1.y }, { x: via.x, y: p2.y }, p2]
       : [p1, { x: p1.x, y: via.y }, { x: p2.x, y: via.y }, p2];
-    const labelPos = flat
+    const labelPos = startFlat !== endFlat ? { x: via.x, y: via.y } : startFlat
       ? { x: via.x, y: (p1.y + p2.y) / 2 }
       : { x: (p1.x + p2.x) / 2, y: via.y };
     return { points, labelPos };
   }
-  return routeVia(a, b, via);
+  return routeVia(a, b, via, edge);
+}
+
+// Shared by committed layout and live node dragging. Side-only attachments
+// use an orthogonal route without persisting a style or a bend.
+export function routeEdge(a, b, edge) {
+  if (!edge.via && !edge.route && !edge.fromSide && !edge.toSide) return routeDirect(a, b);
+  const via = edge.via ?? routeDirect(a, b, edge).labelPos;
+  if (!edge.via && !edge.route) {
+    // Leave room outside each chosen side while keeping the midpoint where
+    // it already fits. Opposing constraints still need a user-chosen bend.
+    for (const [axis, low, high, size] of [['x', 'left', 'right', 'w'], ['y', 'top', 'bottom', 'h']]) {
+      let min = -Infinity, max = Infinity;
+      for (const [n, side] of [[a, edge.fromSide], [b, edge.toSide]]) {
+        if (side === low) max = Math.min(max, n[axis] - 40);
+        if (side === high) min = Math.max(min, n[axis] + n[size] + 40);
+      }
+      if (min <= max) via[axis] = Math.max(min, Math.min(max, via[axis]));
+    }
+  }
+  const style = edge.route ?? (edge.via ? 'curved' : 'stepped');
+  return routeStyled(a, b, via, style, edge);
 }
 
 // New manual bends use right angles. Preserve legacy via-only curves, but
@@ -334,7 +374,7 @@ export function routeDragged(a, b, edge, point) {
   if (edge.route === 'straight') return null;
   const style = edge.route ?? (edge.via ? 'curved' : 'stepped');
   const via = { x: Math.round(point.x), y: Math.round(point.y) };
-  return { ...routeStyled(a, b, via, style), via, style };
+  return { ...routeStyled(a, b, via, style, edge), via, style };
 }
 
 // Push auto nodes out of (inflated) pinned rects, minimal-displacement axis
@@ -444,7 +484,7 @@ export function layoutScope(model, ownerId) {
   }
 
   let bounds = { x: 0, y: 0, w: packed.w, h: packed.h };
-  const styledEdges = edges.filter((e) => e.edge.via || e.edge.route);
+  const styledEdges = edges.filter((e) => e.edge.via || e.edge.route || e.edge.fromSide || e.edge.toSide);
   if (movedIds.size || styledEdges.length) {
     const byId = new Map(nodes.map((n) => [n.id, n]));
     if (movedIds.size) {
@@ -460,9 +500,7 @@ export function layoutScope(model, ownerId) {
     for (const e of styledEdges) {
       const a = byId.get(e.edge.from), b = byId.get(e.edge.to);
       if (!a || !b) continue;
-      const style = e.edge.route ?? 'curved';
-      const via = e.edge.via ?? routeDirect(a, b).labelPos;
-      Object.assign(e, routeStyled(a, b, via, style));
+      Object.assign(e, routeEdge(a, b, e.edge));
     }
   }
   routeAutomaticEdges(nodes, edges);

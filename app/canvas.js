@@ -7,7 +7,7 @@ import { ancestryOf } from '../shared/model.js';
 import { nodeCost, compactMoney } from '../shared/cost.js';
 import { icon, TYPE_ICONS } from './icons.js';
 import { nodeObservation } from './github.js';
-import { layoutScope, miniTransform, edgePath, smoothEdgePath, routeDirect, routeStyled, routeDragged, routeAutomaticEdges, EDGE_LABEL_SIZE, edgeLabelText, invalidateLayouts, wrapText, fitText, CARD_FONT } from './layout.js';
+import { layoutScope, miniTransform, edgePath, smoothEdgePath, routeDirect, routeEdge, routeDragged, routeAutomaticEdges, EDGE_LABEL_SIZE, edgeLabelBubble, invalidateLayouts, wrapText, fitText, CARD_FONT } from './layout.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const el = (tag, attrs = {}, cls = '') => {
@@ -922,14 +922,15 @@ function buildEdge(e) {
     }, 'arrow'));
   }
 
-  if (e.edge.label) {
+  const bubble = e.edge.label ? edgeLabelBubble(e.edge.label) : null;
+  if (bubble) {
     const label = e.edge.label;
-    const { w, h } = EDGE_LABEL_SIZE;
+    const { w, h, text } = bubble;
     g.appendChild(el('rect', {
-      x: e.labelPos.x - w / 2, y: e.labelPos.y - h / 2, width: w, height: h, rx: 6,
+      x: e.labelPos.x - w / 2, y: e.labelPos.y - h / 2, width: w, height: h, rx: h / 2,
     }, 'edge-label-bg'));
     const t = el('text', { x: e.labelPos.x, y: e.labelPos.y, 'text-anchor': 'middle', 'dominant-baseline': 'middle' }, 'edge-label');
-    t.textContent = edgeLabelText(label);
+    t.textContent = text;
     g.appendChild(t);
     const title = el('title');
     title.textContent = label; // The complete wording also remains in the edge inspector.
@@ -939,7 +940,11 @@ function buildEdge(e) {
   // custom-route badge at the via point: click to release back to auto-routing
   if (e.edge.via) {
     const v = e.edge.via;
-    const badge = el('g', { transform: `translate(${v.x},${v.y})`, 'data-unroute': e.index }, 'route-badge');
+    // Keep the reset control from obscuring text when the bend sits on the bubble.
+    const overlapsLabel = bubble && Math.abs(v.x - e.labelPos.x) < bubble.w / 2 + 8
+      && Math.abs(v.y - e.labelPos.y) < bubble.h / 2 + 8;
+    const badgeY = overlapsLabel ? e.labelPos.y + bubble.h / 2 + 11 : v.y;
+    const badge = el('g', { transform: `translate(${v.x},${badgeY})`, 'data-unroute': e.index }, 'route-badge');
     badge.appendChild(el('circle', { r: 7.5 }, 'route-badge-bg'));
     badge.appendChild(badgeIcon('x', 'route-badge-glyph', 10));
     const title = el('title');
@@ -1021,7 +1026,7 @@ function groupEdgesForRender(edges) {
   const byPair = new Map();
   const out = [];
   for (const e of edges) {
-    if (e.edge.via || e.edge.route || e.edge.from === e.edge.to) { out.push({ single: e }); continue; }
+    if (e.edge.via || e.edge.route || e.edge.fromSide || e.edge.toSide || e.edge.from === e.edge.to) { out.push({ single: e }); continue; }
     const key = [e.edge.from, e.edge.to].sort().join('→');
     if (!byPair.has(key)) byPair.set(key, []);
     byPair.get(key).push(e);
@@ -1592,13 +1597,7 @@ function updateEdgesFor(ln) {
     if (e.edge.from !== ln.id && e.edge.to !== ln.id) continue;
     changed.add(e);
     delete e.autoFallback;
-    if (e.edge.via || e.edge.route) {
-      const a = byId.get(e.edge.from), b = byId.get(e.edge.to);
-      const via = e.edge.via ?? routeDirect(a, b).labelPos;
-      Object.assign(e, routeStyled(a, b, via, e.edge.route ?? 'curved'));
-    } else {
-      Object.assign(e, routeDirect(byId.get(e.edge.from), byId.get(e.edge.to)));
-    }
+    Object.assign(e, routeEdge(byId.get(e.edge.from), byId.get(e.edge.to), e.edge));
   }
   for (const e of routeAutomaticEdges(currentLayout.nodes, currentLayout.edges)) {
     changed.add(e);
@@ -1676,7 +1675,7 @@ function wirePointer() {
     const labelBg = drag.el.querySelector('.edge-label-bg');
     const label = drag.el.querySelector('.edge-label');
     if (labelBg && label) {
-      labelBg.setAttribute('x', route.labelPos.x - EDGE_LABEL_SIZE.w / 2);
+      labelBg.setAttribute('x', route.labelPos.x - Number(labelBg.getAttribute('width')) / 2);
       labelBg.setAttribute('y', route.labelPos.y - EDGE_LABEL_SIZE.h / 2);
       label.setAttribute('x', route.labelPos.x);
       label.setAttribute('y', route.labelPos.y);

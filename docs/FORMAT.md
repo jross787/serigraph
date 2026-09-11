@@ -309,6 +309,8 @@ edges:
     label: approved
     route: stepped              # curved | straight | angled | stepped
     via: { x: 700, y: 40 }      # bend through these coordinates
+    fromSide: right              # optional: top | right | bottom | left
+    toSide: top                  # omit either side for automatic attachment
 ```
 
 The rules:
@@ -316,8 +318,12 @@ The rules:
 - `route` is one of four shapes. `curved` draws a smooth cable through the via. `angled` draws two straight runs with a rounded corner at the via. `stepped` draws stairs whose middle riser passes through the via. `straight` draws a direct line and ignores the via.
 - A `via` with no `route` renders as `curved`. A `route` with no `via` seeds its bend at the midpoint of the direct route.
 - `via` lives in the same coordinate plane as the scope's node `position` values.
-- Parallel edges between the same two nodes render as one cable bundle that fans out on hover; an edge with a `via` or `route` always renders on its own.
+- `fromSide` and `toSide` independently attach to the midpoint of a card's top, right, bottom, or left boundary (the corresponding tip for a decision diamond). Omit a field for automatic attachment; unknown values are validation errors. These settings persist when cards move and swap with endpoints when a connection is reversed.
+- Side-only attachments use an automatic orthogonal route. Explicit shapes and bends retain their meaning; side choices do not guarantee obstacle avoidance. Drag a bend or choose a different shape if a route crosses a card.
+- Parallel edges between the same two nodes render as one cable bundle that fans out on hover; an edge with a `via`, `route`, `fromSide`, or `toSide` always renders on its own.
 - In the app, pick the shape under **Route** in the edge panel. Choose **Auto**, or click the badge on the line, to return to automatic routing.
+- Under **Attach to card**, choose **From side** and **To side**. Each **Auto** clears only that attachment; Route **Auto** clears the shape and bend but preserves selected sides.
+- Connection labels shrink to padded, rounded bubbles for short text. Long labels retain the single-line width cap and ellipsis; the full wording stays in the tooltip and inspector. Bubble sizing does not change stored labels or rearrange the map.
 - Write `via` as `via: { x: 700, y: 40 }`. Any other shape is a validation error, and so is an unknown `route`.
 
 ## The cost model (optional) — human vs. agent economics

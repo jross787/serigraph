@@ -4,6 +4,7 @@ import * as YAML from '../vendor/yaml.js';
 
 export const MAP_MODES = ['process', 'freeform'];
 export const ROUTE_STYLES = ['curved', 'straight', 'angled', 'stepped'];
+export const EDGE_SIDES = ['top', 'right', 'bottom', 'left'];
 export const EDGE_KINDS = ['api', 'file', 'manual', 'event'];
 export const PROCESS_NODE_TYPES = ['process', 'decision', 'system', 'role', 'artifact'];
 export const FREEFORM_NODE_TYPES = ['item', 'system', 'database', 'api', 'role', 'artifact'];
@@ -527,6 +528,11 @@ export function parseMap(source) {
         err([...epath, 'route'], `Edge ${from} → ${to}: "route:" must be one of: ${ROUTE_STYLES.join(', ')}.`);
       }
       const kind = raw.kind == null ? null : String(raw.kind);
+      for (const key of ['fromSide', 'toSide']) {
+        if (raw[key] != null && !EDGE_SIDES.includes(raw[key])) {
+          err([...epath, key], `Edge ${from} → ${to}: "${key}:" must be one of: ${EDGE_SIDES.join(', ')}.`);
+        }
+      }
       if (kind != null && !EDGE_KINDS.includes(kind)) {
         err([...epath, 'kind'], `Edge ${from} → ${to}: "kind:" must be one of: ${EDGE_KINDS.join(', ')}.`);
       }
@@ -543,6 +549,8 @@ export function parseMap(source) {
         label: typeof raw.label === 'string' ? raw.label : '',
         via: normalizePosition(raw.via, [...epath, 'via'], `${from} → ${to}`, 'via'),
         route: ROUTE_STYLES.includes(route) ? route : null,
+        fromSide: EDGE_SIDES.includes(raw.fromSide) ? raw.fromSide : null,
+        toSide: EDGE_SIDES.includes(raw.toSide) ? raw.toSide : null,
         kind: EDGE_KINDS.includes(kind) ? kind : null,
         issue,
       });
