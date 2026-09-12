@@ -6,8 +6,9 @@ export const MAP_MODES = ['process', 'freeform'];
 export const ROUTE_STYLES = ['curved', 'straight', 'angled', 'stepped'];
 export const EDGE_SIDES = ['top', 'right', 'bottom', 'left'];
 export const EDGE_KINDS = ['api', 'file', 'manual', 'event'];
-export const PROCESS_NODE_TYPES = ['process', 'decision', 'system', 'role', 'artifact'];
-export const FREEFORM_NODE_TYPES = ['item', 'system', 'database', 'api', 'role', 'artifact'];
+export const EDGE_MEANINGS = ['flow', 'data', 'reports-to', 'association'];
+export const PROCESS_NODE_TYPES = ['process', 'decision', 'event', 'role', 'system', 'database', 'api', 'artifact', 'item'];
+export const FREEFORM_NODE_TYPES = [...PROCESS_NODE_TYPES];
 export const NODE_TYPES = [...new Set([...PROCESS_NODE_TYPES, ...FREEFORM_NODE_TYPES])];
 export const AUTOMATION_STATES = ['manual', 'assisted', 'automated', 'at-risk'];
 export const DOCUMENT_KINDS = ['process', 'prd', 'roadmap'];
@@ -27,6 +28,7 @@ const TYPE_HINTS = {
   person: 'role', team: 'role', actor: 'role', department: 'role',
   document: 'artifact', doc: 'artifact', data: 'artifact', output: 'artifact',
   choice: 'decision', branch: 'decision', gateway: 'decision',
+  trigger: 'event', start: 'event', end: 'event',
 };
 
 export function parseMap(source) {
@@ -528,6 +530,10 @@ export function parseMap(source) {
         err([...epath, 'route'], `Edge ${from} → ${to}: "route:" must be one of: ${ROUTE_STYLES.join(', ')}.`);
       }
       const kind = raw.kind == null ? null : String(raw.kind);
+      const meaning = raw.meaning ?? null;
+      if (meaning != null && !EDGE_MEANINGS.includes(meaning)) {
+        err([...epath, 'meaning'], `Edge ${from} → ${to}: "meaning:" must be one of: ${EDGE_MEANINGS.join(', ')}.`);
+      }
       for (const key of ['fromSide', 'toSide']) {
         if (raw[key] != null && !EDGE_SIDES.includes(raw[key])) {
           err([...epath, key], `Edge ${from} → ${to}: "${key}:" must be one of: ${EDGE_SIDES.join(', ')}.`);
@@ -552,6 +558,7 @@ export function parseMap(source) {
         fromSide: EDGE_SIDES.includes(raw.fromSide) ? raw.fromSide : null,
         toSide: EDGE_SIDES.includes(raw.toSide) ? raw.toSide : null,
         kind: EDGE_KINDS.includes(kind) ? kind : null,
+        meaning: EDGE_MEANINGS.includes(meaning) ? meaning : null,
         issue,
       });
     });

@@ -325,3 +325,54 @@ export function productDocumentMarkdown(model) {
   sections.push('', `_Generated from the Serigraph graph. Stable source: ${mdText(model.name)}._`);
   return sections.filter((section) => section !== '').join('\n\n') + '\n';
 }
+
+// A readable inventory for every map mode, including non-product maps and
+// nested/shared systems. YAML remains the lossless interchange format.
+export function mapMarkdown(model) {
+  const sections = model.document.kind === 'process'
+    ? [`# ${mdText(model.name)}`, mdText(model.description)]
+    : [productDocumentMarkdown(model).trim()];
+  sections.push('## Map inventory', `Mode: ${model.mode}. Connections below are declared relationships, not evidence of live transfers.`);
+  for (const node of model.byId.values()) {
+    const owners = [node.owner, ...node.owners.map((owner) => `${model.byId.get(owner.to)?.label || owner.to} (${owner.role})`)].filter(Boolean);
+    sections.push(`### ${mdText(node.label)}`, `ID: ${mdText(node.id)} · Type: ${node.type}`);
+    if (node.description) sections.push(mdText(node.description));
+    const facts = [['Owner', owners.join(', ')], ['Trigger', node.trigger], ['SLA', node.sla], ['Automation', node.automation], ['Systems', node.systems.join(', ')]];
+    for (const [label, value] of facts) if (value) sections.push(`**${label}:** ${mdText(value)}`);
+    if (node.relations.length) sections.push('**Relations**', mdList(node.relations.map((r) => `${r.type}: ${model.byId.get(r.to)?.label || r.to} (${r.to})`)));
+    if (node.links.length) sections.push('**References**', mdList(node.links.map((link) => `${link.label}: ${link.url}`)));
+    if (node.review.length) sections.push('**Review notes**', mdList(node.review.map((note) => `${note.resolved ? 'Resolved' : 'Open'} — ${note.author}: ${note.body}`)));
+  }
+  const table = (headers, rows) => [
+    `| ${headers.join(' | ')} |`, `| ${headers.map(() => '---').join(' | ')} |`,
+    ...rows.map((row) => `| ${row.map(mdText).join(' | ')} |`),
+  ].join('\n');
+  const visit = (scope, scopeName) => {
+    sections.push(`### ${mdText(scopeName)}`);
+    if (scope.nodes.some((node) => node.isPlacement)) {
+      sections.push(table(['Placement', 'ID', 'Local note'], scope.nodes.map((node) => [node.label, node.id, node.note])));
+    }
+    if (scope.edges.length) {
+      sections.push(table(['From', 'Meaning', 'To', 'Label', 'Method', 'Issue'], scope.edges.map((edge) => [
+        `${model.byId.get(edge.from)?.label || edge.from} (${edge.from})`, edge.meaning || 'Unspecified',
+        `${model.byId.get(edge.to)?.label || edge.to} (${edge.to})`, edge.label, edge.kind, edge.issue,
+      ])));
+    } else sections.push('_No connections declared in this scope._');
+    for (const node of scope.nodes) if (node.children) visit(node.children, `${scopeName} / ${node.label}`);
+  };
+  sections.push('## Scopes and connections');
+  visit(model.root, model.name);
+  if (model.dataExplorer) {
+    const catalog = model.dataExplorer;
+    sections.push('## Declared data catalog', table(['Object ID', 'System', 'Native object', 'Entity', 'Authority'],
+      catalog.objects.map((o) => [o.id, o.system, o.sourceName, o.entityType, o.authority])));
+    if (catalog.canonicalFields.length) sections.push('### Canonical fields', table(['ID', 'Label', 'Entity', 'Type'],
+      catalog.canonicalFields.map((f) => [f.id, f.label, f.entityType, f.dataType])));
+    if (catalog.fieldBindings.length) sections.push('### Field mappings', table(['Object', 'Native field', 'Native type', 'Canonical field'],
+      catalog.fieldBindings.map((f) => [f.object, f.sourceField, f.sourceDataType, f.canonicalField])));
+    sections.push('### Declared data flows', table(['ID', 'From', 'To', 'Method', 'Label'],
+      catalog.flows.map((f) => [f.id, f.from, f.to, f.method, f.label])));
+  }
+  sections.push('_Snapshot of curated map metadata, not an operational audit report. Use YAML for complete source, comments, and layout._');
+  return sections.filter(Boolean).join('\n\n') + '\n';
+}

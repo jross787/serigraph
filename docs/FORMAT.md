@@ -242,29 +242,56 @@ workspace, not the generic engine.
 
 | type | Shown in | Use for | Example |
 |---|---|---|---|
-| `process` | Process | A step or stage where work happens | Underwriting |
-| `decision` | Process | A branch point whose outgoing labels are outcomes | Qualified? |
-| `system` | Both | Software, a tool, or a platform | Salesforce |
-| `role` | Both | A person, team, or job function | Loan officer |
-| `artifact` | Both | A document or data object | Credit file |
-| `item` | Freeform | Any neutral thing or concept | Customer domain |
-| `database` | Freeform | A database, warehouse, or data store | Customer database |
-| `api` | Freeform | An API or service interface | Customer API |
+| `process` | Both | Step — rounded card; work named with a verb | Review request |
+| `decision` | Both | Decision — diamond; a question with labeled outcomes | Ready to proceed? |
+| `event` | Both | Event — circle; a start, finish, or interruption | Request received |
+| `system` | Both | Application — window; a tool or platform | Work console |
+| `role` | Both | Person or team — capsule; who does or owns the work | Service team |
+| `artifact` | Both | Document or data — folded document; input/output of work | Completion record |
+| `item` | Both | Concept — neutral card; a thing without a more specific type | Customer experience |
+| `database` | Both | Data store — cylinder; where information is stored | Request database |
+| `api` | Both | Interface / API — hexagon; the interface, not a transfer | Requests API |
 
-Use these exact lowercase strings. The app shows the process or freeform subset in its add controls.
+Use these exact lowercase strings. The app uses the same vocabulary in both
+modes. Freeform still adds groups at the root and shared-element placements
+inside them; selecting a shape never changes its identity/storage rules.
+Containers retain the stacked-card treatment, regardless of their content.
+Existing peer cards retain their 200 × 64 footprint; new events use 112 × 112.
+Descriptions and links for diamonds and circles stay in the inspector.
+A warning triangle is an attention/issue symbol, not another business-object
+type. Shape identifies kind; color does not prove health. See [Map language](MAP-LANGUAGE.md).
 
 ## Edges and nesting
 
 - A Process edge connects two siblings. Both `from` and `to` must name nodes in the same `nodes` list.
 - A Freeform group edge connects two placements in that group's `children.nodes` list. It names the shared element IDs from their `use` fields.
 - A top-level Freeform edge connects two groups.
-- Edges are directional. Put optional text in `label`.
-- `kind` states how data moves between the two nodes: `api` for an API call, `file` for a file transfer, `manual` for manual re-entry, or `event` for an event or webhook. Any other value is a validation error.
+- `meaning` optionally classifies a connection: `flow` is a solid directional
+  process path; `data` is a dashed directional data-transfer declaration;
+  `reports-to` is a solid arrow from a person/team toward its manager/parent;
+  `association` is a plain line without an arrowhead. Put optional text in
+  `label`. An association still stores `from`/`to` for stable endpoints and
+  reading its label; that ordering is not workflow direction.
+- Missing `meaning` remains unspecified and retains its legacy arrow. No
+  meaning is inferred from endpoint types, label wording, or `kind`. Unknown
+  values are validation errors. Explicit associations/reporting lines are
+  excluded from work/data-path tracing and the Flow scene.
+- `kind` declares the transfer method independently: `api` for an API call,
+  `file` for a file transfer, `manual` for manual re-entry, or `event` for an
+  event/webhook. Any other value is a validation error. It never proves a
+  transfer occurred or makes an unspecified meaning authoritative.
 - `issue` records a confirmed problem on the handoff, and the app renders it loudly. Write it as plain text; a blank value is ignored.
 - Process node IDs, Freeform element IDs, and Freeform group IDs are unique across the file. A Freeform `use` can repeat in different groups because it is a placement, not a new definition.
 - Use a typed relation when the relationship crosses Process scopes or describes Freeform item hierarchy.
 - Layout is automatic. A Process node or Freeform placement can have a fixed `position`.
 - When the app moves a Process node between scopes, it moves each affected edge to the nearest valid scope. It rewrites each endpoint to the node that represents that branch in the new scope. Self-loops and exact duplicates are removed.
+
+The decision inspector edits an explicit list of outcome labels and same-scope
+destinations. Applying it is one ordinary undoable map edit. Existing flow or
+unspecified outgoing branches retain their route overrides and comments;
+incoming connections and other relationship meanings are untouched. Removed
+rows delete only the corresponding branches after Apply. No decision executes
+work, changes source systems, or grants runtime authority.
 
 For example:
 

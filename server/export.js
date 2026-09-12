@@ -8,6 +8,7 @@ import { parseMap } from '../shared/model.js';
 const MODULE_FILES = [
   'vendor/yaml.js',
   'shared/model.js',
+  'shared/visual-language.js',
   'shared/cost.js',
   'shared/provenance.js',
   'shared/projects.js',
@@ -30,6 +31,7 @@ const MODULE_FILES = [
   'app/workbench.js',
   'app/workbench-sync.js',
   'app/product-workspace.js',
+  'app/agents.js',
   'app/main.js',
 ];
 
@@ -90,7 +92,7 @@ export async function buildExport(root, id, mapSource, projectMeta = null) {
   // must never be interpreted as $-replacement patterns
   let out = html;
   out = out.replaceAll('/app/serigraph-mark.svg', 'data:image/svg+xml;base64,' + Buffer.from(mark).toString('base64'));
-  out = out.replace(/<title>.*?<\/title>/, () => `<title>${title.replace(/</g, '&lt;')}</title>`);
+  out = out.replace(/<title>.*?<\/title>/, () => `<title>${title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</title>`);
   out = out.replace(
     /<link rel="stylesheet" href="\/app\/styles.css">/,
     () => `<style>\n${css}\n</style>`,

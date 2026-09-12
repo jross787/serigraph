@@ -4,6 +4,7 @@
 // connect-by-port), full-canvas SVG export, and the minimap.
 import { bus, state } from './state.js';
 import { ancestryOf } from '../shared/model.js';
+import { connectionPresentation, nodeTypeLabel } from '../shared/visual-language.js';
 import { nodeCost, compactMoney } from '../shared/cost.js';
 import { icon, TYPE_ICONS } from './icons.js';
 import { nodeObservation } from './github.js';
@@ -398,23 +399,35 @@ function exportStylesheet() {
     try { list = sheet.cssRules; } catch { continue; } // cross-origin sheets
     for (const rule of list) {
       if (!(rule instanceof CSSStyleRule)) continue;
-      const sel = rule.selectorText ?? '';
-      if (sel.includes(':')) continue;
-      if (/#[a-zA-Z]/.test(sel) && !sel.includes('#griddots')) continue;
-      if (EXPORT_SELECTORS.some((token) => sel.includes(token))) rules.push(rule.cssText);
+      const selectors = (rule.selectorText ?? '').split(',').map((selector) => {
+        // Keep the active theme's static rules, without depending on an HTML
+        // ancestor. Drop hover/focus rules independently in mixed selectors.
+        const themed = selector.trim().match(/^:root\[data-theme=["']([^"']+)["']\]\s+(.+)$/);
+        return themed ? (themed[1] === document.documentElement.dataset.theme ? themed[2] : '') : selector.trim();
+      }).filter((sel) => sel && !sel.includes(':')
+        && (!/#[a-zA-Z]/.test(sel) || sel.includes('#griddots'))
+        && EXPORT_SELECTORS.some((token) => sel.includes(token)));
+      if (selectors.length) rules.push(`${selectors.join(', ')} { ${rule.style.cssText} }`);
     }
   }
-  return `:root {\n${vars.join('\n')}\n}\n${rules.join('\n')}`;
+  return `:root {\n${vars.join('\n')}\nfont-family: var(--font);\n}\n${rules.join('\n')}\n* { animation: none !important; transition: none !important; }`;
 }
 
 // Serialize the canvas to a standalone SVG string for export. The clone is
 // neutralized — camera transform removed, viewBox baked to the full content
-// bounds (every scope level, not just the current viewport), cursor and
+// bounds (the current Map scope, not the zoomed viewport), cursor and
 // pointer-event styles stripped — so the file renders the same anywhere.
 export function getCanvasSvgString() {
-  if (!state.model || !svg) return null;
+  if (!state.model || !svg || !currentLayer) return null;
   const clone = svg.cloneNode(true);
-  clone.querySelectorAll('.github-observation').forEach(node => node.remove());
+  const layer = currentLayer.cloneNode(true);
+  layer.removeAttribute('transform');
+  layer.style.opacity = '1';
+  clone.querySelector('.layers')?.replaceChildren(layer);
+  clone.querySelectorAll('.github-observation, .port, .pin-badge, .sel-ring, .route-badge, .node-launch, .marquee, .connect-ghost').forEach(node => node.remove());
+  const transientClasses = ['selected', 'multi-selected', 'focus-dimmed', 'probe-dimmed', 'probe-node', 'probe-edge', 'relationship-endpoint', 'connect-target', 'drop-target'];
+  clone.querySelectorAll('.node, .edge').forEach(node => node.classList.remove(...transientClasses));
+  clone.querySelectorAll('.identity-link').forEach(node => node.classList.remove('active'));
   clone.removeAttribute('class');
   clone.removeAttribute('tabindex');
   // the page stylesheet never travels with the file: embed the theme's
@@ -438,20 +451,20 @@ export function getCanvasSvgString() {
     if (nodeEl.style?.pointerEvents) nodeEl.style.pointerEvents = '';
   }
 
-  // union every scope's layout bounds (each in its own coordinates), plus
-  // the on-screen sibling context layout when one exists
+  // Only rendered content shares this coordinate space. Unopened child scopes
+  // have independent layouts and must not inflate this image's dimensions.
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   const include = (b) => {
     if (!b || !Number.isFinite(b.w) || b.w <= 0 || b.h <= 0) return;
     minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
     maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + b.h);
   };
-  const scopeIds = [null];
-  for (const [id, node] of state.model.byId) if (node.children) scopeIds.push(id);
-  for (const ownerId of scopeIds) {
-    try { include(layoutBounds(layoutScope(state.model, ownerId))); } catch { /* skip an unlayoutable scope */ }
-  }
-  if (currentLayout?.minimapLayout) include(layoutBounds(currentLayout.minimapLayout));
+  if (currentLayout) include(layoutBounds(currentLayout.minimapLayout ?? currentLayout));
+  // Include routed connectors, labels, and peer frames outside node bounds.
+  try {
+    const b = currentLayer.getBBox();
+    include({ x: b.x, y: b.y, w: b.width, h: b.height });
+  } catch { /* hidden Map view: the layout bounds remain available */ }
   const bounds = Number.isFinite(minX)
     ? { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
     : { ...screenToWorld(0, 0), w: (vw || 800) / camera.k, h: (vh || 600) / camera.k };
@@ -461,6 +474,12 @@ export function getCanvasSvgString() {
   clone.setAttribute('viewBox', `${bx} ${by} ${bw} ${bh}`);
   clone.setAttribute('width', bw);
   clone.setAttribute('height', bh);
+  const theme = getComputedStyle(document.documentElement);
+  const background = el('rect', {
+    x: bx, y: by, width: bw, height: bh,
+    fill: theme.getPropertyValue('--canvas-bg').trim() || theme.getPropertyValue('--bg').trim(),
+  });
+  clone.insertBefore(background, clone.firstChild);
   return new XMLSerializer().serializeToString(clone);
 }
 
@@ -531,12 +550,14 @@ function nodeShape(n) {
   const t = n.node.type;
   if (n.node.children) return el('rect', { width: w, height: h, rx: 8 }, 'shape');
   if (t === 'decision') return el('polygon', { points: `${w / 2},0 ${w},${h / 2} ${w / 2},${h} 0,${h / 2}` }, 'shape');
+  if (t === 'event') return el('circle', { cx: w / 2, cy: h / 2, r: w / 2 }, 'shape');
   if (t === 'role') return el('rect', { width: w, height: h, rx: h / 2 }, 'shape');
   if (t === 'artifact') {
     const f = 13;
     return el('path', { d: `M0,0 h${w - f} l${f},${f} v${h - f} h${-w} z` }, 'shape');
   }
-  if (t === 'system' || t === 'database' || t === 'api') return el('rect', { width: w, height: h, rx: 7 }, 'shape');
+  if (t === 'database') return el('path', { d: `M0,10 A${w / 2},10 0 0 1 ${w},10 V${h - 10} A${w / 2},10 0 0 1 0,${h - 10} Z` }, 'shape');
+  if (t === 'api') return el('polygon', { points: `16,0 ${w - 16},0 ${w},${h / 2} ${w - 16},${h} 16,${h} 0,${h / 2}` }, 'shape');
   return el('rect', { width: w, height: h, rx: 7 }, 'shape');
 }
 
@@ -655,13 +676,13 @@ function buildNode(n) {
   const node = n.node;
   const isContainer = !!node.children;
   const details = nodeCardDetails(node);
-  const launch = node.type === 'decision' && !isContainer ? null : details.launch;
+  const launch = ['decision', 'event'].includes(node.type) && !isContainer ? null : details.launch;
   const g = el('g', { transform: `translate(${n.x},${n.y})` },
     `node t-${node.type}${isContainer ? ' container' : ''}${state.selectedId === node.id ? ' selected' : ''}${state.selectionIds.has(node.id) ? ' multi-selected' : ''}`);
   g.dataset.id = node.id;
   g.setAttribute('tabindex', '0');
   g.setAttribute('role', 'button');
-  g.setAttribute('aria-label', `${node.label} (${node.type})`);
+  g.setAttribute('aria-label', `${node.label} (${isContainer ? 'Group' : nodeTypeLabel(node.type)})`);
   if (details.description) g.setAttribute('aria-description', details.description);
 
   // selection ring
@@ -738,10 +759,21 @@ function buildNode(n) {
     g.appendChild(nodeShape(n));
     const totalH = n.lines.length * 17;
     g.appendChild(textLines(n.lines, n.w / 2, (n.h - totalH) / 2 + 13, 'label', 'middle'));
+  } else if (node.type === 'event') {
+    g.appendChild(nodeShape(n));
+    const glyph = icon(TYPE_ICONS.event, 14);
+    glyph.setAttribute('x', n.w / 2 - 7); glyph.setAttribute('y', 17);
+    glyph.classList.add('event-glyph');
+    g.append(glyph, textLines(n.lines, n.w / 2, (n.h - n.lines.length * 17) / 2 + 18, 'label', 'middle'));
   } else {
     g.appendChild(nodeShape(n));
     if (node.type === 'artifact') {
       g.appendChild(el('path', { d: `M${n.w - 13},0 V13 H${n.w}` }, 'artifact-fold'));
+    } else if (node.type === 'database') {
+      g.appendChild(el('path', { d: `M0,10 A${n.w / 2},10 0 0 0 ${n.w},10` }, 'shape-detail'));
+    } else if (node.type === 'system') {
+      g.appendChild(el('path', { d: `M1,11 H${n.w - 1}` }, 'shape-detail'));
+      for (const x of [10, 16, 22]) g.appendChild(el('circle', { cx: x, cy: 6, r: 1.2 }, 'window-dot'));
     }
     g.appendChild(iconChip(node.type, 11, (n.h - 24) / 2));
     g.append(...cardText(n, details, launch));
@@ -869,7 +901,7 @@ function buildNode(n) {
 function observationBadge(n) {
   const observation = nodeObservation(n.id);
   if (!observation) return null;
-  const hasLaunch = (n.node.type !== 'decision' || n.node.children) && nodeCardDetails(n.node).launch;
+  const hasLaunch = (!['decision', 'event'].includes(n.node.type) || n.node.children) && nodeCardDetails(n.node).launch;
   const badge = el('g', { transform: `translate(${n.w - 78 - (hasLaunch ? 30 : 0)},3)`, role: 'img', 'aria-label': observation.detail }, 'github-observation');
   badge.append(el('rect', { width: 72, height: 14, rx: 3 }));
   const label = el('text', { x: 36, y: 10, 'text-anchor': 'middle' });
@@ -888,7 +920,7 @@ bus.on('github-changed', () => {
     const badge = observationBadge(layout);
     previous?.remove();
     if (badge) node.append(badge);
-    if (!!previous !== !!badge && !layout.node.children && layout.node.type !== 'decision') {
+    if (!!previous !== !!badge && !layout.node.children && !['decision', 'event'].includes(layout.node.type)) {
       const body = node.querySelector('.node-body') ?? node;
       body.querySelectorAll(':scope > .label, :scope > .node-summary').forEach(text => text.remove());
       const details = nodeCardDetails(layout.node);
@@ -898,12 +930,13 @@ bus.on('github-changed', () => {
 });
 
 function buildEdge(e) {
+  const presentation = connectionPresentation(e.edge);
   const from = state.model?.byId.get(e.edge.from)?.label ?? e.edge.from;
   const to = state.model?.byId.get(e.edge.to)?.label ?? e.edge.to;
   const g = el('g', {
     tabindex: '0', role: 'button',
-    'aria-label': `${from} to ${to}${e.edge.label ? `: ${e.edge.label}` : ''}`,
-  }, 'edge');
+    'aria-label': `${presentation.label}: ${from} ${presentation.arrow ? 'to' : 'and'} ${to}${e.edge.label ? `: ${e.edge.label}` : ''}`,
+  }, `edge meaning-${e.edge.meaning || 'unspecified'}`);
   g.dataset.index = e.index;
   const smooth = e.smooth ? smoothEdgePath(e.points) : null;
   const d = smooth ? smooth.d : edgePath(e.points);
@@ -911,7 +944,7 @@ function buildEdge(e) {
   g.appendChild(el('path', { d }, 'line'));
 
   const pts = e.points;
-  if (pts.length >= 2) {
+  if (pts.length >= 2 && presentation.arrow) {
     const b = pts[pts.length - 1];
     const ang = smooth
       ? smooth.endAngle
@@ -1026,7 +1059,7 @@ function groupEdgesForRender(edges) {
   const byPair = new Map();
   const out = [];
   for (const e of edges) {
-    if (e.edge.via || e.edge.route || e.edge.fromSide || e.edge.toSide || e.edge.from === e.edge.to) { out.push({ single: e }); continue; }
+    if (e.edge.meaning || e.edge.via || e.edge.route || e.edge.fromSide || e.edge.toSide || e.edge.from === e.edge.to) { out.push({ single: e }); continue; }
     const key = [e.edge.from, e.edge.to].sort().join('→');
     if (!byPair.has(key)) byPair.set(key, []);
     byPair.get(key).push(e);

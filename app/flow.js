@@ -10,6 +10,7 @@ import { state, bus } from './state.js';
 import * as ctrl from './controller.js';
 import * as edit from './edit.js';
 import { scopeOf } from '../shared/model.js';
+import { NODE_VISUALS, carriesFlow } from '../shared/visual-language.js';
 import { nodeCost, rollupCost, formatMoney } from '../shared/cost.js';
 import {
   buildFlowScene,
@@ -31,13 +32,7 @@ const MAX_PAYLOADS = 48;
 const MAX_HOPS = 16;
 const SNAP = 0.25; // building drag snaps to quarter tiles
 
-const TYPE_WORD = {
-  process: 'Step',
-  decision: 'Decision',
-  system: 'System',
-  role: 'Person or team',
-  artifact: 'Document',
-};
+const TYPE_WORD = Object.fromEntries(Object.entries(NODE_VISUALS).map(([type, value]) => [type, value.label]));
 
 const KINDS = {
   api: { glyph: 'API', word: 'API call' },
@@ -1122,7 +1117,7 @@ function overviewPanel() {
     model.description ? h('p', { class: 'flow-desc' }, model.description) : null,
     h('div', { class: 'flow-stat-grid' },
       h('div', {}, h('strong', {}, String(steps)), h('span', {}, 'steps')),
-      h('div', {}, h('strong', {}, String(scope.edges.length)), h('span', {}, 'handoffs')),
+      h('div', {}, h('strong', {}, String(scope.edges.filter(carriesFlow).length)), h('span', {}, 'handoffs')),
       h('div', {}, h('strong', {}, String(sim.scene.entries.length)), h('span', {}, 'entrances')),
       h('div', {}, h('strong', {}, String(sim.flows.length)), h('span', {}, 'flows'))),
   ];
@@ -1341,7 +1336,7 @@ function buildTopbar(scope) {
 
   const statEls = [
     stat(String(steps), 'steps'),
-    stat(String(scope.edges.length), 'handoffs'),
+    stat(String(scope.edges.filter(carriesFlow).length), 'handoffs'),
   ];
   if (stats.kinds > 0) {
     if (stats.byKind.api) statEls.push(stat(String(stats.byKind.api), 'APIs'));

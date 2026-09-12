@@ -78,6 +78,7 @@ const PATHS = {
 export const TYPE_ICONS = {
   process: 'flow-arrow', system: 'app-window', role: 'user', artifact: 'file-text',
   decision: 'diamond', item: 'square', database: 'database', api: 'plugs-connected',
+  event: 'clock-counter-clockwise',
 };
 
 // The same local SVG assets serve HTML controls and SVG canvas badges.

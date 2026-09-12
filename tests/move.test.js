@@ -109,7 +109,7 @@ test('moved container keeps its subtree and inner edges', () => {
   );
 });
 
-test('exact duplicate after lift is dropped, near-duplicate (different label) kept', () => {
+test('exact duplicate after lift is dropped; different labels and meanings survive', () => {
   load(`
 name: Dup
 nodes:
@@ -138,16 +138,20 @@ edges:
   - from: a
     to: x
     label: other
+  - from: a
+    to: x
+    label: go
+    meaning: association
 `);
   // move x INTO c: a→x(go) lifts to a→c(go) = exact dup of existing → dropped;
-  // a→x(other) lifts to a→c(other) → kept
+  // a→x(other) and the explicitly non-flow association remain distinct.
   const r = edit.moveNode('x', 'c');
   assert.equal(r.moved, true);
   assert.equal(r.dropped, 1);
-  assert.equal(r.lifted, 1);
+  assert.equal(r.lifted, 2);
   const { model } = reserialize();
-  const edges = model.root.edges.map((e) => `${e.from}>${e.to}:${e.label}`).sort();
-  assert.deepEqual(edges, ['a>c:go', 'a>c:other'].sort());
+  const edges = model.root.edges.map((e) => `${e.from}>${e.to}:${e.label}:${e.meaning ?? ''}`).sort();
+  assert.deepEqual(edges, ['a>c:go:', 'a>c:other:', 'a>c:go:association'].sort());
 });
 
 test('two identical edges lifting to the same edge collapse to one', () => {

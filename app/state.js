@@ -1,6 +1,7 @@
 // Central app state + a tiny event bus. Everything UI-visible lives here.
 export const state = {
   standalone: typeof window !== 'undefined' && !!window.OPSMAP_STANDALONE,
+  standaloneHtml: null, // pristine export shell, captured before boot for offline copies
 
   maps: [],            // [{id, name, description, nodeCount, invalid, project, hasFlags, hasIssues}]
   projects: [],        // [{slug, name, mapCount}]
@@ -21,6 +22,7 @@ export const state = {
 
   connectFrom: null,   // node id while in connect mode
   pendingEdgeLabel: null, // branch label to apply when a connect completes
+  pendingEdgeMeaning: null, // explicitly chosen connection semantics
   presenting: false,
   workspaceView: 'map', // map | flow | brief | roadmap | audit
 

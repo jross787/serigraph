@@ -1,7 +1,7 @@
 // Comment-preserving edits against the YAML document. Every function
 // mutates state.doc in place; callers serialize with doc.toString().
 import { isMap, isSeq } from '../vendor/yaml.js';
-import { ancestryOf, scopeOf, EDGE_SIDES } from '../shared/model.js';
+import { ancestryOf, scopeOf, EDGE_SIDES, EDGE_MEANINGS, EDGE_KINDS } from '../shared/model.js';
 import { stripFlagComments } from '../shared/provenance.js';
 import { state } from './state.js';
 import { getLayout } from './canvas.js';
@@ -923,11 +923,11 @@ export function moveNode(nodeId, targetOwnerId) {
     const newFrom = e.from === nodeId ? repMoved : repOther;
     const newTo = e.to === nodeId ? repMoved : repOther;
     plans.push({
-      from: e.from, to: e.to, label: e.label || '',
+      from: e.from, to: e.to, label: e.label || '', meaning: e.meaning ?? null,
       newFrom, newTo, common,
       drop: !newFrom || !newTo || newFrom === newTo
         || scopeOf(model, common).edges.some((x) =>
-          x.from === newFrom && x.to === newTo && (x.label || '') === (e.label || '')),
+          x.from === newFrom && x.to === newTo && (x.label || '') === (e.label || '') && x.meaning === e.meaning),
     });
   }
 
@@ -961,10 +961,10 @@ export function moveNode(nodeId, targetOwnerId) {
       const it = edgesSeq.items[i];
       if (!isMap(it)) continue;
       const k = pending.findIndex((p) => p.from === it.get('from') && p.to === it.get('to')
-        && (p.label || '') === (it.get('label') ?? ''));
+        && (p.label || '') === (it.get('label') ?? '') && p.meaning === (it.get('meaning') ?? null));
       if (k === -1) continue;
       const plan = pending.splice(k, 1)[0];
-      const key = `${plan.common ?? ''}|${plan.newFrom}|${plan.newTo}|${plan.label}`;
+      const key = JSON.stringify([plan.common, plan.newFrom, plan.newTo, plan.label, plan.meaning]);
       if (plan.drop || written.has(key)) {
         doc.deleteIn([...srcScope.edgesPath, i]);
         dropped++;
@@ -1003,16 +1003,18 @@ function cleanupScope(doc, ownerId) {
   if (nEmpty && eEmpty) doc.deleteIn([...nodePath, 'children']);
 }
 
-export function addEdge(ownerId, { from, to, label }) {
+export function addEdge(ownerId, { from, to, label, meaning = null }) {
+  if (meaning != null && !EDGE_MEANINGS.includes(meaning)) throw new Error('invalid connection meaning');
   const doc = state.doc;
   const scope = ensureScope(doc, ownerId);
   if (!scope) throw new Error(`can't find scope for "${ownerId}"`);
   const trimmed = label?.trim() ?? '';
   const scopeModel = ownerId == null ? state.model?.root : state.model?.byId.get(ownerId)?.children;
-  if (scopeModel?.edges.some((e) => e.from === from && e.to === to && (e.label || '') === trimmed)) {
+  if (scopeModel?.edges.some((e) => e.from === from && e.to === to && (e.label || '') === trimmed && e.meaning === meaning)) {
     throw new Error('That connection already exists.');
   }
   const edge = { from, to };
+  if (meaning) edge.meaning = meaning;
   if (trimmed) edge.label = trimmed;
   doc.addIn(scope.edgesPath, doc.createNode(edge));
 }
@@ -1040,6 +1042,53 @@ function findEdgeItem(doc, { scopeId, index }) {
   const item = doc.getIn([...scope.edgesPath, index], true);
   if (!isMap(item)) throw new Error('edge not found');
   return item;
+}
+
+export function setEdgeMeaning(edgeRef, meaning) {
+  if (meaning != null && !EDGE_MEANINGS.includes(meaning)) throw new Error('invalid connection meaning');
+  const item = findEdgeItem(state.doc, edgeRef);
+  if (meaning == null) item.delete('meaning');
+  else item.set('meaning', meaning);
+}
+
+export function setEdgeKind(edgeRef, kind) {
+  if (kind != null && !EDGE_KINDS.includes(kind)) throw new Error('invalid transfer method');
+  const item = findEdgeItem(state.doc, edgeRef);
+  if (kind == null) item.delete('kind');
+  else item.set('kind', kind);
+}
+
+// Apply one reviewed outcome list, retaining routes/comments on existing
+// branches and leaving other relationships and incoming connections alone.
+export function setDecisionOutcomes(ownerId, nodeId, outcomes) {
+  const modelScope = scopeOf(state.model, ownerId);
+  if (!modelScope?.nodes.some((n) => n.id === nodeId && n.type === 'decision')) throw new Error('decision not found in this scope');
+  const eligible = new Set(modelScope.edges.flatMap((e, index) =>
+    e.from === nodeId && (!e.meaning || e.meaning === 'flow') ? [index] : []));
+  const siblings = new Set(modelScope.nodes.map((n) => n.id));
+  const kept = new Set(), labels = new Set();
+  const rows = outcomes.map((row) => {
+    const label = String(row.label || '').trim();
+    if (!label) throw new Error('Give every outcome a label.');
+    if (!siblings.has(row.to)) throw new Error('Choose a destination in this group for every outcome.');
+    if (labels.has(label.toLowerCase())) throw new Error('Use a different label for each outcome.');
+    labels.add(label.toLowerCase());
+    if (row.index != null) {
+      if (!eligible.has(row.index) || kept.has(row.index)) throw new Error('The decision changed. Reopen its outcomes.');
+      kept.add(row.index);
+    }
+    return { index: row.index, to: row.to, label };
+  });
+  const scope = ensureScope(state.doc, ownerId);
+  const sequence = state.doc.getIn(scope.edgesPath, true);
+  for (const row of rows.filter((r) => r.index != null)) {
+    const item = sequence.items[row.index];
+    item.set('to', row.to);
+    item.set('label', row.label);
+    item.set('meaning', 'flow');
+  }
+  for (const index of [...eligible].sort((a, b) => b - a)) if (!kept.has(index)) sequence.items.splice(index, 1);
+  for (const row of rows.filter((r) => r.index == null)) sequence.add(state.doc.createNode({ from: nodeId, to: row.to, label: row.label, meaning: 'flow' }));
 }
 
 // Swap an edge's direction in place; label, route, via, and comments stay.
