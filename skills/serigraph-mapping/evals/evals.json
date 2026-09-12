@@ -8,10 +8,11 @@
       "files": ["evals/fixtures/system-notes.txt"],
       "assertions": [
         "The output is a parseable Serigraph map with mode freeform.",
-        "The map uses system, database, api, and role or owner fields appropriately.",
+        "The map defines shared system, database, api, and role elements, places them in groups with use, and uses owners references appropriately.",
         "Salesforce is identified as the customer source of truth and Snowflake as a reporting copy.",
         "The unknown Looker owner remains unresolved rather than invented.",
-        "All confirmed data flows have useful directional edge labels."
+        "Confirmed data flows have meaning data and useful directional labels; ownership is not presented as a data flow.",
+        "Inferred API backend relationships are absent or explicitly marked inferred, not promoted to observed integrations."
       ]
     },
     {
@@ -37,6 +38,32 @@
         "No map file is created.",
         "The output does not substitute public or remembered vendor information.",
         "The user is asked for the correct source path."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Use these system notes in my other repository. Keep the map in that repo's maps/ directory, use the separately supplied Serigraph engine path to validate it, and do not start a server or contact live systems.",
+      "expected_output": "The map is authored outside the engine with current shared-identity syntax. Validation uses the explicit engine and map paths; skipped browser checks are disclosed.",
+      "files": ["evals/fixtures/system-notes.txt"],
+      "assertions": [
+        "Source repository, map destination, and engine checkout remain distinct.",
+        "No business map or configuration is written into the generic engine.",
+        "Only the requested output is validated, not unrelated maps.",
+        "No live API, server, installation, or publication is performed.",
+        "The result describes the actual checks and unresolved ownership."
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "I have a validated synthetic map and an engine checkout. Make a single HTML file I can share without Serigraph installed, and tell me what to use for a GitHub README. Do not publish anything or replace an existing file.",
+      "expected_output": "A new HTML snapshot generated with the explicit engine tool and destination, plus accurate SVG/PNG/Pages guidance and validation limits.",
+      "files": [],
+      "assertions": [
+        "The agent uses the current engine export tool with explicit input and output paths, without starting a server unnecessarily.",
+        "Existing outputs are preserved and publication is not performed.",
+        "The response distinguishes an interactive static-hosted page from GitHub's source view and README image embeds.",
+        "The response warns that full HTML/YAML include nested details and comments; read-only does not redact the source.",
+        "It reports actual browser checks or their unavailability, without claiming every browser or host is verified."
       ]
     }
   ]

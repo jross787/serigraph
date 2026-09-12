@@ -50,6 +50,23 @@ function reserialize() {
 
 beforeEach(() => load());
 
+test('stepped detours never retrace the segment at an outside bend', () => {
+  const a = { x: 0, y: 0, w: 200, h: 64, node: {} };
+  const b = { x: 300, y: 0, w: 200, h: 64, node: {} };
+  for (const sides of [{}, { fromSide: 'bottom', toSide: 'bottom' }, { fromSide: 'top', toSide: 'top' }]) {
+    for (const point of [{ x: 600, y: 180 }, { x: -100, y: 180 }, { x: 600, y: -180 }, { x: -100, y: -180 }]) {
+      const result = routeDragged(a, b, { route: 'stepped', ...sides }, point);
+      assert.deepEqual(result.labelPos, point, 'the bend remains under the pointer');
+      for (let i = 1; i < result.points.length - 1; i++) {
+        const p = result.points[i - 1], q = result.points[i], r = result.points[i + 1];
+        const sameLine = (p.x === q.x && q.x === r.x) || (p.y === q.y && q.y === r.y);
+        const dot = (q.x - p.x) * (r.x - q.x) + (q.y - p.y) * (r.y - q.y);
+        assert.ok(!sameLine || dot >= 0, `no retracing at ${JSON.stringify({ sides, point, q })}`);
+      }
+    }
+  }
+});
+
 test('stepped connector dragging follows both pointer axes and survives serialization', () => {
   const a = { x: 0, y: 0, w: 200, h: 64, node: {} };
   for (const [b, sides, points] of [

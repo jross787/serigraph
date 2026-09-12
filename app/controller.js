@@ -94,6 +94,21 @@ async function saveMapSource(source) {
   return result;
 }
 
+// Explicit Save uses the same conflict-protected pipeline as autosave.
+// It never creates an undo entry, replaces a map, or exports its contents.
+export async function saveCurrent() {
+  if (state.standalone || !state.mapId || !state.model || state.errors.length) return false;
+  if (saveConflictPending) { bus.emit('save-conflict', { mapId: state.mapId }); return false; }
+  if (state.saveStatus === 'saving') { bus.emit('toast', 'Saving changes…'); return false; }
+  if (state.saveStatus === 'saved') { bus.emit('toast', 'All applied changes are saved'); return true; }
+  try {
+    const result = await saveMapSource(state.source);
+    if (result?.conflict) return false;
+    bus.emit('toast', 'Map saved');
+    return true;
+  } catch (error) { bus.emit('toast', 'Save failed: ' + error.message, true); return false; }
+}
+
 function cleanHistoryLabel(label) {
   const value = String(label || '').trim();
   return value || 'edit map';

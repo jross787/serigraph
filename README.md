@@ -52,9 +52,48 @@ Choose a mode when you create a map:
 
 Files without a `mode` field use Process mode. A populated map cannot switch modes because Process and Freeform files store their contents differently. Use the **Systems of Record** template to start a Freeform map.
 
+## Use the mapping skill in another repo
+
+Copy the entire [`skills/serigraph-mapping`](skills/serigraph-mapping/SKILL.md)
+folder, including its `references/`, into that repo's
+`.agents/skills/serigraph-mapping/` (check before replacing an existing skill).
+It covers processes, systems, databases, APIs, shared ownership, connector
+meanings and routing, catalogs, economics, product plans, review, and exports.
+In this engine repo, `.agents/skills/serigraph-mapping` already links to it.
+
+Invoke `$serigraph-mapping`, supply your source material, map destination, and
+the absolute path to your Serigraph engine checkout. The destination repo does
+not need to contain the engine. The skill can draft YAML without an engine, but
+validation/preview/export need a current engine and Node.js 18+. Keep business
+maps in the intended [private workspace](docs/PRIVATE-WORKSPACES.md).
+
+## Portable exports
+
+Open **File** on the map toolbar:
+
+| Format | Use |
+| --- | --- |
+| Interactive HTML | One read-only file with the map, styles, JavaScript, and layout library included. Open in a current browser or host as a static page; no app installation needed. |
+| SVG | Scalable, themed image of the current Map scope for READMEs, slides, and print. |
+| PNG | Widely compatible image of the current Map scope, up to 2× resolution with a bounded pixel budget. |
+| YAML | Editable, lossless map source including comments and nested details. |
+| Markdown | Readable inventory, nested connections, ownership, catalog, and product documentation. |
+
+From another repo, create HTML without running the app:
+
+```sh
+node /absolute/path/to/serigraph/tools/export.mjs /absolute/path/to/map.yaml --out /absolute/path/to/map.html
+```
+
+The output folder must already exist; existing files are not overwritten.
+For GitHub, embed SVG/PNG in a README and serve interactive HTML through
+[GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages).
+GitHub's ordinary file view does not execute an HTML application.
+See [Exports](docs/EXPORTS.md) for offline compatibility, scope, and privacy limits.
+
 ## Share through Workbench
 
-Open a map, choose **More actions → Share & sync**, and paste a Workbench document link. Use an edit link when Serigraph needs to publish changes.
+Open a map, choose **Share & sync** from More actions or the toolbar's More menu, and paste a Workbench document link. Use an edit link when Serigraph needs to publish changes.
 
 Serigraph adds one managed section to the Workbench document. That section contains the full YAML and a live map preview. Other document content stays in place. If the document already contains a different map, Serigraph asks which copy to keep.
 
@@ -188,7 +227,7 @@ The complete schema, enums, validation rules, and examples are in [docs/FORMAT.m
 | **Delete shared element** | Remove the definition, all placements, and all connections after confirmation |
 | **Templates** | Insert a reusable block that matches the current map mode |
 | **Shift+P** | Enter presentation mode and walk through a Process flow |
-| **Export** | Download a PNG image, an SVG file, the Serigraph YAML file, or a standalone HTML app |
+| **File → Export** | Download interactive HTML, PNG, SVG, YAML, or Markdown; HTML runs without the app installed |
 | **Share & sync** | Link the map to a Workbench document, create access links, copy a local deep link, or download a read-only standalone application |
 | **?** | Open the shortcut reference |
 

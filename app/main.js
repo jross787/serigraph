@@ -16,14 +16,9 @@ import { initGitHub } from './github.js';
 
 // ── theme ────────────────────────────────────────────────────────────
 function initTheme() {
-  const saved = localStorage.getItem('opsmap-theme');
-  const dark = saved ? saved === 'dark' : false;
-  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-}
-function toggleTheme() {
-  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-  document.documentElement.dataset.theme = next;
-  localStorage.setItem('opsmap-theme', next);
+  let saved = null;
+  try { saved = localStorage.getItem('opsmap-theme'); } catch { /* file/sandbox viewers may deny storage */ }
+  document.documentElement.dataset.theme = ['frost', 'light', 'dark'].includes(saved) ? saved : 'frost';
 }
 
 // ── canvas event wiring ──────────────────────────────────────────────
@@ -40,12 +35,14 @@ function wireCanvasEvents() {
     if (state.connectFrom) {
       const from = state.connectFrom;
       const label = state.pendingEdgeLabel ?? null;
+      const meaning = state.pendingEdgeMeaning ?? (state.model.mode === 'process' ? 'flow' : null);
       state.connectFrom = null;
       state.pendingEdgeLabel = null;
+      state.pendingEdgeMeaning = null;
       canvas.paintSelection();
       if (from === id) { ui.toast('Connect cancelled'); return; }
       ctrl.commit(
-        () => edit.addEdge(state.scopeId, { from, to: id, label }),
+        () => edit.addEdge(state.scopeId, { from, to: id, label, meaning }),
         { historyLabel: 'add connection' },
       )
         .then((ok) => {
@@ -194,9 +191,11 @@ function wireCanvasEvents() {
   bus.on('connect-drag', (from, to) => {
     if (state.presenting || state.standalone) return;
     const label = state.pendingEdgeLabel ?? null;
+    const meaning = state.pendingEdgeMeaning ?? (state.model.mode === 'process' ? 'flow' : null);
     state.pendingEdgeLabel = null;
+    state.pendingEdgeMeaning = null;
     ctrl.commit(
-      () => edit.addEdge(state.scopeId, { from, to, label }),
+      () => edit.addEdge(state.scopeId, { from, to, label, meaning }),
       { historyLabel: 'add connection' },
     )
       .then((ok) => {
@@ -228,6 +227,7 @@ function wireCanvasEvents() {
     if (state.connectFrom) {
       state.connectFrom = null;
       state.pendingEdgeLabel = null;
+      state.pendingEdgeMeaning = null;
       canvas.paintSelection();
       ui.toast('Connect cancelled');
       return;
@@ -321,6 +321,11 @@ function wireKeyboard() {
       ui.openSearch();
       return;
     }
+    if (meta && ev.key.toLowerCase() === 's') {
+      ev.preventDefault();
+      ui.saveMap();
+      return;
+    }
     if (isTyping() || dialogOpen() || state.presenting) return;
     if (ev.target.closest?.('.catalog-detail')) return;
 
@@ -338,7 +343,7 @@ function wireKeyboard() {
 
     switch (ev.key) {
       case 'Escape':
-        if (state.connectFrom) { state.connectFrom = null; state.pendingEdgeLabel = null; canvas.paintSelection(); ui.toast('Connect cancelled'); }
+        if (state.connectFrom) { workbench.cancelTool(); ui.toast('Connect cancelled'); }
         else if (state.activeTool !== 'select') workbench.cancelTool();
         else if (!document.getElementById('templates-panel').hidden) ui.toggleTemplates(false);
         else if (ui.closeCatalog()) { /* preserve the map's scope and selection */ }
@@ -402,7 +407,7 @@ function wireToolbar() {
   on('btn-ai-settings', workbench.aiSettingsDialog);
   bus.on('ai-settings-request', workbench.aiSettingsDialog);
   on('btn-present', () => { productWorkspace.setWorkspaceView('map'); togglePresent(); });
-  on('btn-theme', toggleTheme);
+  on('btn-theme', ui.appearanceDialog);
   on('btn-help', ui.helpDialog);
   for (const button of document.querySelectorAll('.utility-popover button')) {
     button.addEventListener('click', () => { const menu = button.closest('details'); if (menu) menu.open = false; });
@@ -425,6 +430,9 @@ function wireToolbar() {
 
 // ── boot ─────────────────────────────────────────────────────────────
 async function boot() {
+  // Keep a pristine copy before rendering or wiring controls. Serializing the
+  // live UI later would include transient dialogs and duplicate rendered nodes.
+  if (state.standalone) state.standaloneHtml = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
   initTheme();
   for (const placeholder of document.querySelectorAll('[data-icon]')) {
     placeholder.replaceWith(icon(placeholder.dataset.icon, Number(placeholder.getAttribute('width')) || 18));

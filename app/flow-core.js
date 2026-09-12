@@ -2,12 +2,13 @@
 // No DOM and no app state: this runs in the browser, in Node tests, and
 // inside standalone HTML exports. Everything here is presentation math over
 // the parsed model; nothing is ever written back to the file.
+import { carriesFlow } from '../shared/visual-language.js';
 
 // The "work path" is what payloads travel: steps, decisions, and the
 // documents that carry work between them. People and systems support the
 // path; they receive and provide handoffs but work does not originate there.
-export const WORK_TYPES = new Set(['process', 'decision', 'artifact']);
-export const SUPPORT_TYPES = new Set(['role', 'system']);
+export const WORK_TYPES = new Set(['process', 'decision', 'event', 'artifact']);
+export const SUPPORT_TYPES = new Set(['role', 'system', 'database', 'api']);
 
 function adjacency(scope) {
   const nodes = scope?.nodes ?? [];
@@ -16,7 +17,7 @@ function adjacency(scope) {
   const inn = new Map(nodes.map((node) => [node.id, []]));
   const edges = [];
   (scope?.edges ?? []).forEach((edge, index) => {
-    if (!byId.has(edge.from) || !byId.has(edge.to) || edge.from === edge.to) return;
+    if (!carriesFlow(edge) || !byId.has(edge.from) || !byId.has(edge.to) || edge.from === edge.to) return;
     edges.push({ edge, index });
     out.get(edge.from).push({ to: edge.to, index });
     inn.get(edge.to).push({ from: edge.from, index });
@@ -61,7 +62,7 @@ function findBackEdges(nodes, out) {
 export function entryPoints(scope) {
   const { nodes, byId, inn } = adjacency(scope);
   return nodes
-    .filter((node) => node.type === 'process')
+    .filter((node) => node.type === 'process' || node.type === 'event')
     .filter((node) => !(inn.get(node.id) ?? []).some(({ from }) => WORK_TYPES.has(byId.get(from)?.type)))
     .map((node) => node.id);
 }
@@ -144,7 +145,7 @@ export function integrationStats(scope) {
   const issues = [];
   let kinds = 0;
   (scope?.edges ?? []).forEach((edge, index) => {
-    if (edge.kind && byKind[edge.kind] != null) {
+    if (carriesFlow(edge) && edge.kind && byKind[edge.kind] != null) {
       byKind[edge.kind] += 1;
       kinds += 1;
     }

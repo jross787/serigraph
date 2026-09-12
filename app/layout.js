@@ -79,6 +79,10 @@ function sizeNode(node, model) {
     const lw = Math.max(...lines.map((l) => measure(l)), 40);
     return { w: Math.max(120, Math.min(148, lw + 40)), h: Math.max(88, lines.length * 17 + 44), lines };
   }
+  if (node.type === 'event') {
+    const lines = wrapText(node.label, 86, CARD_FONT, 3).map((line) => fitText(line, 86));
+    return { w: 112, h: 112, lines };
+  }
   // Peer cards share a footprint; reserve room for the icon and corner badges.
   const labelWidth = 132;
   // Also cap unbroken names that exceed wrapText's word-based limit.
@@ -179,7 +183,7 @@ function shelfPack(blocks, gap = 72) {
 const centerOf = (n) => ({ x: n.x + n.w / 2, y: n.y + n.h / 2 });
 
 // point where the segment from n's center toward `toward` crosses n's
-// outline (diamond for decisions, bounding rect for everything else)
+// outline. Side overrides always use the four visible midpoints.
 function boundaryPoint(n, toward, side) {
   const c = centerOf(n);
   if (side === 'top') return { x: c.x, y: n.y };
@@ -196,6 +200,32 @@ function boundaryPoint(n, toward, side) {
     const sx = dx ? (n.w / 2) / Math.abs(dx) : Infinity;
     const sy = dy ? (n.h / 2) / Math.abs(dy) : Infinity;
     s = Math.min(sx, sy, 1);
+    const type = n.node?.children ? null : n.node?.type;
+    if (type === 'event') {
+      s = Math.min(1, 1 / Math.hypot(dx / (n.w / 2), dy / (n.h / 2)));
+    } else if (type === 'api') {
+      s = Math.min(s, (n.w / 2) / (Math.abs(dx) + 16 * Math.abs(dy) / (n.h / 2)));
+    } else if (type === 'artifact' && dx > dy) {
+      s = Math.min(s, (n.w / 2 + n.h / 2 - 13) / (dx - dy));
+    } else if (type === 'role' || type === 'database') {
+      // Clip only the rounded end/cap, leaving each card's footprint fixed.
+      const px = n.w / 2 + dx * s, py = n.h / 2 + dy * s;
+      let ex, ey, rx, ry;
+      if (type === 'role' && (px < n.h / 2 || px > n.w - n.h / 2)) {
+        ex = px < n.w / 2 ? n.h / 2 : n.w - n.h / 2;
+        ey = n.h / 2; rx = ry = n.h / 2;
+      } else if (type === 'database' && (py < 10 || py > n.h - 10)) {
+        ex = n.w / 2; ey = py < n.h / 2 ? 10 : n.h - 10;
+        rx = n.w / 2; ry = 10;
+      }
+      if (rx) {
+        const ox = (n.w / 2 - ex) / rx, oy = (n.h / 2 - ey) / ry;
+        const vx = dx / rx, vy = dy / ry;
+        const aa = vx * vx + vy * vy, bb = 2 * (ox * vx + oy * vy);
+        const discriminant = bb * bb - 4 * aa * (ox * ox + oy * oy - 1);
+        if (discriminant >= 0) s = Math.min(s, (-bb + Math.sqrt(discriminant)) / (2 * aa));
+      }
+    }
   }
   return { x: c.x + dx * s, y: c.y + dy * s };
 }
@@ -317,6 +347,76 @@ export function routeVia(a, b, via, edge = {}) {
   return { points: [p1, { x: via.x, y: via.y }, p2], labelPos, smooth: true };
 }
 
+const distinctPoints = (points) => points.filter((p, i) => !i || p.x !== points[i - 1].x || p.y !== points[i - 1].y);
+function retraces(points) {
+  return points.slice(1, -1).some((q, i) => {
+    const p = points[i], r = points[i + 2];
+    return ((p.x === q.x && q.x === r.x) || (p.y === q.y && q.y === r.y))
+      && (q.x - p.x) * (r.x - q.x) + (q.y - p.y) * (r.y - q.y) < 0;
+  });
+}
+
+function steppedApproach(node, p, via, flat, side) {
+  const axis = flat ? 'x' : 'y';
+  const center = centerOf(node);
+  const direction = side ? (side === 'left' || side === 'top' ? -1 : 1)
+    : Math.sign(p[axis] - center[axis]) || Math.sign(via[axis] - center[axis]) || 1;
+  const distance = (via[axis] - p[axis]) * direction;
+  const stub = { ...p, [axis]: p[axis] + direction * (distance > 0 ? Math.min(32, distance / 2) : 32) };
+  return [p, stub, flat ? { x: stub.x, y: via.y } : { x: via.x, y: stub.y }];
+}
+
+// Joining two shortest legs at a waypoint can create a doubled-back spike.
+// Keep all good routes unchanged; only that case needs alternative elbows.
+// A few bounded candidates preserve the exact pointer and card attachments.
+function untangleStepped(points, a, b, via, startFlat, endFlat, edge) {
+  if (!retraces(points)) return points;
+  const alternatives = (node, p, flat, side) => {
+    const [port, stub, elbow] = steppedApproach(node, p, via, flat, side);
+    const run = flat ? 'x' : 'y', cross = flat ? 'y' : 'x', size = flat ? 'h' : 'w';
+    const corners = [
+      Math.min(a[cross], b[cross], via[cross]) - 32,
+      Math.max(a[cross] + a[size], b[cross] + b[size], via[cross]) + 32,
+    ];
+    const paths = [[port, stub, elbow, via]];
+    if ((via[run] - port[run]) * (stub[run] - port[run]) >= 0) {
+      paths.push([port, { ...port, [run]: via[run] }, via]);
+    }
+    for (const lane of corners) paths.push([port, stub, { ...stub, [cross]: lane }, { ...via, [cross]: lane }, via]);
+    return paths;
+  };
+  const segmentsMeet = (p, q, r, s) => {
+    const lo = (x, y) => Math.min(x, y), hi = (x, y) => Math.max(x, y);
+    return Math.max(lo(p.x, q.x), lo(r.x, s.x)) <= Math.min(hi(p.x, q.x), hi(r.x, s.x))
+      && Math.max(lo(p.y, q.y), lo(r.y, s.y)) <= Math.min(hi(p.y, q.y), hi(r.y, s.y));
+  };
+  const score = (path) => {
+    if (retraces(path)) return Infinity;
+    let cost = path.length * 16;
+    for (let i = 1; i < path.length; i++) {
+      const p = path[i - 1], q = path[i];
+      cost += Math.abs(q.x - p.x) + Math.abs(q.y - p.y);
+      for (const n of [a, b]) {
+        // Prefer clearing the endpoint cards, without claiming a complete
+        // obstacle router (a user can deliberately put the via inside one).
+        if (Math.max(p.x, q.x) > n.x + .001 && Math.min(p.x, q.x) < n.x + n.w - .001
+          && Math.max(p.y, q.y) > n.y + .001 && Math.min(p.y, q.y) < n.y + n.h - .001) cost += 10000;
+      }
+      for (let j = i + 2; j < path.length; j++) if (segmentsMeet(p, q, path[j - 1], path[j])) cost += 10000;
+    }
+    return cost;
+  };
+  let best = points, bestScore = Infinity;
+  for (const first of alternatives(a, points[0], startFlat, edge.fromSide)) {
+    for (const last of alternatives(b, points.at(-1), endFlat, edge.toSide)) {
+      const candidate = distinctPoints([...first, ...last.slice(0, -1).reverse()]);
+      const value = score(candidate);
+      if (value < bestScore) { best = candidate; bestScore = value; }
+    }
+  }
+  return best;
+}
+
 // Route by style: curved is the smooth cable through the via; angled is one
 // rounded corner at the via; stepped passes through both coordinates of
 // the via, adding a detour when needed; straight ignores the via entirely.
@@ -346,20 +446,10 @@ export function routeStyled(a, b, via, style, edge = {}) {
       // A single stair cannot reach a sideways drag between vertically
       // aligned cards (or an up/down drag between horizontal cards). Leave
       // each card briefly, then route the middle run through the pointer.
-      const approach = (node, p, side) => {
-        const runAxis = startFlat ? 'x' : 'y';
-        const center = centerOf(node);
-        const direction = side ? (side === 'left' || side === 'top' ? -1 : 1)
-          : Math.sign(p[runAxis] - center[runAxis]) || Math.sign(via[runAxis] - center[runAxis]) || 1;
-        const distance = (via[runAxis] - p[runAxis]) * direction;
-        const stub = { ...p, [runAxis]: p[runAxis] + direction * (distance > 0 ? Math.min(32, distance / 2) : 32) };
-        const elbow = startFlat ? { x: stub.x, y: via.y } : { x: via.x, y: stub.y };
-        return [p, stub, elbow];
-      };
-      points = [...approach(a, p1, edge.fromSide), { x: via.x, y: via.y },
-        ...approach(b, p2, edge.toSide).reverse()];
+      points = [...steppedApproach(a, p1, via, startFlat, edge.fromSide), { x: via.x, y: via.y },
+        ...steppedApproach(b, p2, via, endFlat, edge.toSide).reverse()];
     }
-    points = points.filter((p, i) => !i || p.x !== points[i - 1].x || p.y !== points[i - 1].y);
+    points = untangleStepped(distinctPoints(points), a, b, via, startFlat, endFlat, edge);
     return { points, labelPos: { x: via.x, y: via.y } };
   }
   return routeVia(a, b, via, edge);

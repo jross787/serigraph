@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { writeFileSync, rmSync, readFileSync, mkdtempSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { buildExport } from '../server/export.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,6 +55,9 @@ test('standalone export inlines everything and rewrites module specifiers', asyn
     const src = Buffer.from(v.split(',')[1], 'base64').toString('utf8');
     const bad = src.match(/from\s*['"]\.\.?\//);
     assert.equal(bad, null, `unrewritten relative import in ${k}`);
+    for (const match of src.matchAll(/(?:from\s*|import\s*\(?\s*)['"](opsmap\/[^'"]+)['"]/g)) {
+      assert.ok(im.imports[match[1]], `${k} imports missing bundled module ${match[1]}`);
+    }
   }
 });
 
@@ -92,6 +96,44 @@ test('export survives $-replacement patterns in user YAML (regression)', async (
   assert.equal(payload.source, source, 'YAML embedded verbatim');
   assert.match(html, /<title>Payroll \$&(amp;)? Books — Serigraph<\/title>|<title>Payroll \$& Books — Serigraph<\/title>/);
   assert.ok(!html.includes("</body></html></script>"), 'no document-tail splicing');
+});
+
+test('standalone export keeps HTML-looking source inert and escapes the title', async () => {
+  const name = '</title><script>alert("map")</script> & <review>';
+  const source = `name: ${JSON.stringify(name)}\ndescription: ${JSON.stringify('</script><script>alert("source")</script>')}\nnodes: []\n`;
+  const html = await buildExport(ROOT, 'inert', source);
+  assert.ok(html.includes('&lt;/title&gt;&lt;script&gt;'));
+  assert.ok(html.includes('&amp; &lt;review&gt; — Serigraph</title>'));
+  assert.ok(!html.includes('<script>alert('));
+  const payload = JSON.parse(html.match(/window\.OPSMAP_STANDALONE = (.*?);<\/script>/s)[1]);
+  assert.equal(payload.source, source);
+});
+
+test('HTML CLI works from another repo, validates input, and never overwrites output', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'serigraph-export-'));
+  const input = path.join(dir, 'request map.yaml');
+  const output = path.join(dir, 'request.html');
+  const badOutput = path.join(dir, 'bad.html');
+  const source = 'name: Portable request\nnodes: [{ id: received, type: event, label: Received }]\n';
+  const cli = path.join(ROOT, 'tools/export.mjs');
+  try {
+    writeFileSync(input, source);
+    const out = execFileSync(process.execPath, [cli, input, '--out', output], { cwd: dir, encoding: 'utf8' });
+    assert.match(out, /Exported Portable request/);
+    const html = readFileSync(output, 'utf8');
+    const payload = JSON.parse(html.match(/window\.OPSMAP_STANDALONE = (.*?);<\/script>/s)[1]);
+    assert.equal(payload.source, source);
+    assert.equal(payload.id, 'request-map');
+    assert.throws(() => execFileSync(process.execPath, [cli, input, '--out', output], { cwd: dir, stdio: 'pipe' }),
+      (e) => e.status === 1 && /already exists/.test(e.stderr));
+    assert.equal(readFileSync(output, 'utf8'), html);
+    writeFileSync(input, 'name: Invalid\nnodes: [{ id: bad, type: nope, label: Invalid }]\n');
+    assert.throws(() => execFileSync(process.execPath, [cli, input, '--out', badOutput], { cwd: dir, stdio: 'pipe' }),
+      (e) => e.status === 1 && /line 2/.test(e.stderr));
+    assert.equal(existsSync(badOutput), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('public app shell uses the Serigraph brand while compatibility namespaces stay stable', () => {

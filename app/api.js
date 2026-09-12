@@ -32,6 +32,11 @@ async function jfetch(url, opts) {
 }
 
 export const api = {
+  exportHtml: (id, source) => jfetch('/api/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, source }),
+  }),
   githubConfig: () => jfetch('/api/github'),
   githubObservation: signal => jfetch('/api/github/observation', { signal }),
   githubPullChecks: (number, signal) => jfetch(`/api/github/pulls/${number}`, { signal }),

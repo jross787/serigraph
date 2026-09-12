@@ -4,7 +4,9 @@
 import { state, bus, currentProjectSlug } from './state.js';
 import { api } from './api.js';
 import { parseMap } from '../shared/model.js';
+import { NODE_VISUALS, CONNECTION_MEANINGS, nodeTypeLabel, carriesFlow } from '../shared/visual-language.js';
 import { buildHash } from './routes.js';
+import { mapMarkdown } from './product.js';
 import * as canvas from './canvas.js';
 import * as ctrl from './controller.js';
 import * as workbenchSync from './workbench-sync.js';
@@ -33,6 +35,7 @@ const TOOL_ICONS = {
   history: 'clock-counter-clockwise', import: 'download-simple', export: 'upload-simple',
   share: 'share-network', zoomOut: 'minus', zoomIn: 'plus', fit: 'corners-out',
   more: 'dots-three', help: 'question', align: 'align-left',
+  file: 'file-text', save: 'check', templates: 'stack', theme: 'moon', language: 'diamond',
 };
 
 const ZOOM_LEVELS = [50, 75, 100, 150, 200];
@@ -54,8 +57,8 @@ const TOOL_GROUPS = [
     { id: 'hand', label: 'Hand', shortcut: 'H', description: 'Pan the canvas without changing the selection.' },
   ],
   [
-    { id: 'unit', label: 'Unit', shortcut: 'N', description: 'Add a process, decision, role, system, or artifact.', flyout: true },
-    { id: 'connect', label: 'Connect', shortcut: 'C', description: 'Join two steps with a workflow connection.', flyout: true },
+    { id: 'unit', label: 'Add', shortcut: 'N', description: 'Add a step, decision, event, person, or resource.', flyout: true },
+    { id: 'connect', label: 'Connect', shortcut: 'C', description: 'Choose a connection meaning, then its endpoints.', flyout: true },
   ],
   [
     { id: 'lane', label: 'Owner lanes', shortcut: 'L', description: 'Group the current map by accountable owner.' },
@@ -174,12 +177,14 @@ function refreshRail() {
     undo: !canEdit || !state.undoStack.length,
     redo: !canEdit || !state.redoStack.length,
     history: !state.mapId || state.standalone,
+    save: !canEdit || state.saveStatus === 'saving',
     'import-transcript': state.standalone,
     'import-file': state.standalone,
     'export-png': !state.mapId,
     'export-svg': !state.mapId,
     'export-yaml': !state.mapId,
     'export-html': !state.mapId,
+    'export-markdown': !state.model,
     share: !state.mapId,
     'zoom-out': !state.model,
     'zoom-fit': !state.model,
@@ -253,9 +258,10 @@ function setTool(id) {
     canvas.setProbePath(null);
     hideProbePanel();
   }
-  if (id !== 'connect' && state.connectFrom) {
+  if (id !== 'connect') {
     state.connectFrom = null;
     state.pendingEdgeLabel = null;
+    state.pendingEdgeMeaning = null;
     canvas.paintSelection();
   }
   refreshRail();
@@ -264,7 +270,8 @@ function setTool(id) {
 function positionFlyout(anchor, host) {
   const rect = anchor.getBoundingClientRect();
   host.style.top = `${rect.bottom + 8}px`;
-  host.style.left = `${Math.max(8, Math.min(window.innerWidth - 236, rect.left))}px`;
+  host.style.left = `${Math.max(8, Math.min(window.innerWidth - 324, rect.left))}px`;
+  host.style.maxHeight = `${Math.max(140, window.innerHeight - rect.bottom - 24)}px`;
 }
 
 function showUnitFlyout(anchor) {
@@ -272,14 +279,14 @@ function showUnitFlyout(anchor) {
   if (!host || !anchor) return;
   const freeform = state.model?.mode === 'freeform';
   positionFlyout(anchor, host);
-  const types = freeform
-    ? [['item', 'Item'], ['system', 'System'], ['database', 'Database'], ['api', 'API'], ['role', 'Person / team'], ['artifact', 'Document']]
-    : [['process', 'Process'], ['decision', 'Decision'], ['role', 'Role'], ['system', 'System'], ['artifact', 'Artifact']];
+  const addingGroup = freeform && state.scopeId == null;
+  const types = addingGroup ? [['item', 'Group']] : Object.entries(NODE_VISUALS).map(([key, value]) => [key, value.label]);
   const items = types.map(([type, label]) => {
     const button = h('button', {
       class: `tool-flyout-item t-${type}`,
       title: `Drag onto the canvas to add a ${label.toLowerCase()}; click to open the form`,
-    }, svgIcon(ICONS[type]), h('span', {}, label));
+    }, svgIcon(addingGroup ? 'stack' : ICONS[type]), h('span', { class: 'tool-choice-copy' },
+      h('strong', {}, label), h('small', {}, addingGroup ? 'A map inside your map.' : NODE_VISUALS[type].hint)));
     ui.enableNodeTypeDrag(button, type, {
       onActivate: () => {
         closeFlyout();
@@ -294,8 +301,11 @@ function showUnitFlyout(anchor) {
     return button;
   });
   host.replaceChildren(
-    h('div', { class: 'tool-flyout-title' }, freeform ? 'Add an item' : 'Add a unit'),
+    h('div', { class: 'tool-flyout-title' }, addingGroup ? 'Organize this map' : 'What belongs on the map?'),
     ...items,
+    h('p', { class: 'tool-flyout-note' }, addingGroup
+      ? 'Open a group to add steps, decisions, people, and resources inside it.'
+      : 'Click to name it, or drag it onto the map. Shape describes the kind of thing—not its status.'),
   );
   host.removeAttribute('hidden');
 }
@@ -303,15 +313,14 @@ function showUnitFlyout(anchor) {
 function showConnectFlyout(anchor) {
   const host = document.getElementById('tool-flyout');
   if (!host || !anchor) return;
-  const freeform = state.model?.mode === 'freeform';
   positionFlyout(anchor, host);
   host.replaceChildren(
-    h('div', { class: 'tool-flyout-title' }, freeform ? 'Connect items' : 'Connect steps'),
-    h('button', { class: 'tool-flyout-item selected', onClick: () => { closeFlyout(); startConnect(); } },
-      svgIcon(TOOL_ICONS.connect), h('span', {}, freeform ? 'Connection' : 'Workflow handoff'), h('kbd', {}, 'C')),
-    h('p', { class: 'tool-flyout-note' }, freeform
-      ? 'Select one item, then the item it connects to. Use the label to explain the relationship.'
-      : 'Select an origin, then the step that follows it. Edge labels can describe the handoff or outcome.'),
+    h('div', { class: 'tool-flyout-title' }, 'What does this connection mean?'),
+    ...Object.entries(CONNECTION_MEANINGS).map(([meaning, value]) => h('button', {
+      class: 'tool-flyout-item', onClick: () => { state.pendingEdgeMeaning = meaning; closeFlyout(); startConnect(); },
+    }, svgIcon(value.arrow ? 'arrow-right' : 'minus'), h('span', { class: 'tool-choice-copy' },
+      h('strong', {}, value.label), h('small', {}, value.hint)))),
+    h('p', { class: 'tool-flyout-note' }, 'Choose an origin, then its destination. A connection describes the map; it does not prove live activity.'),
   );
   host.removeAttribute('hidden');
 }
@@ -387,6 +396,7 @@ function findDirectedPath(fromId, toId) {
   const edges = scope.edges.map((edge, index) => ({ edge, index }));
   const next = new Map();
   for (const item of edges) {
+    if (!carriesFlow(item.edge)) continue;
     if (!next.has(item.edge.from)) next.set(item.edge.from, []);
     next.get(item.edge.from).push(item);
   }
@@ -496,9 +506,9 @@ export function openReview(nodeId = state.selectedId) {
   textarea.focus();
 }
 
-function makeDialog(title, body) {
+function makeDialog(title, body, onClose = () => {}) {
   const root = document.getElementById('dialog-root');
-  const close = () => backdrop.remove();
+  const close = () => { backdrop.remove(); onClose(); };
   const backdrop = h('div', { class: 'dialog-backdrop workbench-backdrop', onPointerdown: (event) => { if (event.target === backdrop) close(); } },
     h('section', { class: 'dialog workbench-dialog', role: 'dialog', 'aria-label': title },
       h('div', { class: 'workbench-dialog-head' }, h('h2', {}, title), h('button', { onClick: close, title: 'Close' }, 'Close')),
@@ -532,12 +542,13 @@ export function openShareDialog() {
     const input = h('input', { class: 'f-input', value: link, readonly: '' });
     return h('section', { class: 'share-section' },
       h('div', { class: 'share-section-head' }, h('h3', {}, 'Local link'), h('span', { class: 'access-badge' }, 'This computer')),
-      h('p', { class: 'hint' }, `A deep link opens the selected ${item} in context. The map source remains portable YAML.`),
+      h('p', { class: 'hint' }, `A deep link opens the selected ${item} in context on a reachable app. Download HTML for a portable, interactive file — no Serigraph installation needed.`),
       h('div', { class: 'share-link' }, input,
         h('button', { class: 'd-btn primary', onClick: async () => { if (await copyText(link)) ui.toast('Link copied'); } }, 'Copy link')),
       h('div', { class: 'share-actions' },
         h('button', { class: 'd-btn', onClick: downloadYaml }, 'Download YAML'),
-        h('button', { class: 'd-btn', onClick: () => { if (state.mapId) window.location.href = `/export/${encodeURIComponent(state.mapId)}.html`; } }, 'Download standalone app')));
+        h('button', { class: 'd-btn', onClick: downloadHtml }, 'Download interactive HTML')),
+      h('p', { class: 'hint' }, 'Downloads include the applied map, not unapplied form drafts. HTML and YAML include all nested details and source comments. Review private content before sharing; downloading does not publish it.'));
   };
 
   const renderShareResult = (container, share) => {
@@ -663,19 +674,51 @@ function downloadBlob(blob, filename, message) {
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
-  setTimeout(() => URL.revokeObjectURL(href), 0);
+  setTimeout(() => URL.revokeObjectURL(href), 1000);
   ui.toast(message);
+}
+
+export async function downloadHtml() {
+  if (!state.mapId || !state.model) return;
+  const id = state.mapId;
+  const source = state.source;
+  try {
+    const html = state.standalone ? state.standaloneHtml : (await api.exportHtml(id, source)).html;
+    if (!html) throw new Error('Reload this file before making a copy.');
+    downloadBlob(new Blob([html], { type: 'text/html;charset=utf-8' }),
+      `${id.replace(/\//g, '-')}.html`, 'Interactive HTML downloaded — opens without Serigraph');
+  } catch (error) {
+    ui.toast(`Could not export HTML: ${error.message}`, true);
+  }
+}
+
+export function downloadMarkdown() {
+  if (!state.model || !state.mapId) return;
+  downloadBlob(new Blob([mapMarkdown(state.model)], { type: 'text/markdown;charset=utf-8' }),
+    `${state.mapId.replace(/\//g, '-')}.md`, 'Markdown downloaded');
 }
 
 export function downloadSvg() {
   const svgString = canvas.getCanvasSvgString();
   if (!svgString || !state.mapId) return;
   const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
-  downloadBlob(blob, `${state.mapId.replace(/\//g, '-')}.svg`, 'SVG downloaded');
+  previewImageExport(blob, 'svg', state.mapId);
 }
 
-// Rasterize the exported SVG at 2x on a white background. OffscreenCanvas
-// keeps the work off the DOM; a plain canvas is the fallback.
+function previewImageExport(blob, format, mapId) {
+  const href = URL.createObjectURL(blob);
+  const filename = `${mapId.replace(/\//g, '-')}.${format}`;
+  makeDialog(`Export ${format.toUpperCase()}`, h('div', { class: 'share-stack' },
+    h('p', { class: 'hint' }, 'Current Map scope, with the full content fitted and selection highlights removed. Review the image before sharing.'),
+    h('img', { src: href, alt: `${format.toUpperCase()} export preview`, class: 'map-export-preview' }),
+    h('div', { class: 'share-actions' },
+      h('a', { class: 'd-btn', href, target: '_blank', rel: 'noopener noreferrer' }, 'Open full-size preview'),
+      h('button', { class: 'd-btn primary', onClick: () => downloadBlob(blob, filename, `${format.toUpperCase()} downloaded`) }, `Download ${format.toUpperCase()}`))),
+  () => URL.revokeObjectURL(href));
+}
+
+// Rasterize at up to 2x, bounded to 16 MP / 8192 px per side. Large maps
+// downscale instead of exceeding common browser canvas/memory limits.
 async function rasterizePng(svgString) {
   const [, , boxWidth, boxHeight] = (/viewBox="([^"]*)"/.exec(svgString)?.[1] ?? '').split(/\s+/).map(Number);
   let source = svgString;
@@ -693,13 +736,14 @@ async function rasterizePng(svgString) {
     const width = boxWidth || image.naturalWidth;
     const height = boxHeight || image.naturalHeight;
     if (!width || !height) throw new Error('The map image has no size.');
-    const scale = 2;
+    const scale = Math.min(2, 8192 / width, 8192 / height, Math.sqrt(16_000_000 / (width * height)));
     const pixelWidth = Math.max(1, Math.round(width * scale));
     const pixelHeight = Math.max(1, Math.round(height * scale));
     const target = typeof OffscreenCanvas === 'function'
       ? new OffscreenCanvas(pixelWidth, pixelHeight)
       : Object.assign(document.createElement('canvas'), { width: pixelWidth, height: pixelHeight });
     const ctx = target.getContext('2d');
+    if (!ctx) throw new Error('This browser could not create a canvas. Use SVG instead.');
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, pixelWidth, pixelHeight);
     ctx.drawImage(image, 0, 0, pixelWidth, pixelHeight);
@@ -715,11 +759,12 @@ async function rasterizePng(svgString) {
 export async function downloadPng() {
   const svgString = canvas.getCanvasSvgString();
   if (!svgString || !state.mapId) return;
+  const id = state.mapId;
   try {
     const blob = await rasterizePng(svgString);
-    downloadBlob(blob, `${state.mapId.replace(/\//g, '-')}.png`, 'PNG downloaded');
-  } catch {
-    ui.toast('Could not render the map image.', true);
+    previewImageExport(blob, 'png', id);
+  } catch (error) {
+    ui.toast(`Could not render PNG: ${error.message} Try SVG for large maps.`, true);
   }
 }
 
@@ -915,14 +960,18 @@ function runToolbarAction(action, target) {
     case 'undo': ctrl.undo(); break;
     case 'redo': ctrl.redo(); break;
     case 'history': openHistory(); break;
+    case 'save': ui.saveMap(); break;
+    case 'open-map': document.getElementById('map-switcher')?.click(); break;
+    case 'templates': ui.toggleTemplates(); break;
+    case 'language': ui.mapLanguageDialog(); break;
+    case 'appearance': ui.appearanceDialog(); break;
     case 'import-transcript': ui.importDialog(); break;
     case 'import-file': importMapFile(); break;
     case 'export-png': downloadPng(); break;
     case 'export-svg': downloadSvg(); break;
     case 'export-yaml': downloadYaml(); break;
-    case 'export-html':
-      if (state.mapId) window.location.href = `/export/${encodeURIComponent(state.mapId)}.html`;
-      break;
+    case 'export-html': downloadHtml(); break;
+    case 'export-markdown': downloadMarkdown(); break;
     case 'share': openShareDialog(); break;
     case 'zoom-out': canvas.zoomBy(0.77); break;
     case 'zoom-fit': canvas.fit(); break;
@@ -936,7 +985,7 @@ function runToolbarAction(action, target) {
 function toolbarToolButton(tool, { labeled = false, className = '' } = {}) {
   const freeform = state.model?.mode === 'freeform';
   const label = tool.id === 'unit'
-    ? freeform ? 'Add item' : 'Add step'
+    ? freeform && state.scopeId == null ? 'Add group' : 'Add'
     : tool.label;
   return h('button', {
     class: `tool-button toolbar-tool ${labeled ? 'labeled' : ''} ${className}`.trim(),
@@ -1008,16 +1057,22 @@ function renderRail() {
   const secondaryTools = visibleToolGroups().flat()
     .filter((tool) => !['select', 'hand', 'unit', 'connect'].includes(tool.id));
 
-  const importMenu = toolbarMenu('Import', 'import', [
-    toolbarMenuAction('import-file', 'Serigraph YAML file', 'import'),
-    toolbarMenuAction('import-transcript', 'Meeting transcript', 'note'),
-  ], 'toolbar-wide');
-  const exportMenu = toolbarMenu('Export', 'export', [
-    toolbarMenuAction('export-png', 'PNG image', 'export'),
-    toolbarMenuAction('export-svg', 'SVG file', 'export'),
-    toolbarMenuAction('export-yaml', 'Serigraph YAML file', 'export'),
-    toolbarMenuAction('export-html', 'Standalone HTML app', 'export'),
-  ], 'toolbar-wide');
+  const fileMenu = toolbarMenu('File', 'file', [
+    toolbarMenuAction('save', 'Save', 'save', '⌘S'),
+    h('p', { class: 'toolbar-menu-note' }, 'Applied changes save automatically. Draft forms still need Apply.'),
+    toolbarMenuAction('open-map', 'Open map…', 'file'),
+    toolbarMenuAction('import-file', 'Load YAML file…', 'import'),
+    toolbarMenuAction('import-transcript', 'Import transcript…', 'note'),
+    h('div', { class: 'toolbar-menu-separator' }),
+    toolbarMenuAction('export-yaml', 'Save a copy · YAML', 'export'),
+    toolbarMenuAction('export-png', 'Export image · PNG', 'export'),
+    toolbarMenuAction('export-svg', 'Export vector · SVG', 'export'),
+    toolbarMenuAction('export-html', 'Export interactive map · HTML', 'export'),
+    toolbarMenuAction('export-markdown', 'Export document · Markdown', 'export'),
+    h('p', { class: 'toolbar-menu-note' }, 'HTML: interactive, no app needed. Images: current Map scope. Downloads contain applied edits, not form drafts.'),
+    h('div', { class: 'toolbar-menu-separator' }),
+    toolbarMenuAction('history', 'Version history…', 'history'),
+  ], 'file-menu');
   const alignMenu = toolbarMenu('Align', 'align', ALIGN_MODES.map(([mode, label]) =>
     h('button', {
       class: 'toolbar-menu-item',
@@ -1026,13 +1081,12 @@ function renderRail() {
       onClick: (event) => alignSelection(mode, event.currentTarget),
     }, svgIcon(TOOL_ICONS.align), h('span', {}, label))), 'align-menu');
   const moreMenu = toolbarMenu('More', 'more', [
+    toolbarMenuAction('language', 'Map language', 'language'),
+    toolbarMenuAction('templates', 'Templates', 'templates'),
+    toolbarMenuAction('appearance', 'Appearance', 'theme'),
+    h('div', { class: 'toolbar-menu-separator' }),
     ...secondaryTools.map(toolbarMenuTool),
     secondaryTools.length ? h('div', { class: 'toolbar-menu-separator' }) : null,
-    toolbarMenuAction('history', 'Revision recovery', 'history', '', 'toolbar-compact-item'),
-    toolbarMenuAction('import-file', 'Import YAML file', 'import', '', 'toolbar-compact-item'),
-    toolbarMenuAction('import-transcript', 'Import transcript', 'note', '', 'toolbar-compact-item'),
-    toolbarMenuAction('export-yaml', 'Export YAML file', 'export', '', 'toolbar-compact-item'),
-    toolbarMenuAction('export-html', 'Export standalone app', 'export', '', 'toolbar-compact-item'),
     toolbarMenuAction('share', 'Share & sync', 'share', '', 'toolbar-compact-item'),
     toolbarMenuAction('zoom-out', 'Zoom out', 'zoomOut', '−', 'toolbar-compact-item'),
     toolbarMenuAction('zoom-fit', 'Fit map to screen', 'fit', '0', 'toolbar-compact-item'),
@@ -1042,6 +1096,8 @@ function renderRail() {
   ]);
 
   rail.replaceChildren(
+    fileMenu,
+    h('div', { class: 'tool-separator' }),
     ...primaryTools.map((tool) => toolbarToolButton(tool, {
       labeled: ['unit', 'connect'].includes(tool.id),
       className: ['select', 'hand'].includes(tool.id) ? 'toolbar-optional' : '',
@@ -1053,10 +1109,6 @@ function renderRail() {
     h('div', { class: 'tool-separator' }),
     toolbarActionButton('undo', 'Undo', 'undo', { shortcut: '⌘Z' }),
     toolbarActionButton('redo', 'Redo', 'redo', { shortcut: '⌘⇧Z' }),
-    toolbarActionButton('history', 'History', 'history', { className: 'toolbar-wide-label' }),
-    h('div', { class: 'tool-separator toolbar-wide' }),
-    importMenu,
-    exportMenu,
     toolbarActionButton('share', 'Share', 'share', { className: 'toolbar-wide', shareState: true }),
     h('span', { class: 'toolbar-spacer' }),
     h('span', { class: 'save-status', 'data-save-status': '', role: 'status', 'aria-live': 'polite' }),

@@ -11,6 +11,7 @@ import {
   formatRice,
   planningInventory,
   productDocumentMarkdown,
+  mapMarkdown,
 } from '../app/product.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -20,6 +21,56 @@ function parseOk(source) {
   assert.deepEqual(errors, [], 'fixture must satisfy the public map contract');
   return model;
 }
+
+test('Markdown map export includes nested non-product work and neutral connection meanings', () => {
+  const model = parseOk(`name: 'Service <review>'
+nodes:
+  - id: group
+    type: process
+    label: Service
+    children:
+      nodes:
+        - { id: received, type: event, label: 'Received | request' }
+        - { id: ready, type: decision, label: Ready? }
+      edges:
+        - { from: received, to: ready, meaning: flow, label: 'Review | request' }
+`);
+  const output = mapMarkdown(model);
+  assert.match(output, /Service review/);
+  assert.match(output, /Type: event/);
+  assert.match(output, /Type: decision/);
+  assert.ok(output.includes('Received \\| request (received) | flow | Ready? (ready)'));
+  assert.match(output, /not evidence of live transfers/);
+});
+
+test('Markdown map export retains shared identity, placement notes, and catalog mappings', () => {
+  const model = parseOk(`name: Shared catalog
+mode: freeform
+elements:
+  - { id: team, type: role, label: Platform }
+  - { id: store, type: database, label: Request store, owners: [{ to: team, role: technical }] }
+nodes:
+  - id: first
+    type: item
+    label: First
+    children: { nodes: [{ use: store, note: Origin }] }
+  - id: second
+    type: item
+    label: Second
+    children: { nodes: [{ use: store, note: Reporting context }] }
+dataExplorer:
+  objects: [{ id: requests, system: store, sourceName: request_rows, entityType: request, authority: originating }]
+  canonicalFields: [{ id: key, label: Request ID, entityType: request, dataType: string }]
+  fieldBindings: [{ object: requests, sourceField: request_id, sourceDataType: uuid, canonicalField: key }]
+  flows: []
+`);
+  const output = mapMarkdown(model);
+  assert.equal(output.split('### Request store\n').length - 1, 1, 'one shared definition');
+  assert.match(output, /Platform \(technical\)/);
+  assert.match(output, /Reporting context/);
+  assert.ok(output.includes('request\\_rows'));
+  assert.ok(output.includes('| requests | request\\_id | uuid | key |'));
+});
 
 const COMPLETE_PRODUCT = `
 name: Complete Product

@@ -75,6 +75,30 @@ test('POST /api/maps rejects an unknown map mode without writing', async () => {
   assert.match(JSON.parse(res.body).error, /process, freeform/);
 });
 
+test('POST /api/export serializes the supplied snapshot without saving or bundling other maps', async () => {
+  const source = 'name: Applied snapshot\nnodes: [{ id: start, type: event, label: Started }]\n';
+  const res = await raw({ method: 'POST', p: '/api/export', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: 'unsaved-export-fixture', source }) });
+  assert.equal(res.status, 200);
+  const { html } = JSON.parse(res.body);
+  const payload = JSON.parse(html.match(/window\.OPSMAP_STANDALONE = (.*?);<\/script>/s)[1]);
+  assert.equal(payload.source, source);
+  assert.equal(payload.project, null);
+  assert.equal((await raw({ p: '/api/maps/unsaved-export-fixture' })).status, 404);
+});
+
+test('HTML snapshot export retains library, JSON, and validation guards', async () => {
+  const body = JSON.stringify({ id: 'snapshot', source: 'name: Invalid\nnodes: [{ id: n, type: nope, label: N }]\n' });
+  const invalid = await raw({ method: 'POST', p: '/api/export', headers: { 'Content-Type': 'application/json' }, body });
+  assert.equal(invalid.status, 400);
+  assert.ok(JSON.parse(invalid.body).errors.length);
+  assert.equal((await raw({ method: 'POST', p: '/api/export', body })).status, 415);
+  assert.equal((await raw({ method: 'POST', p: '/api/export', headers: {
+    'Content-Type': 'application/json', 'X-Serigraph-Library': 'different-library',
+  }, body })).status, 412);
+  assert.equal((await raw({ p: '/api/export' })).status, 405);
+});
+
 test('requests with a non-local Host header are refused (DNS rebinding)', async () => {
   const res = await raw({ p: '/api/maps', headers: { Host: 'evil.example' } });
   assert.equal(res.status, 403);

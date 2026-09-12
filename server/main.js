@@ -655,6 +655,19 @@ async function handleApi(req, res, url) {
     return json(res, 415, { error: 'Content-Type must be application/json' });
   }
   const parts = url.pathname.split('/').filter(Boolean); // ['api', ...]
+  if (parts[1] === 'export' && parts.length === 2) {
+    if (req.method !== 'POST') return json(res, 405, { error: 'Use POST with the map source.' });
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON body' }); }
+    if (!body || !safeId(body.id) || typeof body.source !== 'string') {
+      return json(res, 400, { error: 'A valid map id and YAML source are required.' });
+    }
+    const { errors } = parseMap(body.source);
+    if (errors.length) return json(res, 400, { error: 'Invalid map', errors });
+    // Serialize the applied source, without saving it or reading sibling maps.
+    // The existing library and JSON guards also protect this read-only operation.
+    return json(res, 200, { html: await buildExport(ROOT, body.id, body.source) });
+  }
   if (parts[1] === 'github') {
     if (req.method !== 'GET') return json(res, 405, { error: 'GitHub pilot is read-only.' });
     if (parts.length === 2) return json(res, 200, { enabled: !!github, ...GITHUB_SOURCE, refreshMs: GITHUB_REFRESH_MS });
