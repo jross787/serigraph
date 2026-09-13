@@ -9,7 +9,8 @@ import { connectionsOf } from '../shared/connections.js';
 import { nodeCost, compactMoney } from '../shared/cost.js';
 import { icon, TYPE_ICONS } from './icons.js';
 import { nodeObservation } from './github.js';
-import { layoutScope, miniTransform, edgePath, smoothEdgePath, routeDirect, routeEdge, routeDragged, routeAutomaticEdges, routeParallelEdges, placeEdgeLabels, edgeLabelBubble, invalidateLayouts, wrapText, fitText, CARD_FONT } from './layout.js';
+import { buildAnnotation } from './annotation-view.js';
+import { layoutScope, siblingContextLayout, miniTransform, edgePath, smoothEdgePath, routeDirect, routeEdge, routeDragged, routeAutomaticEdges, routeParallelEdges, placeEdgeLabels, edgeLabelBubble, invalidateLayouts, wrapText, fitText, CARD_FONT } from './layout.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const el = (tag, attrs = {}, cls = '') => {
@@ -386,7 +387,7 @@ export function zoomBy(factor, cx = vw / 2, cy = vh / 2) {
 // current theme, plus every stylesheet rule that targets canvas marks. Rules
 // with pseudo-classes (hover/focus state) and app-chrome id selectors are
 // skipped — they neither apply nor belong in a standalone file.
-const EXPORT_SELECTORS = ['.node', '.edge', '.grid-dots', '.bundle', '.scope', '.peer', '.identity', '.icon', '.type-chip', '.count-chip', '.sel-ring', '.stack', '.shape', '.marquee', '#griddots'];
+const EXPORT_SELECTORS = ['.node', '.edge', '.board-annotation', '.annotation-', '.grid-dots', '.bundle', '.scope', '.peer', '.identity', '.icon', '.type-chip', '.count-chip', '.sel-ring', '.stack', '.shape', '.marquee', '#griddots'];
 function exportStylesheet() {
   const cs = getComputedStyle(document.documentElement);
   const vars = [];
@@ -425,9 +426,9 @@ export function getCanvasSvgString() {
   layer.removeAttribute('transform');
   layer.style.opacity = '1';
   clone.querySelector('.layers')?.replaceChildren(layer);
-  clone.querySelectorAll('.github-observation, .port, .pin-badge, .sel-ring, .route-badge, .node-launch, .marquee, .connect-ghost').forEach(node => node.remove());
+  clone.querySelectorAll('.github-observation, .port, .pin-badge, .sel-ring, .route-badge, .node-launch, .marquee, .connect-ghost, .edge-anchor, .annotation-resize, .annotation-selection').forEach(node => node.remove());
   const transientClasses = ['selected', 'multi-selected', 'focus-dimmed', 'probe-dimmed', 'probe-node', 'probe-edge', 'relationship-endpoint', 'relationship-neighbor', 'relationship-active', 'connect-target', 'drop-target'];
-  clone.querySelectorAll('.node, .edge').forEach(node => node.classList.remove(...transientClasses));
+  clone.querySelectorAll('.node, .edge, .board-annotation').forEach(node => node.classList.remove(...transientClasses));
   clone.querySelectorAll('.identity-link').forEach(node => node.classList.remove('active'));
   clone.removeAttribute('class');
   clone.removeAttribute('tabindex');
@@ -1086,9 +1087,13 @@ function renderScopeContent(model, ownerId) {
     edgesG.appendChild(item.bundle ? buildBundle(item.bundle, layout) : buildEdge(item.single));
   }
   for (const n of layout.nodes) nodesG.appendChild(buildNode(n));
+  const annotationsG = el('g', {}, 'annotations');
+  for (const item of layout.annotations ?? []) annotationsG.append(buildAnnotation(item.annotation,
+    { interactive: true }));
   layer.appendChild(lanesG);
   layer.appendChild(edgesG);
   layer.appendChild(nodesG);
+  layer.appendChild(annotationsG);
   return { layer, layout };
 }
 
@@ -1290,12 +1295,7 @@ function renderSiblingContext(model, ownerId) {
     peers.appendChild(layer);
   }
   context.appendChild(peers);
-  const minimapNodes = entries.flatMap((entry) => entry.layout.nodes.map((node) => ({
-    ...node,
-    x: node.x + entry.dx,
-    y: node.y + entry.dy,
-  })));
-  return { layer: context, minimapNodes };
+  return { layer: context, minimapLayout: siblingContextLayout(entries) };
 }
 
 function renderScope(model, ownerId) {
@@ -1304,20 +1304,7 @@ function renderScope(model, ownerId) {
   const siblingContext = renderSiblingContext(model, ownerId);
   if (siblingContext) {
     layer.appendChild(siblingContext.layer);
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const node of siblingContext.minimapNodes) {
-      minX = Math.min(minX, node.x);
-      minY = Math.min(minY, node.y);
-      maxX = Math.max(maxX, node.x + node.w);
-      maxY = Math.max(maxY, node.y + node.h);
-    }
-    layout.minimapLayout = {
-      nodes: siblingContext.minimapNodes,
-      x: minX,
-      y: minY,
-      w: maxX - minX,
-      h: maxY - minY,
-    };
+    layout.minimapLayout = siblingContext.minimapLayout;
   }
   content.classList.add('active-scope');
   layer.appendChild(content);
@@ -1509,13 +1496,59 @@ export function centerOn(nodeId, ms = 420) {
 
 export const getLayout = () => currentLayout;
 
+// Gesture previews only replace SVG marks; the authoritative model and cached
+// layout remain unchanged until one undoable edit is applied on pointerup.
+export function previewAnnotation(annotation) {
+  const previous = currentLayer?.querySelector(`.board-annotation[data-annotation-id="${CSS.escape(annotation.id)}"]`);
+  if (!previous || previous.closest('[data-peer-scope]')) return;
+  const fresh = buildAnnotation(annotation);
+  fresh.classList.add('selected');
+  previous.replaceWith(fresh);
+}
+
+export function previewEdgeAnchor(index, endpoint, anchor) {
+  const le = currentLayout?.edges.find(edge => edge.index === index);
+  const from = currentLayout?.nodes.find(node => node.id === le?.edge.from);
+  const to = currentLayout?.nodes.find(node => node.id === le?.edge.to);
+  if (!le || !from || !to) return;
+  const edge = { ...le.edge, [`${endpoint}Side`]: anchor.side, [`${endpoint}Offset`]: anchor.offset };
+  const preview = { ...le, edge, ...routeEdge(from, to, edge), labelAnchor: null };
+  placeEdgeLabels(currentLayout.nodes, [preview]);
+  const old = currentLayer.querySelector(`.edge[data-index="${index}"]`);
+  const fresh = buildEdge(preview);
+  fresh.classList.add('selected');
+  old?.replaceWith(fresh);
+  renderAnchorHandles(preview);
+}
+
+function renderAnchorHandles(edge) {
+  currentLayer?.querySelector('.anchor-handles')?.remove();
+  if (!edge || state.standalone || state.presenting) return;
+  const group = el('g', {}, 'anchor-handles');
+  for (const [endpoint, point] of [['from', edge.points[0]], ['to', edge.points.at(-1)]]) {
+    if (!point) continue;
+    const handle = el('circle', { cx: point.x, cy: point.y, r: 7,
+      'data-anchor': endpoint, 'data-edge-index': edge.index }, 'edge-anchor');
+    const title = el('title'); title.textContent = `Drag ${endpoint} anchor along its card`;
+    handle.append(title); group.append(handle);
+  }
+  currentLayer.append(group);
+}
+
 // ── selection visuals (no re-render) ─────────────────────────────────
 export function paintSelection(followFocus = true) {
   if (!currentLayer) return;
+  for (const group of currentLayer.querySelectorAll('.board-annotation')) {
+    const selected = group.dataset.annotationId === state.selectedAnnotationId;
+    group.classList.toggle('selected', selected);
+    group.classList.toggle('readonly', state.standalone || state.presenting);
+    group.setAttribute('aria-pressed', String(selected));
+  }
   const selected = state.selectedId;
   const focused = document.activeElement?.closest?.('.edge:focus-visible');
   const edgeIndex = focused && currentLayer.contains(focused) ? Number(focused.dataset.index) : state.selectedEdge?.index;
   const selectedEdge = currentLayout.edges.find(e => e.index === edgeIndex);
+  renderAnchorHandles(state.selectedEdge ? currentLayout.edges.find(e => e.index === state.selectedEdge.index) : null);
   const endpoints = new Set(selectedEdge ? [selectedEdge.edge.from, selectedEdge.edge.to] : []);
   const probeNodes = new Set(state.probePath?.nodeIds ?? []);
   const probeEdges = new Set(state.probePath?.edgeIndexes ?? []);
@@ -1651,6 +1684,7 @@ function wirePointer() {
     if (!box) return;
     box.rect.remove();
     if (!commit || !currentLayout) return;
+    state.selectedAnnotationId = null;
     const x1 = Math.min(box.x0, box.x1), y1 = Math.min(box.y0, box.y1);
     const x2 = Math.max(box.x0, box.x1), y2 = Math.max(box.y0, box.y1);
     for (const ln of currentLayout.nodes) {
@@ -1997,6 +2031,7 @@ function wirePointer() {
     const nodeEl = target.closest?.('.node');
     if (nodeEl) {
       if (ev.shiftKey && !state.presenting && !state.standalone) {
+        state.selectedAnnotationId = null;
         // shift+click toggles the node in the multi-selection without clearing it
         const id = nodeEl.dataset.id;
         if (state.selectionIds.has(id)) state.selectionIds.delete(id);
@@ -2126,14 +2161,14 @@ function renderMinimapNodes(layout) {
     x: (W - displayLayout.w * mmScale) / 2 - lb.x * mmScale,
     y: (H - displayLayout.h * mmScale) / 2 - lb.y * mmScale,
   };
-  for (const n of displayLayout.nodes) {
+  for (const n of [...displayLayout.nodes, ...(displayLayout.annotations ?? [])]) {
     mmNodesG.appendChild(el('rect', {
       x: mmOff.x + n.x * mmScale,
       y: mmOff.y + n.y * mmScale,
       width: Math.max(2, n.w * mmScale),
       height: Math.max(1.6, n.h * mmScale),
       rx: 1.5,
-    }, `mm-node${n.node.children ? ' container' : ''}`));
+    }, `mm-node${n.node?.children ? ' container' : ''}`));
   }
   updateMinimapView();
 }

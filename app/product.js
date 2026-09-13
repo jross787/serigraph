@@ -349,6 +349,13 @@ export function mapMarkdown(model) {
   ].join('\n');
   const visit = (scope, scopeName) => {
     sections.push(`### ${mdText(scopeName)}`);
+    for (const annotation of scope.annotations ?? []) {
+      // Use a fenced source block: opening a Markdown export must not turn
+      // literal annotation image/HTML syntax into active remote resources.
+      const fence = '`'.repeat(Math.max(3, ...[...annotation.markdown.matchAll(/`+/g)].map(match => match[0].length + 1)));
+      sections.push(`#### ${annotation.kind === 'note' ? 'Note block' : 'Board text'}: ${mdText(annotation.id)}`,
+        `${fence}markdown\n${annotation.markdown}\n${fence}`);
+    }
     if (scope.nodes.some((node) => node.isPlacement)) {
       sections.push(table(['Placement', 'ID', 'Local note'], scope.nodes.map((node) => [node.label, node.id, node.note])));
     }

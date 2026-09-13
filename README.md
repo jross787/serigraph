@@ -80,6 +80,20 @@ configuration you approve. A missing saved folder stops startup instead of
 silently opening another library. Launcher environment overrides take precedence
 and disable the button; see [Private workspaces](docs/PRIVATE-WORKSPACES.md).
 
+## Board notes, text, and precise anchors
+
+Use **Add → Note block** for resizable explainers, or **Freeform text** for
+unframed headings and labels. Double-click to edit Markdown with font/size
+controls, bold/italic, lists, and a live preview. Drag to move; select to resize;
+**Fit text** sizes the block to its content. Applied edits, duplication and
+deletion support Undo/Redo. Notes stay separate from process nodes and costs.
+
+Select a connector to reveal its two endpoint handles. Drag either around its
+card, or set **Attach to card → From/To side + Position (%)**. Anchors follow
+the card when it moves; Side **Auto** releases them. See the
+[format guide](docs/FORMAT.md#board-notes-and-freeform-text-optional) for YAML,
+supported Markdown, local font stacks, bounds, and export behavior.
+
 ## Appearance and connection focus
 
 **More actions → Appearance → Glass** opts into a pearl-glass surface with

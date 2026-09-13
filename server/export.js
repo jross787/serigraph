@@ -8,6 +8,7 @@ import { parseMap } from '../shared/model.js';
 const MODULE_FILES = [
   'vendor/yaml.js',
   'shared/model.js',
+  'shared/annotations.js',
   'shared/visual-language.js',
   'shared/connections.js',
   'shared/cost.js',
@@ -20,6 +21,8 @@ const MODULE_FILES = [
   'app/icons.js',
   'app/github.js',
   'app/canvas.js',
+  'app/annotation-view.js',
+  'app/board.js',
   'app/edit.js',
   'app/controller.js',
   'app/opportunity.js',

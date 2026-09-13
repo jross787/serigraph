@@ -1,4 +1,46 @@
 /* ─── Serigraph design system ─────────────────────────────────────── */
+/* Board annotations: quiet paper or unframed type, with edit affordances
+   only on the selected object. All canvas marks also travel with SVG export. */
+.board-annotation { cursor: grab; outline: none; }
+.annotation-surface { fill: var(--node-fill); stroke: var(--border-strong); stroke-width: 1; filter: var(--shadow-node); }
+.annotation-content { fill: var(--node-ink); pointer-events: none; }
+.annotation-content text { white-space: pre; }
+.annotation-quote { stroke: var(--accent); stroke-width: 3; opacity: .55; }
+.annotation-overflow { fill: var(--node-sub); pointer-events: none; }
+.annotation-text .annotation-surface { fill: transparent; stroke: transparent; filter: none; pointer-events: all; }
+.annotation-text .annotation-content { fill: var(--ink); }
+:root[data-theme="frost"] .annotation-text .annotation-content { fill: #eef4ef; }
+:root[data-theme="frost"] .annotation-text .annotation-overflow { fill: #b9cbc1; }
+.annotation-selection { fill: none; stroke: var(--sel); stroke-width: 1.5; stroke-dasharray: 5 4; opacity: 0; pointer-events: none; }
+.board-annotation.selected .annotation-selection, .board-annotation:focus-visible .annotation-selection { opacity: 1; }
+.annotation-resize { fill: var(--surface); stroke: var(--sel); stroke-width: 1.5; opacity: 0; pointer-events: none; }
+.board-annotation.selected:not(.readonly) .annotation-resize { opacity: 1; pointer-events: all; }
+.annotation-resize[data-resize="n"], .annotation-resize[data-resize="s"] { cursor: ns-resize; }
+.annotation-resize[data-resize="e"], .annotation-resize[data-resize="w"] { cursor: ew-resize; }
+.annotation-resize[data-resize="nw"], .annotation-resize[data-resize="se"] { cursor: nwse-resize; }
+.annotation-resize[data-resize="ne"], .annotation-resize[data-resize="sw"] { cursor: nesw-resize; }
+.edge-anchor { fill: var(--surface); stroke: var(--sel); stroke-width: 2; opacity: 0; pointer-events: none; cursor: crosshair; }
+.anchor-handles .edge-anchor { opacity: 1; pointer-events: all; }
+.edge-anchor:hover { stroke-width: 3; }
+.anchor-fields { display: grid; grid-template-columns: 1fr 104px; gap: 10px; }
+.dialog.board-editor { width: min(900px, calc(100vw - 32px)); color: var(--ink); }
+.board-editor::backdrop { background: rgb(12 24 20 / .42); backdrop-filter: blur(8px); }
+.board-editor .board-editor-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 18px 0; }
+.board-type-controls { display: grid; grid-template-columns: 1fr 1fr 90px; gap: 12px; }
+.board-format-toolbar, .board-detail-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.board-format-toolbar .d-btn { padding: 6px 10px; min-width: 32px; font-size: 12px; }
+.board-editor .board-markdown { width: 100%; min-height: 260px; margin-top: 10px; resize: vertical; font: 13px/1.7 var(--mono); }
+.board-preview { border: 1px solid var(--border); border-radius: 16px; padding: 14px; background: var(--canvas-bg, var(--bg)); margin-top: 10px; }
+.board-preview svg { display: block; width: 100%; max-height: 300px; }
+.board-size-controls { display: flex; align-items: end; gap: 12px; }
+.board-size-controls .f-field { max-width: 100px; margin: 0; }
+.board-error { color: var(--danger); font-size: 13px; }
+.annotation-source { white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.7 var(--mono); color: var(--ink); }
+@media (max-width: 700px) {
+  .board-editor .board-editor-columns { grid-template-columns: 1fr; }
+  .board-type-controls { grid-template-columns: 1fr 1fr; }
+  .board-preview svg { max-height: 220px; }
+}
 :root {
   --font: ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;

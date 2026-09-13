@@ -18,6 +18,7 @@ export const state = {
   scopeId: null,       // owner node id of the scope on screen (null = root)
   selectedId: null,    // selected node id
   selectedEdge: null,  // {scopeId, index} when an edge is selected
+  selectedAnnotationId: null, // board-only notes/text, never a process node
   selectionIds: new Set(), // multi-select members; empty = single selection via selectedId
 
   connectFrom: null,   // node id while in connect mode

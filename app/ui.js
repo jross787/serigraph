@@ -19,6 +19,7 @@ import { renderCatalog } from './catalog.js';
 import { renderGitHubGlance } from './github.js';
 import { NODE_VISUALS, CONNECTION_MEANINGS, nodeTypeLabel, connectionPresentation } from '../shared/visual-language.js';
 import { connectionsOf } from '../shared/connections.js';
+import { openAnnotationEditor, renderAnnotationDetail, duplicateBoardSelection, deleteBoardSelection } from './board.js';
 
 let fieldId = 0;
 
@@ -1205,6 +1206,7 @@ function deleteEdgeNow(index) {
 // Delete the current selection immediately. Undo is always offered afterward.
 export function requestDelete() {
   if (state.standalone || !state.model || state.presenting) return false;
+  if (state.selectedAnnotationId) return deleteBoardSelection();
   if (state.selectedId) {
     const node = state.model.byId.get(state.selectedId);
     if (node) { confirmDelete(node); return true; }
@@ -1214,6 +1216,7 @@ export function requestDelete() {
 }
 
 export async function duplicateSelection() {
+  if (state.selectedAnnotationId) return duplicateBoardSelection();
   if (state.standalone || !state.model || state.presenting || !state.selectedId) return false;
   const node = state.model.byId.get(state.selectedId);
   if (!node) return false;
@@ -1632,6 +1635,7 @@ function renderDetail() {
   panel.classList.toggle('catalog-detail', catalogOpen);
   document.getElementById('btn-catalog')?.setAttribute('aria-expanded', String(catalogOpen));
   if (catalogOpen) return renderCatalogDetail(panel);
+  if (state.selectedAnnotationId) return renderAnnotationDetail(panel);
   const nodeId = state.detailNodeId;
   const node = nodeId ? state.model?.byId.get(nodeId) : null;
 
@@ -2255,12 +2259,24 @@ function renderEdgeDetail(panel) {
       ctrl.commit(() => edit.setEdgeSide(sel, endpoint, select.value === 'auto' ? null : select.value))
         .then((ok) => { if (ok) renderEdgeDetail(panel); });
     });
-    return h('label', { class: 'f-field' }, label, select);
+    const offset = h('input', {
+      type: 'number', class: 'f-input', min: 0, max: 100, step: 1,
+      value: Math.round((e[`${endpoint}Offset`] ?? 0.5) * 100),
+      'aria-label': `${label.replace(' side', '')} position (%)`,
+      disabled: state.standalone || !e[`${endpoint}Side`] ? '' : null,
+    });
+    offset.addEventListener('change', () => {
+      if (state.standalone || !offset.reportValidity() || offset.value === '') return;
+      ctrl.commit(() => edit.setEdgeAnchor(sel, endpoint, { side: e[`${endpoint}Side`], offset: Number(offset.value) / 100 }),
+        { historyLabel: 'position connection anchor' });
+    });
+    return h('div', { class: 'anchor-fields' }, h('label', { class: 'f-field' }, label, select),
+      h('label', { class: 'f-field' }, 'Position (%)', offset));
   };
   body.append(h('div', { class: 'panel-section' },
     h('h3', {}, 'Attach to card'),
     sideSelect('from', 'From side'), sideSelect('to', 'To side'),
-    h('p', { class: 'field-help' }, 'Choose where each end meets its card. Auto lets the route decide.')));
+    h('p', { class: 'field-help' }, 'Drag an endpoint on the map, or choose a side and position here. 0–100% runs left to right on top/bottom, top to bottom on left/right. Auto releases the anchor.')));
 
   const currentRoute = e.route ?? (e.via ? 'curved' : 'auto');
   const pickRoute = (style) => {
@@ -2978,13 +2994,14 @@ function renderCanvasMessage() {
     return;
   }
   const scope = state.model ? (state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children) : null;
-  if (state.model && scope && scope.nodes.length === 0) {
+  if (state.model && scope && scope.nodes.length === 0 && !scope.annotations?.length) {
     box.hidden = false;
     box.replaceChildren(h('div', { class: 'map-card' },
       h('h2', {}, state.scopeId == null ? 'This map is empty' : 'Nothing in here yet'),
       h('p', {}, isFreeform() ? 'Add your first item, or start from a template.' : 'Add your first node, or start from a template block.'),
       state.standalone ? null : h('div', { class: 'empty-actions' },
         h('button', { class: 'd-btn primary', onClick: () => addNodeDialog(state.scopeId) }, isFreeform() ? '+ Add an item' : '+ Add a node'),
+        h('button', { class: 'd-btn', onClick: () => openAnnotationEditor() }, '+ Note block'),
         h('button', { class: 'd-btn', onClick: () => toggleTemplates(true) }, 'Browse templates'))));
     return;
   }
@@ -3081,11 +3098,11 @@ export function initUI() {
     if (state.workspaceView !== 'map') hideDetail();
     else if (catalogView.open) renderDetail();
     else if (state.selectedId) showDetail(state.selectedId);
-    else if (state.selectedEdge != null) renderDetail();
+    else if (state.selectedEdge != null || state.selectedAnnotationId) renderDetail();
     else hideDetail();
     const mm = document.getElementById('minimap');
     const curScope = state.model ? (state.scopeId == null ? state.model.root : state.model.byId.get(state.scopeId)?.children) : null;
-    if (mm) mm.hidden = !curScope || curScope.nodes.length === 0;
+    if (mm) mm.hidden = !curScope || (curScope.nodes.length === 0 && !curScope.annotations?.length);
   });
   bus.on('selection-changed', () => {
     clearTimeout(panelTimer);
@@ -3103,7 +3120,7 @@ export function initUI() {
       panelTimer = setTimeout(() => {
         if (state.selectedId === id) showDetail(id);
       }, 230);
-    } else if (state.selectedEdge != null) renderDetail();
+    } else if (state.selectedEdge != null || state.selectedAnnotationId) renderDetail();
     else hideDetail();
   });
   bus.on('maps-listed', () => { renderSwitcher(); if (!state.mapId) renderHome(); });

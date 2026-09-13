@@ -325,6 +325,67 @@ The rules:
 - Remove `position` to return the card to automatic layout. In the app, click its pin badge or select **Release to auto-layout**.
 - Write the field as `position: { x: 340, y: 120 }`. Any other shape is a validation error.
 
+## Board notes and freeform text (optional)
+
+Both modes support an `annotations` list at the root or alongside `nodes` and
+`edges` in a group's `children` mapping. Annotations explain a board; they are
+not nodes, Freeform elements/placements, review comments, or connection endpoints.
+They do not affect node counts, process flow, costs, ownership, or auto-layout.
+A scope may contain only annotations (`nodes: []`).
+
+```yaml
+name: Request board
+nodes: []
+annotations:
+  - id: context
+    kind: note
+    markdown: |
+      ## Before you begin
+
+      - Gather **the essentials**
+      - Keep the handoff *clear*
+
+      > Explain the reason, not just the sequence.
+    position: { x: -380, y: 80 }
+    size: { width: 360, height: 280 }
+    font: system
+    fontSize: 16
+  - id: heading
+    kind: text
+    markdown: '# From request to result'
+    position: { x: 20, y: -100 }
+    size: { width: 700, height: 100 }
+    font: serif
+    fontSize: 30
+```
+
+- `id` is unique across all annotations, nodes and shared elements in the file;
+  use letters, digits, hyphens or underscores, starting with a letter or digit.
+- `kind: note` is a framed block; `kind: text` has no visible background.
+- `markdown` is required text, up to 40,000 characters. Supported formatting:
+  ATX headings (`#`–`######`), paragraphs/line breaks, bullets, numbered lists,
+  quotes, bold, italic, inline code and fenced code. This is a small Markdown
+  subset, not full CommonMark. HTML, image/link syntax and unsupported constructs
+  remain inert text. No remote fonts, images, or scripts are loaded.
+- `position` is the annotation's **top-left**, in its scope's coordinates (unlike
+  a node's center-based pin). Both numbers must be finite, within ±1,000,000.
+- `size` is required: width 80–2400 and height 40–3200, in canvas units. Text
+  wraps to the width; an overflow hint appears when the block is too small.
+  The complete Markdown remains available in the inspector and source.
+- Optional `font`: `system` (default), `humanist`, `serif`, or `mono`. These are
+  local font stacks; the exact installed face can vary across machines.
+- Optional `fontSize`: 10–72, default 16. Headings scale relative to this size.
+
+Use **Add → Note block / Freeform text**. Double-click a block or choose **Edit
+text & font** to open the Markdown editor, formatting toolbar and live preview.
+**Fit text** grows/shrinks the height to the content, within the size limit.
+**Apply** saves one undoable change; **Cancel** keeps the saved map unchanged.
+Drag a block to move it; select it to reveal edge/corner resize handles. The
+editor's width/height fields provide a keyboard alternative. Duplicate, Delete
+and Undo/Redo also apply to annotations. Notes are positioned manually; move
+them clear of cards and connector labels. HTML/YAML include all scopes; SVG/PNG
+include visible-scope annotations; Markdown export includes their fenced source.
+
 ## Pinned edge routes (optional)
 
 Edges route automatically. Dragging an automatic edge pins a right-angle bend with `via` and `route: stepped`; an explicitly chosen shape is preserved. A straight edge cannot be bent by dragging—choose another shape first. Existing via-only curves retain their meaning. You can also author both fields by hand:
@@ -337,7 +398,9 @@ edges:
     route: stepped              # curved | straight | angled | stepped
     via: { x: 700, y: 40 }      # bend through these coordinates
     fromSide: right              # optional: top | right | bottom | left
+    fromOffset: 0.25             # optional: fraction along the chosen side
     toSide: top                  # omit either side for automatic attachment
+    toOffset: 0.8
 ```
 
 The rules:
@@ -345,12 +408,12 @@ The rules:
 - `route` is one of four shapes. `curved` draws a smooth cable through the via. `angled` draws two straight runs with a rounded corner at the via. `stepped` draws right-angle runs through both coordinates of the via, adding a detour when needed; its label stays at the via so dragging it follows both axes. `straight` draws a direct line and ignores the via.
 - A `via` with no `route` renders as `curved`. A `route` with no `via` seeds its bend at the midpoint of the direct route.
 - `via` lives in the same coordinate plane as the scope's node `position` values.
-- `fromSide` and `toSide` independently attach to the midpoint of a card's top, right, bottom, or left boundary (the corresponding tip for a decision diamond). Omit a field for automatic attachment; unknown values are validation errors. These settings persist when cards move and swap with endpoints when a connection is reversed.
+- `fromSide` and `toSide` choose top, right, bottom, or left. Optional `fromOffset` / `toOffset` set a finite fraction from 0 to 1 along the matching side; an offset requires that side. Default is 0.5 (midpoint). Top/bottom run left-to-right; left/right run top-to-bottom. For shaped cards, the bounding-side point projects from the center onto the visible outline. At 0.5, a decision uses its corresponding tip. Attachments follow moved cards and swap with endpoints on Reverse.
 - Side-only attachments use an automatic orthogonal route. Explicit shapes and bends retain their meaning; side choices do not guarantee obstacle avoidance. Drag a bend or choose a different shape if a route crosses a card.
-- Parallel edges between the same two nodes render as one cable bundle that fans out on hover; an edge with a `via`, `route`, `fromSide`, or `toSide` always renders on its own.
+- Paired connections use separate lanes where the corridor is clear. Three or more unspecified connections between the same two nodes can form a hover-expandable cable bundle; a typed or explicitly routed/anchored edge renders on its own.
 - In the app, pick the shape under **Route** in the edge panel. Choose **Auto**, or click the badge on the line, to return to automatic routing.
-- Under **Attach to card**, choose **From side** and **To side**. Each **Auto** clears only that attachment; Route **Auto** clears the shape and bend but preserves selected sides.
-- Connection labels shrink to padded, rounded bubbles for short text. Long labels retain the single-line width cap and ellipsis; the full wording stays in the tooltip and inspector. Bubble sizing does not change stored labels or rearrange the map.
+- Select a connector to reveal its two endpoint handles. Drag a handle around its own card, or use **Attach to card → From/To side + Position (%)**. Each side's **Auto** clears that side and offset; Route **Auto** clears only the shape and bend. Dragging an endpoint does not rewire the connection to a different object. Escape cancels an active drag; each completed drag is undoable.
+- Connection labels use padded, rounded one/two-line bubbles, with ellipsis for longer text. The full wording stays in the tooltip and inspector. Leaders identify displaced labels; bubble sizing does not change stored labels or rearrange nodes.
 - Write `via` as `via: { x: 700, y: 40 }`. Any other shape is a validation error, and so is an unknown `route`.
 
 ## The cost model (optional) — human vs. agent economics

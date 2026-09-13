@@ -16,6 +16,7 @@ import { initGitHub } from './github.js';
 import { initUpdates } from './updates.js';
 import { bugReportDialog } from './bug-report.js';
 import { libraryLocationDialog } from './library-location.js';
+import { initBoardGestures } from './board.js';
 
 // ── theme ────────────────────────────────────────────────────────────
 function initTheme() {
@@ -353,18 +354,18 @@ function wireKeyboard() {
         else if (!document.getElementById('templates-panel').hidden) ui.toggleTemplates(false);
         else if (ui.closeCatalog()) { /* preserve the map's scope and selection */ }
         else if (state.scopeId != null) ctrl.riseUp(); // one level per press, always
-        else if (state.selectedId || state.selectedEdge != null) { ctrl.clearSelection(); ui.hideDetail(); }
+        else if (state.selectedId || state.selectedEdge != null || state.selectedAnnotationId) { ctrl.clearSelection(); ui.hideDetail(); }
         break;
       case 'Delete': {
         const ids = state.selectedEdge == null ? effectiveSelectionIds() : [];
         if (ids.length > 1) { ev.preventDefault(); bulkRemoveSelection(ids); }
-        else if (state.selectedId || state.selectedEdge != null) { ev.preventDefault(); ui.requestDelete(); }
+        else if (state.selectedId || state.selectedEdge != null || state.selectedAnnotationId) { ev.preventDefault(); ui.requestDelete(); }
         break;
       }
       case 'Backspace': {
         const ids = state.selectedEdge == null ? effectiveSelectionIds() : [];
         if (ids.length > 1) { ev.preventDefault(); bulkRemoveSelection(ids); }
-        else if (state.selectedId || state.selectedEdge != null) { ev.preventDefault(); ui.requestDelete(); }
+        else if (state.selectedId || state.selectedEdge != null || state.selectedAnnotationId) { ev.preventDefault(); ui.requestDelete(); }
         else if (state.scopeId != null) { ev.preventDefault(); ctrl.riseUp(); }
         break;
       }
@@ -446,6 +447,7 @@ async function boot() {
     placeholder.replaceWith(icon(placeholder.dataset.icon, Number(placeholder.getAttribute('width')) || 18));
   }
   canvas.initCanvas(document.getElementById('canvas'), document.querySelector('#minimap svg'));
+  initBoardGestures(document.getElementById('canvas'));
   ui.initUI();
   initGitHub();
   workbench.initWorkbench();

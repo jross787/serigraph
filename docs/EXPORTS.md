@@ -60,6 +60,11 @@ to 2× resolution, capped at 8192 pixels per side and roughly 16 megapixels to
 bound browser canvas memory. Larger maps downscale; choose SVG for maximum
 detail. Both include a background matching the current map theme.
 
+Board notes and freeform text use native SVG text, including their Markdown
+typography. Fonts use local fallback stacks, so exact faces may vary by machine.
+Resize clipped notes (or use **Fit text**) before exporting; image exports show
+the authored block size. Resize/anchor handles are omitted from image exports.
+
 ## YAML and Markdown
 
 YAML preserves the complete authoring source, comments, IDs, catalog metadata,
@@ -67,8 +72,10 @@ and layout overrides. It is the backup/interchange format.
 
 Markdown provides a readable all-scope inventory, owners, relations, review
 notes, placement notes, connections, and declared catalog mappings. Product
-maps also include their Brief/requirements content. It is not a lossless format:
-use YAML for exact comments, layout, and all optional authoring fields. The
+maps also include their Brief/requirements content.
+Board annotations appear as fenced Markdown source so literal HTML/image syntax
+does not become active content when the documentation is opened.
+It is not a lossless format: use YAML for exact comments, layout, and all optional authoring fields. The
 existing Brief-only **Download Markdown** remains available for a focused PRD.
 
 ## GitHub and privacy
