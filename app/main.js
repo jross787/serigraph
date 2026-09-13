@@ -13,12 +13,15 @@ import { flowShortcut } from './flow.js';
 import { refresh as refreshAgents, initAgents } from './agents.js';
 import { icon } from './icons.js';
 import { initGitHub } from './github.js';
+import { initUpdates } from './updates.js';
+import { bugReportDialog } from './bug-report.js';
+import { libraryLocationDialog } from './library-location.js';
 
 // ── theme ────────────────────────────────────────────────────────────
 function initTheme() {
   let saved = null;
   try { saved = localStorage.getItem('opsmap-theme'); } catch { /* file/sandbox viewers may deny storage */ }
-  document.documentElement.dataset.theme = ['frost', 'light', 'dark'].includes(saved) ? saved : 'frost';
+  document.documentElement.dataset.theme = ['frost', 'light', 'dark', 'glass'].includes(saved) ? saved : 'frost';
 }
 
 // ── canvas event wiring ──────────────────────────────────────────────
@@ -315,6 +318,8 @@ function spatialMove(dir) {
 function wireKeyboard() {
   document.addEventListener('keydown', (ev) => {
     const meta = ev.metaKey || ev.ctrlKey;
+    // Native modal dialogs own keyboard input, including app shortcuts.
+    if (document.querySelector('dialog[open]')) return;
 
     if (meta && ev.key.toLowerCase() === 'k') {
       ev.preventDefault();
@@ -409,6 +414,9 @@ function wireToolbar() {
   on('btn-present', () => { productWorkspace.setWorkspaceView('map'); togglePresent(); });
   on('btn-theme', ui.appearanceDialog);
   on('btn-help', ui.helpDialog);
+  on('btn-report-bug', bugReportDialog);
+  on('btn-library-location', libraryLocationDialog);
+  document.getElementById('btn-library-location').hidden = state.standalone;
   for (const button of document.querySelectorAll('.utility-popover button')) {
     button.addEventListener('click', () => { const menu = button.closest('details'); if (menu) menu.open = false; });
   }
@@ -475,6 +483,7 @@ async function boot() {
   }
 
   ctrl.loadTemplates();
+  initUpdates();
   api.subscribe(async (event) => {
     // The server may be restarting when an event lands; a failed refresh must
     // not surface as an unhandled rejection in the SSE callback.

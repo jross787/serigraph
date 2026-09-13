@@ -37,6 +37,7 @@ export const state = {
   redoStack: [],       // [{source, label}] actions available to redo
   saveStatus: 'idle',  // idle | saving | saved | error
   saveError: '',
+  updateApplying: false, // short, explicit maintenance window; never serialized
   workbench: null,     // active Workbench link metadata; the share key stays browser-local
   github: null,        // public pilot preferences and ephemeral observations; never serialized
 };

@@ -7,6 +7,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveLibraryRoot, preferencesPath } from './library-location.js';
 
 export const ROOT = process.env.OPSMAP_ROOT
   ? path.resolve(process.env.OPSMAP_ROOT)
@@ -14,9 +15,11 @@ export const ROOT = process.env.OPSMAP_ROOT
 
 // Set this in the launching environment, not in .env: it determines which
 // workspace's .env is read. Application assets always remain under ROOT.
-export const LIBRARY_ROOT = process.env.SERIGRAPH_LIBRARY_DIR
-  ? path.resolve(process.env.SERIGRAPH_LIBRARY_DIR)
-  : ROOT;
+export const LIBRARY_ROOT = await resolveLibraryRoot(ROOT);
+// Capture operator choices before .env is loaded. A workspace file cannot
+// choose its own preference storage or override the launcher's authority.
+export const LIBRARY_LOCKED = !!(process.env.SERIGRAPH_LIBRARY_DIR || process.env.OPSMAP_MAPS_DIR || process.env.OPSMAP_ENV_FILE || process.env.OPSMAP_ROOT);
+export const PREFERENCES_FILE = preferencesPath(ROOT);
 export const ENV_PATH = process.env.OPSMAP_ENV_FILE
   ? path.resolve(process.env.OPSMAP_ENV_FILE)
   : path.join(LIBRARY_ROOT, '.env');

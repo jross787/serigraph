@@ -10,7 +10,8 @@ SERIGRAPH_LIBRARY_DIR=/absolute/path/to/private-workspace npm run validate
 
 `maps/`, `projects/`, `.serigraph-trash/`, and `.env` resolve inside that workspace.
 Application assets, built-in templates, and export code stay in the engine checkout.
-Without this setting, the current repository remains the default library.
+Without this setting, the app uses its saved project-files folder, or the current
+repository when no folder has been selected.
 Set it in the launching environment, not inside `.env`, because it selects that file.
 Private launchers can require `serigraph.externalLibraryVersion: 1` in the engine's
 `package.json` and fail closed on older engines that ignore this setting.
@@ -28,6 +29,38 @@ links are retained in browser storage but never automatically reconnected; recon
 them explicitly through Share & sync after upgrading. An open tab is pinned to its
 library, and the server rejects stale-library API requests after a workspace switch.
 Reload before using the newly selected workspace.
+
+## Choosing a folder in the local app
+
+**More actions → Project files** previews an existing absolute directory before
+**Use folder & restart**. It changes the complete library root: `maps/`,
+`projects/`, `.serigraph-trash/`, and `.env`. It never migrates or merges files.
+Review the destination and explicitly trust its `.env` before restarting; those
+settings may configure providers or opt-in runtimes. Launch-environment values
+still take precedence over `.env`. The supervisor starts a fresh worker so the
+previous library's file-loaded credentials do not carry into the new one.
+
+Finish drafts, saves, sync, and AI/agent work and close other tabs/servers using
+this installation first. Pending API work, agent processes, and other connected
+tabs block the switch. Stale tabs cannot read or write the newly selected library
+through ordinary APIs until reloaded. The switch opens Projects, not a same-named
+map from another workspace. This is still a single-user storage boundary.
+
+The path preference is a mode-600 JSON file outside the engine, under
+`$XDG_CONFIG_HOME/serigraph/` (otherwise `~/.config/serigraph/`, or Windows
+`%APPDATA%/serigraph/`). Its filename identifies the engine checkout, so separate
+installations do not silently change each other's libraries. Trusted launchers
+can choose `SERIGRAPH_PREFERENCES_FILE` explicitly. A corrupt preference or missing
+saved directory fails closed; reconnect the directory, repair the preference, or
+launch with an explicit `SERIGRAPH_LIBRARY_DIR` to recover.
+
+Explicit `SERIGRAPH_LIBRARY_DIR`, `OPSMAP_ROOT`, `OPSMAP_MAPS_DIR`, or
+`OPSMAP_ENV_FILE` launch settings lock this UI setting. Remove those overrides
+and restart only if the installation should use the saved folder instead.
+`SERIGRAPH_DISABLE_LIBRARY_SETTINGS=1` disables the control for managed installs.
+LAN mode cannot change folders. Standalone exports have no folder controls.
+The validator uses the same saved preference when no library is specified;
+pass explicit approved filenames when validating a narrow scope.
 
 ## Catalog boundary
 

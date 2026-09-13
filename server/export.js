@@ -9,6 +9,7 @@ const MODULE_FILES = [
   'vendor/yaml.js',
   'shared/model.js',
   'shared/visual-language.js',
+  'shared/connections.js',
   'shared/cost.js',
   'shared/provenance.js',
   'shared/projects.js',
@@ -32,6 +33,9 @@ const MODULE_FILES = [
   'app/workbench-sync.js',
   'app/product-workspace.js',
   'app/agents.js',
+  'app/updates.js',
+  'app/bug-report.js',
+  'app/library-location.js',
   'app/main.js',
 ];
 

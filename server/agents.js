@@ -16,6 +16,10 @@ const MAX_SESSIONS = 50;
 const sessions = new Map();
 let counter = 0;
 
+export function hasRunningAgents() {
+  return [...sessions.values()].some(session => session.child && !session.done);
+}
+
 // ── serialization ───────────────────────────────────────────────────
 function stepOf(s) {
   return { at: s.at, kind: s.kind, label: s.label, detail: s.detail ?? '' };
@@ -323,4 +327,3 @@ export function killAllAgents() {
     if (!s.done) { s.done = true; if (s.status !== 'error') s.status = 'stopped'; }
   }
 }
-
