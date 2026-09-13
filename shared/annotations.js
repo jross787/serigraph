@@ -25,12 +25,15 @@ export function normalizeAnnotations(raw, ownerId, path, err) {
     for (const key of ['x', 'y']) if (!Number.isFinite(value.position?.[key]) || Math.abs(value.position[key]) > 1000000) {
       err([...p, 'position', key], 'Annotation position must use finite coordinates between -1000000 and 1000000.');
     }
-    for (const [key, min, max] of [['width', 80, 2400], ['height', 40, 3200]]) {
+    for (const [key, min, max] of [['width', ANNOTATION_LIMITS.minWidth, ANNOTATION_LIMITS.maxWidth],
+      ['height', ANNOTATION_LIMITS.minHeight, ANNOTATION_LIMITS.maxHeight]]) {
       if (!Number.isFinite(value.size?.[key]) || value.size[key] < min || value.size[key] > max) err([...p, 'size', key], `Annotation ${key} must be ${min}–${max}.`);
     }
     const font = value.font ?? 'system', fontSize = value.fontSize ?? 16;
     if (!Object.hasOwn(ANNOTATION_FONTS, font)) err([...p, 'font'], `Annotation font must be one of: ${Object.keys(ANNOTATION_FONTS).join(', ')}.`);
-    if (!Number.isFinite(fontSize) || fontSize < 10 || fontSize > 72) err([...p, 'fontSize'], 'Annotation fontSize must be 10–72.');
+    if (!Number.isFinite(fontSize) || fontSize < ANNOTATION_LIMITS.minFont || fontSize > ANNOTATION_LIMITS.maxFont) {
+      err([...p, 'fontSize'], `Annotation fontSize must be ${ANNOTATION_LIMITS.minFont}–${ANNOTATION_LIMITS.maxFont}.`);
+    }
     return [{ id, kind: value.kind, markdown: typeof value.markdown === 'string' ? value.markdown : '',
       position: value.position, size: value.size, font, fontSize, ownerId }];
   });
@@ -40,13 +43,17 @@ export function normalizeAnnotations(raw, ownerId, path, err) {
 // literal; image/link syntax is also literal and cannot make network requests.
 export function inlineMarkdown(text, style = {}, depth = 0) {
   if (depth > 8) return [{ text, ...style }];
-  const runs = [], pattern = /\\([\\`*_])|(`+)([\s\S]*?)\2|(\*\*|__)(?=\S)([\s\S]*?\S)\4|(\*|_)(?=\S)([^\n]*?\S)\6/g;
+  // Within italic text, consume a nested strong span as one unit so its
+  // opening pair cannot be mistaken for the outer span's closing delimiter.
+  const runs = [], pattern = /\\([\\`*_])|(`+)([\s\S]*?)\2|(\*\*\*|___)(?=\S)([\s\S]*?\S)\4|(\*\*|__)(?=\S)([\s\S]*?\S)\6(?![*_])|(\*|_)(?=\S)((?:\8\8(?=\S)[^\n]*?\S\8\8|(?!\8)[^\n])+?)(?<=\S)\8(?![*_])/g;
   let start = 0, match;
   while ((match = pattern.exec(text))) {
     if (match.index > start) runs.push({ text: text.slice(start, match.index), ...style });
     if (match[1]) runs.push({ text: match[1], ...style });
     else if (match[2]) runs.push({ text: match[3], ...style, code: true });
-    else runs.push(...inlineMarkdown(match[5] ?? match[7], { ...style, [match[4] ? 'bold' : 'italic']: true }, depth + 1));
+    else runs.push(...inlineMarkdown(match[5] ?? match[7] ?? match[9], {
+      ...style, ...(match[4] ? { bold: true, italic: true } : { [match[6] ? 'bold' : 'italic']: true }),
+    }, depth + 1));
     start = pattern.lastIndex;
   }
   if (start < text.length) runs.push({ text: text.slice(start), ...style });
@@ -87,29 +94,36 @@ function measureRun(text, style, size, font) {
 export function layoutAnnotation(annotation, measure = measureRun) {
   const padding = annotation.kind === 'note' ? 22 : 6;
   const lines = [];
-  let y = padding;
+  let y = padding, horizontalOverflow = false;
   for (const block of markdownBlocks(annotation.markdown)) {
     const base = annotation.fontSize ?? 16;
     if (block.gap) { y += base * 0.6; continue; }
     const size = base * (block.heading ? [1, 1.6, 1.35, 1.17, 1.08, 1, 1][block.heading] : 1);
     const height = size * 1.45;
     if (block.heading && lines.length) y += base * 0.3;
-    const indent = (block.bullet ? 24 + block.indent * 18 : block.quote ? 16 : 0);
-    const width = Math.max(12, annotation.size.width - padding * 2 - indent);
+    const levelIndent = block.indent * size * 1.125;
+    const markerWidth = block.bullet ? measure(block.bullet, {}, size, annotation.font) : 0;
+    const indent = block.bullet ? levelIndent + markerWidth + Math.max(8, size * 0.4) : block.quote ? 16 : 0;
+    const available = annotation.size.width - padding * 2 - indent;
+    const width = Math.max(1, available);
+    if (available < 1) horizontalOverflow = true;
     let runs = [], used = 0, first = true;
     const flush = () => {
       lines.push({ runs, x: padding + indent, y: y + size, size, height, quote: block.quote,
-        bullet: first ? block.bullet : '', bulletX: padding + block.indent * 18 });
+        bullet: first ? block.bullet : '', bulletX: padding + levelIndent });
       y += height; runs = []; used = 0; first = false;
     };
     const append = (text, style, measured) => {
       runs.push({ ...style, text, x: used }); used += measured;
+      if (used > width) horizontalOverflow = true;
     };
     for (const run of block.runs) {
-      for (let token of run.text.split(/(\s+)/).filter(Boolean)) {
-        if (!used && /^\s+$/.test(token)) continue;
+      const preserveSpace = block.code || run.code;
+      const text = preserveSpace ? run.text.replace(/\t/g, '    ') : run.text;
+      for (const token of text.split(/(\s+)/).filter(Boolean)) {
+        if (!used && /^\s+$/.test(token) && !preserveSpace) continue;
         let w = measure(token, run, size, annotation.font);
-        if (used && used + w > width) { flush(); if (/^\s+$/.test(token)) continue; }
+        if (used && used + w > width) { flush(); if (/^\s+$/.test(token) && !preserveSpace) continue; }
         if (w <= width) append(token, run, w);
         else for (const char of Array.from(token)) {
           w = measure(char, run, size, annotation.font);
@@ -120,5 +134,6 @@ export function layoutAnnotation(annotation, measure = measureRun) {
     }
     if (runs.length || first) flush();
   }
-  return { lines, padding, contentHeight: Math.ceil(y + padding), overflow: y + padding > annotation.size.height };
+  return { lines, padding, contentHeight: Math.ceil(y + padding), horizontalOverflow,
+    overflow: horizontalOverflow || y + padding > annotation.size.height };
 }

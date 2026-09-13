@@ -627,6 +627,23 @@ export function invalidateLayouts() {
   cache.clear();
 }
 
+// Connected Freeform groups can contain only annotations. Keep their full
+// frames in Fit bounds and their text blocks in the minimap, separate from nodes.
+export function siblingContextLayout(entries) {
+  const nodes = [], annotations = [];
+  let x = Infinity, y = Infinity, right = -Infinity, bottom = -Infinity;
+  for (const entry of entries) {
+    const { layout, dx, dy, frame } = entry;
+    for (const [source, target] of [[layout.nodes, nodes], [layout.annotations ?? [], annotations]]) {
+      for (const item of source) target.push({ ...item, x: item.x + dx, y: item.y + dy });
+    }
+    x = Math.min(x, frame.x); y = Math.min(y, frame.y);
+    right = Math.max(right, frame.x + frame.w); bottom = Math.max(bottom, frame.y + frame.h);
+  }
+  return { nodes, annotations, ...(Number.isFinite(x)
+    ? { x, y, w: right - x, h: bottom - y } : { x: 0, y: 0, w: 0, h: 0 }) };
+}
+
 // Layout of the scope owned by ownerId (null = root).
 // Every edge index in the result refers to the scope's edges array order —
 // we re-derive it so edits can address edges by index.
@@ -636,7 +653,8 @@ export function layoutScope(model, ownerId) {
 
   const scope = ownerId == null ? model.root : model.byId.get(ownerId)?.children;
   if (!scope || (!scope.nodes.length && !scope.annotations?.length)) {
-    const empty = { ownerId, nodes: [], edges: [], annotations: [], x: 0, y: 0, w: 0, h: 0 };
+    const empty = { ownerId, nodes: [], edges: [], annotations: [], x: 0, y: 0, w: 0, h: 0,
+      graphBounds: { x: 0, y: 0, w: 0, h: 0 } };
     cache.set(key, empty);
     return empty;
   }
@@ -650,7 +668,10 @@ export function layoutScope(model, ownerId) {
     if (n.children) {
       const child = layoutScope(model, n.id); // recursive; cached
       const frameW = s.w - 26;
-      const aspect = child.w > 0 ? child.h / child.w : 0.55;
+      // Notes expand Fit/export bounds, never the footprint of this parent or
+      // the automatic positions of its siblings. The miniature still fits all.
+      const graph = child.graphBounds;
+      const aspect = graph.w > 0 ? graph.h / graph.w : 0.55;
       const frameH = Math.max(42, Math.min(64, frameW * aspect));
       const headerH = 12 + (s.lines?.length ?? 1) * 19 + 8;
       s.h = Math.max(116, headerH + frameH + 12);
@@ -723,9 +744,10 @@ export function layoutScope(model, ownerId) {
   routeAutomaticEdges(nodes, edges);
   routeParallelEdges(nodes, edges);
   placeEdgeLabels(nodes, edges);
+  let graphBounds;
   {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const n of [...nodes, ...annotations]) {
+    for (const n of nodes) {
       x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y);
       x1 = Math.max(x1, n.x + n.w); y1 = Math.max(y1, n.y + n.h);
     }
@@ -741,10 +763,15 @@ export function layoutScope(model, ownerId) {
         y1 = Math.max(y1, e.labelPos.y + EDGE_LABEL_SIZE.h / 2);
       }
     }
+    graphBounds = Number.isFinite(x0) ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : { x: 0, y: 0, w: 0, h: 0 };
+    for (const annotation of annotations) {
+      x0 = Math.min(x0, annotation.x); y0 = Math.min(y0, annotation.y);
+      x1 = Math.max(x1, annotation.x + annotation.w); y1 = Math.max(y1, annotation.y + annotation.h);
+    }
     bounds = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
   }
 
-  const result = { ownerId, nodes, edges, annotations, ...bounds };
+  const result = { ownerId, nodes, edges, annotations, graphBounds, ...bounds };
   cache.set(key, result);
   return result;
 }

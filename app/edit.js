@@ -201,10 +201,17 @@ export function addAnnotation(ownerId, fields) {
 export function updateAnnotation(id, fields) {
   const path = annotationPath(id);
   const item = state.doc.getIn(path, true);
+  const current = state.model.annotationById.get(id);
   for (const key of ['kind', 'markdown', 'position', 'size', 'font', 'fontSize']) {
-    if (fields[key] !== undefined) item.set(key, state.doc.createNode(fields[key]));
+    if (fields[key] === undefined || JSON.stringify(fields[key]) === JSON.stringify(current[key])) continue;
+    if (['position', 'size'].includes(key)) {
+      const previous = item.get(key, true);
+      if (isMap(previous)) {
+        for (const [part, value] of Object.entries(fields[key])) previous.set(part, value);
+      } else item.set(key, state.doc.createNode(fields[key]));
+      flowPositions(item.get(key, true));
+    } else item.set(key, fields[key]); // YAML updates existing scalars, retaining their comments/style.
   }
-  flowPositions(item);
 }
 
 export function deleteAnnotation(id) { state.doc.deleteIn(annotationPath(id)); }

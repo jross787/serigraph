@@ -50,7 +50,7 @@ export function openAnnotationEditor(id = null, kind = 'note') {
     Object.entries(ANNOTATION_FONTS).map(([value, entry]) => h('option', { value }, entry.label)));
   font.value = draft.font;
   const input = (name, value, min, max) => h('input', { class: 'f-input', type: 'number', required: '', min, max, step: 1, value, 'aria-label': name });
-  const fontSize = input('Font size', draft.fontSize, 10, 72);
+  const fontSize = input('Font size', draft.fontSize, LIMITS.minFont, LIMITS.maxFont);
   const width = input('Block width', draft.size.width, LIMITS.minWidth, LIMITS.maxWidth);
   const height = input('Block height', draft.size.height, LIMITS.minHeight, LIMITS.maxHeight);
   const appearance = h('select', { class: 'f-select', 'aria-label': 'Text appearance' },
@@ -61,12 +61,14 @@ export function openAnnotationEditor(id = null, kind = 'note') {
   const hint = h('p', { class: 'hint', role: 'status' });
   const updatePreview = () => {
     draft.markdown = textarea.value; draft.font = font.value; draft.kind = appearance.value;
-    draft.fontSize = clamp(Number(fontSize.value) || 16, 10, 72);
+    draft.fontSize = clamp(Number(fontSize.value) || 16, LIMITS.minFont, LIMITS.maxFont);
     draft.size = { width: clamp(Number(width.value) || 360, LIMITS.minWidth, LIMITS.maxWidth),
       height: clamp(Number(height.value) || 260, LIMITS.minHeight, LIMITS.maxHeight) };
     preview.setAttribute('viewBox', `-8 -8 ${draft.size.width + 16} ${draft.size.height + 16}`);
     preview.replaceChildren(buildAnnotation({ ...draft, position: { x: 0, y: 0 } }, { interactive: false }));
-    hint.textContent = layoutAnnotation(draft).overflow ? 'Some text is outside the block. Increase its size or choose Fit text.' : 'All text fits. Drag the block to move it; select it to resize.';
+    const layout = layoutAnnotation(draft);
+    hint.textContent = layout.horizontalOverflow ? 'The text is too wide. Increase the width or reduce the font size.'
+      : layout.overflow ? 'Some text is outside the block. Increase its size or choose Fit text.' : 'All text fits. Drag the block to move it; select it to resize.';
   };
   const format = (before, after = before, linePrefix = false) => {
     const start = textarea.selectionStart, end = textarea.selectionEnd;

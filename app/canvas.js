@@ -10,7 +10,7 @@ import { nodeCost, compactMoney } from '../shared/cost.js';
 import { icon, TYPE_ICONS } from './icons.js';
 import { nodeObservation } from './github.js';
 import { buildAnnotation } from './annotation-view.js';
-import { layoutScope, miniTransform, edgePath, smoothEdgePath, routeDirect, routeEdge, routeDragged, routeAutomaticEdges, routeParallelEdges, placeEdgeLabels, edgeLabelBubble, invalidateLayouts, wrapText, fitText, CARD_FONT } from './layout.js';
+import { layoutScope, siblingContextLayout, miniTransform, edgePath, smoothEdgePath, routeDirect, routeEdge, routeDragged, routeAutomaticEdges, routeParallelEdges, placeEdgeLabels, edgeLabelBubble, invalidateLayouts, wrapText, fitText, CARD_FONT } from './layout.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const el = (tag, attrs = {}, cls = '') => {
@@ -1295,12 +1295,7 @@ function renderSiblingContext(model, ownerId) {
     peers.appendChild(layer);
   }
   context.appendChild(peers);
-  const minimapNodes = entries.flatMap((entry) => entry.layout.nodes.map((node) => ({
-    ...node,
-    x: node.x + entry.dx,
-    y: node.y + entry.dy,
-  })));
-  return { layer: context, minimapNodes };
+  return { layer: context, minimapLayout: siblingContextLayout(entries) };
 }
 
 function renderScope(model, ownerId) {
@@ -1309,20 +1304,7 @@ function renderScope(model, ownerId) {
   const siblingContext = renderSiblingContext(model, ownerId);
   if (siblingContext) {
     layer.appendChild(siblingContext.layer);
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const node of siblingContext.minimapNodes) {
-      minX = Math.min(minX, node.x);
-      minY = Math.min(minY, node.y);
-      maxX = Math.max(maxX, node.x + node.w);
-      maxY = Math.max(maxY, node.y + node.h);
-    }
-    layout.minimapLayout = {
-      nodes: siblingContext.minimapNodes,
-      x: minX,
-      y: minY,
-      w: maxX - minX,
-      h: maxY - minY,
-    };
+    layout.minimapLayout = siblingContext.minimapLayout;
   }
   content.classList.add('active-scope');
   layer.appendChild(content);

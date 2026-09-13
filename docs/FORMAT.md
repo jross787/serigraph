@@ -370,7 +370,7 @@ annotations:
 - `position` is the annotation's **top-left**, in its scope's coordinates (unlike
   a node's center-based pin). Both numbers must be finite, within ±1,000,000.
 - `size` is required: width 80–2400 and height 40–3200, in canvas units. Text
-  wraps to the width; an overflow hint appears when the height is too small.
+  wraps to the width; an overflow hint appears when the block is too small.
   The complete Markdown remains available in the inspector and source.
 - Optional `font`: `system` (default), `humanist`, `serif`, or `mono`. These are
   local font stacks; the exact installed face can vary across machines.
