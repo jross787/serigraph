@@ -184,13 +184,16 @@ function shelfPack(blocks, gap = 72) {
 const centerOf = (n) => ({ x: n.x + n.w / 2, y: n.y + n.h / 2 });
 
 // point where the segment from n's center toward `toward` crosses n's
-// outline. Side overrides always use the four visible midpoints.
-function boundaryPoint(n, toward, side) {
+// outline. Offsets locate a point along a side of the bounding box, then
+// project onto the visible outline (also correct for circles and diamonds).
+function boundaryPoint(n, toward, side, offset = 0.5) {
   const c = centerOf(n);
-  if (side === 'top') return { x: c.x, y: n.y };
-  if (side === 'right') return { x: n.x + n.w, y: c.y };
-  if (side === 'bottom') return { x: c.x, y: n.y + n.h };
-  if (side === 'left') return { x: n.x, y: c.y };
+  offset = offset ?? 0.5;
+  if (side === 'top') toward = { x: n.x + n.w * offset, y: n.y };
+  if (side === 'right') toward = { x: n.x + n.w, y: n.y + n.h * offset };
+  if (side === 'bottom') toward = { x: n.x + n.w * offset, y: n.y + n.h };
+  if (side === 'left') toward = { x: n.x, y: n.y + n.h * offset };
+  if (side && offset === 0.5) return toward;
   const dx = toward.x - c.x, dy = toward.y - c.y;
   if (!dx && !dy) return c;
   let s;
@@ -208,7 +211,7 @@ function boundaryPoint(n, toward, side) {
       s = Math.min(s, (n.w / 2) / (Math.abs(dx) + 16 * Math.abs(dy) / (n.h / 2)));
     } else if (type === 'artifact' && dx > dy) {
       s = Math.min(s, (n.w / 2 + n.h / 2 - 13) / (dx - dy));
-    } else if (type === 'role' || type === 'database') {
+    } else if (type === 'role' || type === 'database' || (side && !['artifact', 'api', 'event'].includes(type))) {
       // Clip only the rounded end/cap, leaving each card's footprint fixed.
       const px = n.w / 2 + dx * s, py = n.h / 2 + dy * s;
       let ex, ey, rx, ry;
@@ -218,6 +221,13 @@ function boundaryPoint(n, toward, side) {
       } else if (type === 'database' && (py < 10 || py > n.h - 10)) {
         ex = n.w / 2; ey = py < n.h / 2 ? 10 : n.h - 10;
         rx = n.w / 2; ry = 10;
+      } else if (type !== 'role' && type !== 'database') {
+        const radius = n.node?.children ? 8 : 7;
+        if ((px < radius || px > n.w - radius) && (py < radius || py > n.h - radius)) {
+          ex = px < n.w / 2 ? radius : n.w - radius;
+          ey = py < n.h / 2 ? radius : n.h - radius;
+          rx = ry = radius;
+        }
       }
       if (rx) {
         const ox = (n.w / 2 - ex) / rx, oy = (n.h / 2 - ey) / ry;
@@ -231,11 +241,23 @@ function boundaryPoint(n, toward, side) {
   return { x: c.x + dx * s, y: c.y + dy * s };
 }
 
+// Inverse of boundaryPoint for endpoint dragging. Outside the card, follow
+// the pointer along its nearest side; inside a shaped card, project its ray.
+export function attachmentAt(n, point) {
+  const c = centerOf(n);
+  const dx = (point.x - c.x) / (n.w / 2), dy = (point.y - c.y) / (n.h / 2);
+  const horizontal = Math.abs(dx) > Math.abs(dy);
+  const side = horizontal ? (dx < 0 ? 'left' : 'right') : (dy < 0 ? 'top' : 'bottom');
+  const scale = Math.min(1, Math.max(Math.abs(dx), Math.abs(dy))) || 1;
+  const fraction = ((horizontal ? dy : dx) / scale + 1) / 2;
+  return { side, offset: Math.round(Math.max(0, Math.min(1, fraction)) * 1000) / 1000 };
+}
+
 // Direct edge route between two layout nodes: boundary to boundary.
 // Exported so the canvas can re-route live while a node is being dragged.
 export function routeDirect(a, b, edge = {}) {
-  const p1 = boundaryPoint(a, centerOf(b), edge.fromSide);
-  const p2 = boundaryPoint(b, centerOf(a), edge.toSide);
+  const p1 = boundaryPoint(a, centerOf(b), edge.fromSide, edge.fromOffset);
+  const p2 = boundaryPoint(b, centerOf(a), edge.toSide, edge.toOffset);
   return { points: [p1, p2], labelPos: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 } };
 }
 
@@ -338,8 +360,8 @@ export function routeAutomaticEdges(nodes, edges) {
 // via instead of the usual rounded orthogonal path. The label sits at t=0.3
 // along the curve, clear of the bend and the pointer.
 export function routeVia(a, b, via, edge = {}) {
-  const p1 = boundaryPoint(a, via, edge.fromSide);
-  const p2 = boundaryPoint(b, via, edge.toSide);
+  const p1 = boundaryPoint(a, via, edge.fromSide, edge.fromOffset);
+  const p2 = boundaryPoint(b, via, edge.toSide, edge.toOffset);
   const c = { x: 2 * via.x - (p1.x + p2.x) / 2, y: 2 * via.y - (p1.y + p2.y) / 2 };
   const t = 0.3;
   const labelPos = {
@@ -508,13 +530,13 @@ function untangleStepped(points, a, b, via, startFlat, endFlat, edge) {
 export function routeStyled(a, b, via, style, edge = {}) {
   if (style === 'straight' || !via) return routeDirect(a, b, edge);
   if (style === 'angled') {
-    const p1 = boundaryPoint(a, via, edge.fromSide);
-    const p2 = boundaryPoint(b, via, edge.toSide);
+    const p1 = boundaryPoint(a, via, edge.fromSide, edge.fromOffset);
+    const p2 = boundaryPoint(b, via, edge.toSide, edge.toOffset);
     return { points: [p1, { x: via.x, y: via.y }, p2], labelPos: { x: (p1.x + via.x) / 2, y: (p1.y + via.y) / 2 } };
   }
   if (style === 'stepped') {
-    const p1 = boundaryPoint(a, via, edge.fromSide);
-    const p2 = boundaryPoint(b, via, edge.toSide);
+    const p1 = boundaryPoint(a, via, edge.fromSide, edge.fromOffset);
+    const p2 = boundaryPoint(b, via, edge.toSide, edge.toOffset);
     const flat = Math.abs(p2.x - p1.x) >= Math.abs(p2.y - p1.y);
     const horizontal = (side) => side ? side === 'left' || side === 'right' : flat;
     const startFlat = horizontal(edge.fromSide), endFlat = horizontal(edge.toSide);
@@ -613,13 +635,15 @@ export function layoutScope(model, ownerId) {
   if (cache.has(key)) return cache.get(key);
 
   const scope = ownerId == null ? model.root : model.byId.get(ownerId)?.children;
-  if (!scope || !scope.nodes.length) {
-    const empty = { nodes: [], edges: [], x: 0, y: 0, w: 0, h: 0 };
+  if (!scope || (!scope.nodes.length && !scope.annotations?.length)) {
+    const empty = { ownerId, nodes: [], edges: [], annotations: [], x: 0, y: 0, w: 0, h: 0 };
     cache.set(key, empty);
     return empty;
   }
 
   const edgeIndex = new Map(scope.edges.map((e, i) => [e, i]));
+  const annotations = (scope.annotations ?? []).map(annotation => ({ annotation, id: annotation.id,
+    x: annotation.position.x, y: annotation.position.y, w: annotation.size.width, h: annotation.size.height }));
   const sized = new Map();
   for (const n of scope.nodes) {
     const s = sizeNode(n, model);
@@ -701,7 +725,7 @@ export function layoutScope(model, ownerId) {
   placeEdgeLabels(nodes, edges);
   {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const n of nodes) {
+    for (const n of [...nodes, ...annotations]) {
       x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y);
       x1 = Math.max(x1, n.x + n.w); y1 = Math.max(y1, n.y + n.h);
     }
@@ -720,7 +744,7 @@ export function layoutScope(model, ownerId) {
     bounds = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
   }
 
-  const result = { ownerId, nodes, edges, ...bounds };
+  const result = { ownerId, nodes, edges, annotations, ...bounds };
   cache.set(key, result);
   return result;
 }

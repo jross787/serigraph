@@ -13,6 +13,7 @@ import * as workbenchSync from './workbench-sync.js';
 import * as edit from './edit.js';
 import * as ui from './ui.js';
 import { icon as svgIcon, TYPE_ICONS as ICONS } from './icons.js';
+import { openAnnotationEditor } from './board.js';
 
 function h(tag, props = {}, ...children) {
   const n = document.createElement(tag);
@@ -171,9 +172,10 @@ function refreshRail() {
   document.getElementById('canvas')?.setAttribute('data-tool', state.activeTool);
 
   const selectionCount = effectiveSelectionIds().length;
+  const hasAnnotation = canEdit && !!state.selectedAnnotationId;
   const disabled = {
-    duplicate: !hasNode || selectionCount > 1,
-    delete: !canEdit || (!selectionCount && state.selectedEdge == null),
+    duplicate: (!hasNode && !hasAnnotation) || selectionCount > 1,
+    delete: !canEdit || (!selectionCount && state.selectedEdge == null && !hasAnnotation),
     undo: !canEdit || !state.undoStack.length,
     redo: !canEdit || !state.redoStack.length,
     history: !state.mapId || state.standalone,
@@ -303,6 +305,11 @@ function showUnitFlyout(anchor) {
   host.replaceChildren(
     h('div', { class: 'tool-flyout-title' }, addingGroup ? 'Organize this map' : 'What belongs on the map?'),
     ...items,
+    h('div', { class: 'tool-flyout-title' }, 'Explain the board'),
+    ...[['note', 'Note block', 'A resizable page of Markdown notes.', 'note-pencil'],
+      ['text', 'Freeform text', 'Headings, labels, and text without a box.', 'file-text']].map(([kind, title, hint, icon]) => h('button', {
+        class: 'tool-flyout-item', onClick: () => { closeFlyout(); setTool('select'); openAnnotationEditor(null, kind); },
+      }, svgIcon(icon), h('span', { class: 'tool-choice-copy' }, h('strong', {}, title), h('small', {}, hint)))),
     h('p', { class: 'tool-flyout-note' }, addingGroup
       ? 'Open a group to add steps, decisions, people, and resources inside it.'
       : 'Click to name it, or drag it onto the map. Shape describes the kind of thing—not its status.'),

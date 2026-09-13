@@ -156,6 +156,7 @@ export async function loadTemplates() {
 }
 
 export async function openMap(mapId, { nodeId = null, inId = null, replace = false } = {}) {
+  state.selectedAnnotationId = null;
   const mapChanged = mapId !== state.mapId;
   const pushHash = mapChanged && !replace;
   let payload;
@@ -224,6 +225,7 @@ async function followMoved(newId, { nodeId = null, inId = null } = {}) {
 
 // Leave the current map and show the projects home.
 export function goHome({ push = true } = {}) {
+  state.selectedAnnotationId = null;
   state.mapId = null;
   saveConflictPending = false;
   state.source = '';
@@ -436,7 +438,7 @@ export async function commit(mutator, { select = undefined, historyLabel = 'edit
 
   recordRevision(after, revisionLabel(action));
 
-  if (select !== undefined) { state.selectedId = select; state.selectedEdge = null; }
+  if (select !== undefined) { state.selectedId = select; state.selectedEdge = null; state.selectedAnnotationId = null; }
   refreshView();
   return true;
 }
@@ -477,6 +479,7 @@ function refreshView() {
     state.scopeId = nearestSurvivingScope(state.scopeId);
   }
   if (state.selectedId && !state.model.byId.has(state.selectedId)) state.selectedId = null;
+  if (state.selectedAnnotationId && state.model.annotationById.get(state.selectedAnnotationId)?.ownerId !== state.scopeId) state.selectedAnnotationId = null;
   if (state.selectionIds.size) {
     for (const id of state.selectionIds) {
       if (!state.model.byId.has(id)) state.selectionIds.delete(id);
@@ -586,6 +589,7 @@ export async function loadSavedFile() {
 export async function diveInto(nodeId) {
   const node = state.model?.byId.get(nodeId);
   if (!node?.children) return;
+  state.selectedAnnotationId = null;
   lastAncestry = ancestryOf(state.model, nodeId);
   state.scopeId = nodeId;
   state.selectedId = null;
@@ -598,6 +602,7 @@ export async function diveInto(nodeId) {
 
 export async function riseUp() {
   if (state.scopeId == null) return;
+  state.selectedAnnotationId = null;
   const owner = state.model.byId.get(state.scopeId);
   const parent = owner?.ownerId ?? null;
   const cameFrom = state.scopeId;
@@ -612,6 +617,7 @@ export async function riseUp() {
 
 // Jump anywhere (breadcrumbs, search, deep links). Instant, then focus.
 export async function gotoScope(ownerId, { focusId = null } = {}) {
+  state.selectedAnnotationId = null;
   state.scopeId = ownerId;
   state.selectedId = focusId;
   state.selectedEdge = null;
@@ -646,6 +652,7 @@ export function selectNode(nodeId) {
   // current scope. Shared Freeform elements use their placement's scope.
   const visible = scopeOf(state.model, state.scopeId)?.nodes.some((node) => node.id === nodeId);
   if (!visible) return;
+  state.selectedAnnotationId = null;
   state.selectedId = nodeId;
   state.selectedEdge = null;
   canvas.paintSelection();
@@ -655,6 +662,7 @@ export function selectNode(nodeId) {
 }
 
 export function selectEdge(index) {
+  state.selectedAnnotationId = null;
   state.selectedId = null;
   state.detailNodeId = null; // panel must not keep showing the last node
   state.selectedEdge = index == null ? null : { scopeId: state.scopeId, index };
@@ -664,9 +672,22 @@ export function selectEdge(index) {
 }
 
 export function clearSelection() {
+  state.selectedAnnotationId = null;
   state.selectedId = null;
   state.selectedEdge = null;
   state.selectionIds.clear();
+  canvas.paintSelection();
+  writeHash();
+  bus.emit('selection-changed');
+}
+
+export function selectAnnotation(id) {
+  if (state.model?.annotationById.get(id)?.ownerId !== state.scopeId) return;
+  state.selectedId = null;
+  state.detailNodeId = null;
+  state.selectedEdge = null;
+  state.selectionIds.clear();
+  state.selectedAnnotationId = id;
   canvas.paintSelection();
   writeHash();
   bus.emit('selection-changed');
@@ -687,6 +708,7 @@ export function wireHistory() {
     }
     if (!state.model) return;
     const targetScope = r.nodeId ? scopeForNode(r.nodeId, r.inId) : (r.inId ?? null);
+    state.selectedAnnotationId = null;
     const targetSel = r.nodeId
       && scopeOf(state.model, targetScope)?.nodes.some((node) => node.id === r.nodeId)
       ? r.nodeId

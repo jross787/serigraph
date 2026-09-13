@@ -1,6 +1,7 @@
 // Parse + validate Serigraph YAML into a normalized model.
 // Runs in the browser, in Node, and inside standalone HTML exports.
 import * as YAML from '../vendor/yaml.js';
+import { normalizeAnnotations } from './annotations.js';
 
 export const MAP_MODES = ['process', 'freeform'];
 export const ROUTE_STYLES = ['curved', 'straight', 'angled', 'stepped'];
@@ -81,6 +82,7 @@ export function parseMap(source) {
   const placementsByElement = new Map();
   const placementByKey = new Map();
   const placementPaths = new Map();
+  const annotationById = new Map();
 
   const stringList = (raw, path, label) => {
     if (raw == null) return [];
@@ -163,7 +165,12 @@ export function parseMap(source) {
     return owners;
   };
 
-  function normalizeScope(rawNodes, rawEdges, ownerId, path, depth, elementMode = false) {
+  function normalizeScope(rawNodes, rawEdges, ownerId, path, depth, elementMode = false, rawAnnotations = null) {
+    const annotations = normalizeAnnotations(rawAnnotations, ownerId, [...path, 'annotations'], err);
+    for (const [i, annotation] of annotations.entries()) {
+      if (annotationById.has(annotation.id)) err([...path, 'annotations', i, 'id'], `Duplicate annotation id "${annotation.id}".`);
+      annotationById.set(annotation.id, annotation);
+    }
     const nodes = [];
     const usedElementIds = new Set();
     rawNodes.forEach((raw, i) => {
@@ -483,8 +490,8 @@ export function parseMap(source) {
           err(cpath, `Node "${id}": "children:" must contain "nodes:" and optionally "edges:".`);
           childNodes = []; childEdges = [];
         }
-        if (childNodes.length || childEdges.length || mode === 'freeform') {
-          node.children = normalizeScope(childNodes, childEdges, id, [...npath, 'children'], depth + 1);
+        if (childNodes.length || childEdges.length || raw.children.annotations != null || mode === 'freeform') {
+          node.children = normalizeScope(childNodes, childEdges, id, [...npath, 'children'], depth + 1, false, raw.children.annotations);
           node.stats.childCount = node.children.nodes.length;
           node.stats.descendantCount = node.children.nodes.reduce(
             (sum, child) => sum + 1 + child.stats.descendantCount, 0);
@@ -539,6 +546,13 @@ export function parseMap(source) {
           err([...epath, key], `Edge ${from} → ${to}: "${key}:" must be one of: ${EDGE_SIDES.join(', ')}.`);
         }
       }
+      for (const endpoint of ['from', 'to']) {
+        const key = `${endpoint}Offset`;
+        if (raw[key] != null && (!Number.isFinite(raw[key]) || raw[key] < 0 || raw[key] > 1
+          || !EDGE_SIDES.includes(raw[`${endpoint}Side`]))) {
+          err([...epath, key], `Edge ${from} → ${to}: "${key}:" needs a matching side and a number from 0 to 1.`);
+        }
+      }
       if (kind != null && !EDGE_KINDS.includes(kind)) {
         err([...epath, 'kind'], `Edge ${from} → ${to}: "kind:" must be one of: ${EDGE_KINDS.join(', ')}.`);
       }
@@ -557,13 +571,15 @@ export function parseMap(source) {
         route: ROUTE_STYLES.includes(route) ? route : null,
         fromSide: EDGE_SIDES.includes(raw.fromSide) ? raw.fromSide : null,
         toSide: EDGE_SIDES.includes(raw.toSide) ? raw.toSide : null,
+        fromOffset: raw.fromOffset ?? null,
+        toOffset: raw.toOffset ?? null,
         kind: EDGE_KINDS.includes(kind) ? kind : null,
         meaning: EDGE_MEANINGS.includes(meaning) ? meaning : null,
         issue,
       });
     });
 
-    return { ownerId, nodes, edges };
+    return { ownerId, nodes, edges, annotations };
   }
 
   let elements = [];
@@ -575,7 +591,10 @@ export function parseMap(source) {
   } else if (data.elements != null) {
     err(['elements'], '"elements:" is available only in Freeform maps.');
   }
-  const root = normalizeScope(data.nodes, data.edges, null, [], 0);
+  const root = normalizeScope(data.nodes, data.edges, null, [], 0, false, data.annotations);
+  for (const id of annotationById.keys()) {
+    if (byId.has(id)) err(['annotations'], `Annotation id "${id}" is already used by a node or element.`);
+  }
 
   // Catalog metadata is durable design data, not observed runtime state.
   // Validate its references so canvas edits cannot silently orphan bindings.
@@ -664,6 +683,7 @@ export function parseMap(source) {
     placementByKey,
     placementPaths,
     placementCount: placementByKey.size,
+    annotationById,
     nodeCount: byId.size,
   };
   return { doc, model, errors, warnings };

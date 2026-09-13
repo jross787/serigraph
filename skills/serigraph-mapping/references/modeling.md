@@ -163,18 +163,53 @@ label: Submits request
 route: stepped
 via: { x: 620, y: 60 }
 fromSide: right
+fromOffset: 0.25
 toSide: top
+toOffset: 0.8
 ```
 
 Stepped uses both bend coordinates; straight ignores a bend; a via without a
-route remains curved. Omit a side for automatic attachment. Route Auto clears
-route/bend, not explicit sides. Long labels stay intact in YAML/inspector even
+route remains curved. Offsets run 0–1 and require the matching side: left-to-right
+on top/bottom, top-to-bottom on left/right, projected onto non-rectangular shapes.
+Omit a side for automatic attachment. Route Auto clears
+route/bend, not explicit sides/offsets. Long labels stay intact in YAML/inspector even
 when visually shortened. Do not claim general all-obstacle routing.
 
 `links: [{ label, url }]` holds approved references. Ordinary cards launch the
 first safe absolute HTTP(S) link; diamond/circle links stay in the inspector.
 Put the intended launch link first. Private URLs and identifiers travel in
 exports; a link never grants permission to fetch it.
+
+### Explanatory notes and text
+
+Use `annotations` at the root or beside a group's `children.nodes`, never as
+fake process nodes or Freeform shared elements. IDs are globally unique. Their
+position is **top-left**, unlike center-based node pins; manually keep them clear
+of cards and connectors. Both modes can have annotation-only scopes.
+
+```yaml
+annotations:
+  - id: handoff-context
+    kind: note
+    markdown: |
+      ## Before you begin
+
+      - Gather **the essentials**
+      - Keep the handoff *clear*
+    position: { x: -380, y: 80 }
+    size: { width: 360, height: 280 }
+    font: system
+    fontSize: 16
+```
+
+`kind: text` removes the frame. Required width is 80–2400, height 40–3200;
+font size is 10–72 (default 16). Local stacks: `system`, `humanist`, `serif`,
+`mono`; exact faces depend on the machine. The small Markdown subset supports
+headings, paragraphs, bullets/numbered lists, quotes, bold/italic and code.
+HTML, images and links are inert text. Text is capped at 40,000 characters.
+If clipped, resize or Fit text; the inspector retains the full source. Export
+privacy applies to notes too: HTML/YAML include all scopes, images the rendered
+scope, and Markdown export includes fenced annotation source.
 
 ## Economics and automation
 

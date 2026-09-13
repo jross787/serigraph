@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { parseMap } from '../shared/model.js';
 import { state } from '../app/state.js';
 import * as edit from '../app/edit.js';
-import { routeDragged, routeStyled, routeEdge, routeAutomaticEdges } from '../app/layout.js';
+import { routeDragged, routeStyled, routeEdge, routeAutomaticEdges, attachmentAt } from '../app/layout.js';
 
 const BASE = `# via test map — top comment
 name: Routes
@@ -49,6 +49,50 @@ function reserialize() {
 }
 
 beforeEach(() => load());
+
+test('precise anchors validate, retain comments, reverse, and release with Auto', () => {
+  for (const offset of [0, 0.27, 1]) {
+    const src = BASE.replace('label: approved', `label: approved\n    fromSide: bottom\n    fromOffset: ${offset}`);
+    assert.equal(parseMap(src).model.root.edges[1].fromOffset, offset);
+  }
+  for (const fields of ['fromOffset: 0.2', 'fromSide: top\n    fromOffset: 1.1', 'toSide: left\n    toOffset: .nan']) {
+    assert.ok(parseMap(BASE.replace('label: approved', `label: approved\n    ${fields}`)).errors.length);
+  }
+  const ref = { scopeId: null, index: 1 };
+  edit.setEdgeAnchor(ref, 'from', { side: 'bottom', offset: 0 });
+  edit.setEdgeAnchor(ref, 'to', { side: 'right', offset: 0.8 });
+  edit.reverseEdge(ref);
+  const { out, model } = reserialize();
+  assert.match(out, /# inline comment/);
+  assert.equal(model.root.edges[1].fromOffset, 0.8);
+  assert.equal(model.root.edges[1].toOffset, 0);
+  assert.deepEqual(model.root.edges[1].via, { x: 700, y: 40 });
+  edit.setEdgeSide(ref, 'to', null);
+  assert.doesNotMatch(reserialize().out, /toOffset:|toSide:/);
+  assert.throws(() => edit.setEdgeAnchor(ref, 'from', { side: 'top', offset: Infinity }), /offset/);
+});
+
+test('precise anchors follow moved boxes and project onto the visible shape', () => {
+  const a = { x: 30, y: 40, w: 200, h: 100, node: {} };
+  const b = { x: 500, y: 400, w: 200, h: 100, node: {} };
+  const anchor = { fromSide: 'bottom', fromOffset: 0.2, toSide: 'left', toOffset: 0.8 };
+  for (const route of [null, 'straight', 'curved', 'angled', 'stepped']) {
+    const edge = { ...anchor, route, via: { x: 380, y: 320 } };
+    for (const result of [routeEdge(a, b, edge), routeDragged(a, b, edge, { x: 380, y: 340 })].filter(Boolean)) {
+      assert.deepEqual(result.points[0], { x: 70, y: 140 });
+      assert.deepEqual(result.points.at(-1), { x: 500, y: 480 });
+    }
+  }
+  assert.deepEqual(attachmentAt(a, { x: 70, y: 200 }), { side: 'bottom', offset: 0.2 });
+  for (const type of ['decision', 'event', 'api', 'role', 'database', 'artifact']) {
+    const n = { ...a, node: { type } };
+    const p = routeEdge(n, b, { ...anchor, route: 'straight' }).points[0];
+    const roundtrip = attachmentAt(n, p);
+    assert.equal(roundtrip.side, 'bottom');
+    assert.ok(Math.abs(roundtrip.offset - 0.2) < 0.001, type);
+    assert.ok(p.y <= a.y + a.h && p.y >= a.y, type);
+  }
+});
 
 test('stepped detours never retrace the segment at an outside bend', () => {
   const a = { x: 0, y: 0, w: 200, h: 64, node: {} };

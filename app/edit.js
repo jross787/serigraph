@@ -107,7 +107,7 @@ export function slugify(label) {
 
 export function uniqueId(model, base, extraTaken = new Set()) {
   let id = base, n = 2;
-  while (model?.byId.has(id) || extraTaken.has(id)) id = `${base}-${n++}`;
+  while (model?.byId.has(id) || model?.annotationById?.has(id) || extraTaken.has(id)) id = `${base}-${n++}`;
   return id;
 }
 
@@ -117,7 +117,7 @@ function flowPositions(node) {
   if (isMap(node)) {
     for (const pair of node.items) {
       const key = typeof pair.key === 'string' ? pair.key : pair.key?.value;
-      if (key === 'position' && isMap(pair.value)) pair.value.flow = true;
+      if (['position', 'size'].includes(key) && isMap(pair.value)) pair.value.flow = true;
       else flowPositions(pair.value);
     }
   } else if (isSeq(node)) {
@@ -138,7 +138,7 @@ export function collectCloneIds(value, ids, taken) {
     return;
   }
   if (!value || typeof value !== 'object') return;
-  if (isNodeRecord(value)) {
+  if (isNodeRecord(value) || (typeof value.id === 'string' && ['note', 'text'].includes(value.kind) && typeof value.markdown === 'string')) {
     const next = uniqueId(state.model, `${value.id}-copy`, taken);
     taken.add(next);
     ids.set(value.id, next);
@@ -170,6 +170,54 @@ function offsetPosition(value, position = null) {
       y: Math.round(Number(value.position.y || 0) + 28),
     };
   }
+}
+
+function annotationPath(id) {
+  const annotation = state.model?.annotationById?.get(id);
+  if (!annotation) throw new Error('Annotation not found');
+  const scope = ensureScope(state.doc, annotation.ownerId, { create: false });
+  if (!scope) throw new Error('Annotation scope not found');
+  const path = [...scope.nodesPath.slice(0, -1), 'annotations'];
+  const seq = state.doc.getIn(path, true);
+  const index = isSeq(seq) ? seq.items.findIndex(item => isMap(item) && item.get('id') === id) : -1;
+  if (index < 0) throw new Error('Annotation not found');
+  return [...path, index];
+}
+
+export function addAnnotation(ownerId, fields) {
+  const scope = ensureScope(state.doc, ownerId);
+  if (!scope) throw new Error('Scope not found');
+  const path = [...scope.nodesPath.slice(0, -1), 'annotations'];
+  if (!state.doc.getIn(path, true)) state.doc.setIn(path, state.doc.createNode([]));
+  const id = uniqueId(state.model, fields.kind === 'text' ? 'text' : 'note');
+  const item = state.doc.createNode({ id, kind: fields.kind, markdown: fields.markdown,
+    position: fields.position, size: fields.size, font: fields.font ?? 'system', fontSize: fields.fontSize ?? 16 });
+  flowPositions(item);
+  const seq = useBlockSequence(state.doc, path);
+  seq.add(item);
+  return id;
+}
+
+export function updateAnnotation(id, fields) {
+  const path = annotationPath(id);
+  const item = state.doc.getIn(path, true);
+  for (const key of ['kind', 'markdown', 'position', 'size', 'font', 'fontSize']) {
+    if (fields[key] !== undefined) item.set(key, state.doc.createNode(fields[key]));
+  }
+  flowPositions(item);
+}
+
+export function deleteAnnotation(id) { state.doc.deleteIn(annotationPath(id)); }
+
+export function duplicateAnnotation(id) {
+  const path = annotationPath(id);
+  const item = state.doc.getIn(path, true).clone();
+  const annotation = state.model.annotationById.get(id);
+  const next = uniqueId(state.model, `${id}-copy`);
+  item.set('id', next);
+  item.set('position', state.doc.createNode({ x: annotation.position.x + 28, y: annotation.position.y + 28 }, { flow: true }));
+  state.doc.getIn(path.slice(0, -1), true).add(item);
+  return next;
 }
 
 export function updateDocument(fields = {}) {
@@ -1000,7 +1048,9 @@ function cleanupScope(doc, ownerId) {
   const edges = isMap(ch) ? ch.get('edges', true) : null;
   const nEmpty = !isSeq(nodes) || nodes.items.length === 0;
   const eEmpty = !isSeq(edges) || edges.items.length === 0;
-  if (nEmpty && eEmpty) doc.deleteIn([...nodePath, 'children']);
+  const annotations = isMap(ch) ? ch.get('annotations', true) : null;
+  const aEmpty = !isSeq(annotations) || annotations.items.length === 0;
+  if (nEmpty && eEmpty && aEmpty) doc.deleteIn([...nodePath, 'children']);
 }
 
 export function addEdge(ownerId, { from, to, label, meaning = null }) {
@@ -1097,9 +1147,11 @@ export function reverseEdge(edgeRef) {
   const from = item.get('from');
   item.set('from', item.get('to'));
   item.set('to', from);
-  const fromSide = item.get('fromSide', true), toSide = item.get('toSide', true);
-  if (toSide != null) item.set('fromSide', toSide); else item.delete('fromSide');
-  if (fromSide != null) item.set('toSide', fromSide); else item.delete('toSide');
+  for (const suffix of ['Side', 'Offset']) {
+    const fromValue = item.get(`from${suffix}`, true), toValue = item.get(`to${suffix}`, true);
+    if (toValue != null) item.set(`from${suffix}`, toValue); else item.delete(`from${suffix}`);
+    if (fromValue != null) item.set(`to${suffix}`, fromValue); else item.delete(`to${suffix}`);
+  }
 }
 
 // Attach to a card side; null releases just this endpoint back to Auto.
@@ -1107,8 +1159,15 @@ export function setEdgeSide(edgeRef, endpoint, side) {
   if (!['from', 'to'].includes(endpoint)) throw new Error('invalid edge endpoint');
   if (side != null && !EDGE_SIDES.includes(side)) throw new Error('invalid attachment side');
   const item = findEdgeItem(state.doc, edgeRef);
-  if (side == null) item.delete(`${endpoint}Side`);
+  if (side == null) { item.delete(`${endpoint}Side`); item.delete(`${endpoint}Offset`); }
   else item.set(`${endpoint}Side`, side);
+}
+
+export function setEdgeAnchor(edgeRef, endpoint, { side, offset }) {
+  if (!Number.isFinite(offset) || offset < 0 || offset > 1) throw new Error('invalid attachment offset');
+  if (!EDGE_SIDES.includes(side)) throw new Error('invalid attachment side');
+  setEdgeSide(edgeRef, endpoint, side);
+  findEdgeItem(state.doc, edgeRef).set(`${endpoint}Offset`, Math.round(offset * 1000) / 1000);
 }
 
 // Point an edge at different endpoints. Both must be sibling nodes of the
@@ -1175,6 +1234,7 @@ export function insertTemplate(ownerId, templateModel) {
     allTemplateIds.push(...templateModel.elements.map((element) => element.id));
   }
   (function collect(scope) {
+    allTemplateIds.push(...(scope.annotations ?? []).map(annotation => annotation.id));
     for (const node of scope.nodes) {
       if (!node.isPlacement) allTemplateIds.push(node.id);
       if (node.children) collect(node.children);
@@ -1182,7 +1242,7 @@ export function insertTemplate(ownerId, templateModel) {
   })(templateModel.root);
 
   for (const id of allTemplateIds) {
-    if (model.byId.has(id) || taken.has(id)) {
+    if (model.byId.has(id) || model.annotationById?.has(id) || taken.has(id)) {
       const fresh = uniqueId(model, id, taken);
       rename.set(id, fresh);
       taken.add(fresh);
@@ -1228,9 +1288,12 @@ export function insertTemplate(ownerId, templateModel) {
     }),
     edges: scope.edges.map((edge) => {
       const plainEdge = { from: rid(edge.from), to: rid(edge.to) };
-      if (edge.label) plainEdge.label = edge.label;
+      for (const key of ['label', 'route', 'via', 'fromSide', 'toSide', 'fromOffset', 'toOffset', 'meaning', 'kind', 'issue']) {
+        if (edge[key] != null && edge[key] !== '') plainEdge[key] = edge[key];
+      }
       return plainEdge;
     }),
+    ...(scope.annotations?.length ? { annotations: scope.annotations.map(({ ownerId: _ownerId, ...annotation }) => ({ ...annotation, id: rid(annotation.id) })) } : {}),
   });
   const plain = plainScope(templateModel.root);
   if (templateModel.mode === 'freeform') {
@@ -1251,6 +1314,14 @@ export function insertTemplate(ownerId, templateModel) {
     doc.addIn(scope.nodesPath, created);
   }
   for (const e of plain.edges) doc.addIn(scope.edgesPath, doc.createNode(e));
+  if (plain.annotations?.length) {
+    const path = [...scope.nodesPath.slice(0, -1), 'annotations'];
+    if (!doc.getIn(path, true)) doc.setIn(path, doc.createNode([]));
+    useBlockSequence(doc, path);
+    for (const annotation of plain.annotations) {
+      const item = doc.createNode(annotation); flowPositions(item); doc.addIn(path, item);
+    }
+  }
 
   return plain.nodes.map((n) => n.id);
 }

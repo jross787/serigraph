@@ -111,6 +111,7 @@ Meaning, transfer method, and geometry are independent:
 | `route` | `curved`, `straight`, `angled`, `stepped` |
 | `via` | Optional bend `{ x, y }` in scope coordinates |
 | `fromSide`, `toSide` | `top`, `right`, `bottom`, `left`; omit for automatic |
+| `fromOffset`, `toOffset` | Optional 0–1 fraction along the matching side; default 0.5. Preserve authored anchors when editing. |
 
 Use `meaning` on new edges. Missing meaning stays unspecified and retains the
 legacy arrow; it is not inferred from `kind`. Associations have no arrowhead;
@@ -131,6 +132,8 @@ runtime before describing capabilities as available in another environment.
 | Feature | Workflow and limit |
 | --- | --- |
 | Canvas authoring | Add typed objects; connect by ports or Connect; rename, duplicate, multi-select, copy/paste, align/distribute, and move into/out of sub-maps. Applied edits autosave through comment-preserving, conflict-checked writes. |
+| Board notes/text | Add → Note block or Freeform text creates a resizable, scope-local Markdown annotation, not a process node. Double-click for fonts, size, bold/italic, lists, live preview and Fit text; Apply, drag/resize, Duplicate and Delete are undoable. Geometry/schema live in the Modeling reference. |
+| Precise anchors | Select a connector and drag either endpoint around its own card, or choose From/To side and Position (%) in the inspector. Side Auto clears side+offset; Route Auto keeps them. Moving/reversing preserves the attachments; this does not rewire to a different card. |
 | Navigation | Pan, zoom/Fit/presets, minimap, breadcrumbs, cross-level search, and node deep links. Inspector opening preserves the camera. |
 | Inspector | Selecting an item highlights its direct neighbors/connectors and opens Connections, including incoming/outgoing edges and cross-scope declared references. Follow an item or Inspect connector. Other detail disclosures stay closed by default; explicit Edit opens its form. This is declared structure, not live traffic. |
 | Layout | Auto-layout by default; drag to pin the object's center with `position`, release to restore automatic placement. Pins/handles appear on hover or keyboard focus. Measured diamond text, two-line labels, and separate parallel lanes improve readability; label leaders point to crowded paths. Bend/shape/attachment edits preserve meaning. Dense graphs still need visual review. |
