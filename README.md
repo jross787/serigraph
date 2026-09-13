@@ -26,6 +26,29 @@ Use the map switcher, or open these seeded examples directly:
 
 ## Update it
 
+Open **More actions (•••) → App updates**. A compact **Update available**
+button also appears in the top bar when a newer revision is found. Click it
+to review the running/available Git revisions, then **Update & restart**.
+The local server restarts on the same port and the tab reloads at the same map
+and camera. This works with `npm start`, `node server/main.js`, and the Mac
+launcher; existing installations need one manual update/restart to get it.
+
+Checks contact only the configured Git remote when opening the app and hourly
+while it is visible (shared across tabs, with failure backoff). They do not
+install anything or query mapped systems. **Check now** is also available.
+Updates default to `origin/main`; trusted launch settings
+`SERIGRAPH_UPDATE_REMOTE` / `SERIGRAPH_UPDATE_BRANCH` can select another channel.
+
+The button requires a clean, fast-forwardable Git checkout and local-only
+serving. Finish drafts, saves, sync, and AI/agent work, and close other tabs and
+servers using this installation first. Active maps/configuration are never
+part of an in-app update: if upstream changes touch them, the update stops.
+Ignored local files cannot be overwritten. There is no automatic rollback;
+startup failures need attention on the host. LAN/reverse-proxy deployments,
+non-Git copies, and alternate asset roots must be updated by their operator.
+Set `SERIGRAPH_DISABLE_UPDATES=1` to disable in-app checks and installation.
+Standalone HTML exports have no update controls or update network requests.
+
 Business maps can live in a separate private repository. See
 [Private workspaces](docs/PRIVATE-WORKSPACES.md) for the external-library launch option.
 
@@ -42,6 +65,54 @@ serigraph update
 ```
 
 The update stops without changing files if the checkout has local work, is not on `main`, or cannot move forward cleanly. Use `serigraph update --check` to check for an update without applying it. You can also run `npm run update` from this folder without linking the command.
+
+## Choose where project files live
+
+Open **More actions (•••) → Project files**, paste an existing folder's absolute
+path, and choose **Preview folder**. Review its map/project counts and whether
+it contains `.env`, then confirm **Use folder & restart**. The app reopens Projects
+in that library and remembers the choice for this installation on this machine.
+
+This switches the library; it does **not** move, copy, delete, or overwrite old
+maps, projects, trash, or credentials. To relocate existing work, back it up and
+copy it deliberately before selecting the destination. Only trust folders whose
+configuration you approve. A missing saved folder stops startup instead of
+silently opening another library. Launcher environment overrides take precedence
+and disable the button; see [Private workspaces](docs/PRIVATE-WORKSPACES.md).
+
+## Appearance and connection focus
+
+**More actions → Appearance → Glass** opts into a pearl-glass surface with
+translucent controls, soft lighting, and readable cards. Frost remains the default;
+Paper and Night remain available. All themes have a clean, dot-free canvas. Pins,
+connection handles, and route controls appear on hover or keyboard focus.
+
+Decision text fits inside the diamond's slopes. Connector labels use measured,
+bounded two-line bubbles; paired return paths take separate shape-anchored lanes.
+Crowded labels can move off the path with a small leader pointing back to it.
+Manual pins, bends, and attachment choices stay intact. Dense maps still benefit
+from visual review.
+
+Click an item to highlight its direct neighbors and connectors. The inspector's
+**Connections** section opens automatically with incoming/outgoing paths and
+declared ownership, relations, and dependencies across scopes. Choose a connected
+item or **Inspect connector** to follow it. This shows declared relationships,
+not observed traffic or verified health.
+
+## Report a bug with photos
+
+Choose **More actions → Report a bug**. Describe the problem, preview up to six
+PNG/JPEG/WebP photos (8 MB each), and review the privacy warning. Photos are
+re-encoded locally to remove camera metadata; this does not redact their pixels.
+Optional app details include revision, theme, and viewport, never map source,
+local paths, credentials, or logs.
+
+**Open GitHub draft** prepares the issue in `jross787/serigraph`. Copy each reviewed
+photo into GitHub's editor, or download its copy and attach it there, then select
+**Submit new issue** on GitHub. Issues and photos are public. Serigraph does not
+upload photos, store a GitHub token, or publish an issue automatically. This uses
+GitHub's [prefilled issue workflow](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-an-issue)
+and [native attachments](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/attaching-files).
 
 ## Process maps and Freeform maps
 

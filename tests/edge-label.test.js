@@ -9,13 +9,14 @@ test('connection bubbles fit measured text with padding and retain the long-labe
   }) }) };
   try {
     const short = edgeLabelBubble('Yes');
-    assert.deepEqual(short, { text: 'Yes', w: 48, h: 28 });
+    assert.deepEqual(short, { text: 'Yes', lines: ['Yes'], w: 48, h: 28 });
     assert.ok(edgeLabelBubble('iii').w < edgeLabelBubble('WWW').w, 'measure glyphs, not character count');
-    assert.ok(edgeLabelBubble('').w >= EDGE_LABEL_SIZE.h, 'rounded bubble retains its minimum diameter');
+    assert.ok(edgeLabelBubble('').w >= 28, 'rounded bubble retains its minimum diameter');
     const long = edgeLabelBubble('A deliberately long connection description that exceeds the width limit');
     assert.ok(long.w <= EDGE_LABEL_SIZE.w);
     assert.ok(long.text.endsWith('…'));
-    assert.equal(long.h, short.h);
+    assert.equal(long.h, EDGE_LABEL_SIZE.h);
+    assert.equal(long.lines.length, 2);
   } finally {
     if (previous === undefined) delete globalThis.document;
     else globalThis.document = previous;

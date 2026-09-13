@@ -16,9 +16,8 @@ function ellipsize(text, maxWidth, font) {
   return text + '…';
 }
 
-// Reserve the existing maximum footprint so shorter bubbles don't rearrange
-// the map or its routes. Rendering shrinks within this envelope.
-export const EDGE_LABEL_SIZE = { w: 192, h: 28 };
+// A bounded two-line envelope, independent of selection and zoom.
+export const EDGE_LABEL_SIZE = { w: 192, h: 44 };
 const EDGE_LABEL_FONT = '600 11px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
 export function edgeLabelText(text) {
   const width = EDGE_LABEL_SIZE.w - 24;
@@ -26,11 +25,13 @@ export function edgeLabelText(text) {
 }
 
 export function edgeLabelBubble(text) {
-  const fitted = edgeLabelText(text);
+  const lines = wrapText(text, EDGE_LABEL_SIZE.w - 24, EDGE_LABEL_FONT, 2)
+    .map(line => fitText(line, EDGE_LABEL_SIZE.w - 24, EDGE_LABEL_FONT));
+  if (!lines.length) lines.push('');
   return {
-    text: fitted,
-    w: Math.min(EDGE_LABEL_SIZE.w, Math.max(EDGE_LABEL_SIZE.h, Math.ceil(measure(fitted, EDGE_LABEL_FONT)) + 24)),
-    h: EDGE_LABEL_SIZE.h,
+    text: lines.join(' '), lines,
+    w: Math.min(EDGE_LABEL_SIZE.w, Math.max(28, ...lines.map(line => Math.ceil(measure(line, EDGE_LABEL_FONT)) + 24))),
+    h: lines.length > 1 ? EDGE_LABEL_SIZE.h : 28,
   };
 }
 
@@ -61,23 +62,23 @@ export function wrapText(text, maxWidth, font = `600 ${FONT}`, maxLines = 3) {
 }
 
 // ── node sizing ──────────────────────────────────────────────────────
-const HEADER_FONT = '650 14px ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif';
 // Match the full-size .node .label typography; overview labels are smaller.
 export const CARD_FONT = '650 14.25px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
 
-function sizeNode(node, model) {
+export function sizeNode(node, model) {
   const isContainer = !!node.children;
   if (isContainer) {
-    const lines = wrapText(node.label, 168, HEADER_FONT, 2);
-    const lw = Math.max(...lines.map((l) => measure(l, HEADER_FONT)), 60);
+    const lines = wrapText(node.label, 168, CARD_FONT, 2).map(line => fitText(line, 168, CARD_FONT));
+    const lw = Math.max(...lines.map((l) => measure(l, CARD_FONT)), 60);
     const w = Math.min(236, Math.max(184, lw + 82));
     // height finished in layoutScope once the child layout (aspect) is known
     return { w, h: 0, lines };
   }
   if (node.type === 'decision') {
-    const lines = wrapText(node.label, 108, `600 ${FONT}`, 3);
-    const lw = Math.max(...lines.map((l) => measure(l)), 40);
-    return { w: Math.max(120, Math.min(148, lw + 40)), h: Math.max(88, lines.length * 17 + 44), lines };
+    // Text must fit the diamond's inscribed area, not its bounding box.
+    // Use exactly the rendered font and a stable footprint at every zoom.
+    const lines = wrapText(node.label, 96, CARD_FONT, 3).map(line => fitText(line, 96));
+    return { w: 176, h: 120, lines };
   }
   if (node.type === 'event') {
     const lines = wrapText(node.label, 86, CARD_FONT, 3).map((line) => fitText(line, 86));
@@ -248,6 +249,7 @@ export function routeAutomaticEdges(nodes, edges) {
   for (const e of edges) {
     if (e.autoFallback && !e.edge.via && !e.edge.route && !e.edge.fromSide && !e.edge.toSide) {
       Object.assign(e, e.autoFallback);
+      e.labelAnchor = null;
       delete e.autoFallback;
       routed.add(e);
     }
@@ -324,7 +326,7 @@ export function routeAutomaticEdges(nodes, edges) {
     }));
     if (!blocked) for (const { e, points, labelPos } of proposed) {
       e.autoFallback = { points: e.points, labelPos: e.labelPos, smooth: !!e.smooth };
-      Object.assign(e, { points, labelPos, smooth: false });
+      Object.assign(e, { points, labelPos, smooth: false, labelAnchor: null });
       routed.add(e);
     }
   }
@@ -345,6 +347,89 @@ export function routeVia(a, b, via, edge = {}) {
     y: (1 - t) * (1 - t) * p1.y + 2 * (1 - t) * t * c.y + t * t * p2.y,
   };
   return { points: [p1, { x: via.x, y: via.y }, p2], labelPos, smooth: true };
+}
+
+// Parallel/return paths get distinct lanes with endpoints on the actual
+// shapes. Never translate entire paths off their endpoints or change pins.
+export function routeParallelEdges(nodes, edges) {
+  const byId = new Map(nodes.map(node => [node.id, node]));
+  const pairs = new Map();
+  const changed = new Set();
+  for (const e of edges) {
+    if (e.edge.from === e.edge.to) continue;
+    const key = JSON.stringify([e.edge.from, e.edge.to].sort());
+    if (!pairs.has(key)) pairs.set(key, []);
+    pairs.get(key).push(e);
+  }
+  for (const members of pairs.values()) {
+    if (members.length < 2) continue;
+    const a = byId.get(members[0].edge.from), b = byId.get(members[0].edge.to);
+    if (!a || !b) continue;
+    const ca = centerOf(a), cb = centerOf(b);
+    // A lane fan is only appropriate in a clear corridor. Keep dagre's
+    // original detours when another card sits between these endpoints.
+    const padding = members.length * 64;
+    const corridor = { x: Math.min(ca.x, cb.x) - padding, y: Math.min(ca.y, cb.y) - padding,
+      w: Math.abs(cb.x - ca.x) + 2 * padding, h: Math.abs(cb.y - ca.y) + 2 * padding };
+    if (nodes.some(node => node !== a && node !== b && rectOverlap(corridor, node))) continue;
+    const length = Math.hypot(cb.x - ca.x, cb.y - ca.y) || 1;
+    const normal = { x: -(cb.y - ca.y) / length, y: (cb.x - ca.x) / length };
+    members.forEach((e, index) => {
+      if (e.edge.via || e.edge.route || e.edge.fromSide || e.edge.toSide) return;
+      const offset = (index - (members.length - 1) / 2) * 64;
+      const via = { x: (ca.x + cb.x) / 2 + normal.x * offset, y: (ca.y + cb.y) / 2 + normal.y * offset };
+      const route = routeVia(byId.get(e.edge.from), byId.get(e.edge.to), via);
+      Object.assign(e, route, { labelPos: via, labelAnchor: null });
+      changed.add(e);
+    });
+  }
+  return changed;
+}
+
+const rectOverlap = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+function routeSamples(e) {
+  if (e.smooth && e.points.length === 3) {
+    const [a, via, b] = e.points;
+    const c = { x: 2 * via.x - (a.x + b.x) / 2, y: 2 * via.y - (a.y + b.y) / 2 };
+    return [0.2, 0.35, 0.5, 0.65, 0.8].map(t => ({
+      x: (1-t)**2*a.x + 2*(1-t)*t*c.x + t*t*b.x,
+      y: (1-t)**2*a.y + 2*(1-t)*t*c.y + t*t*b.y,
+    }));
+  }
+  return e.points.slice(1).flatMap((b, i) => [0.5, 0.3, 0.7].map(t => ({
+    x: e.points[i].x + (b.x - e.points[i].x) * t,
+    y: e.points[i].y + (b.y - e.points[i].y) * t,
+  })));
+}
+
+// Labels use real measured bounds. Prefer their own route, then a short
+// leader to that route if the corridor is crowded. This is display-only:
+// authored connector geometry and pinned node positions are untouched.
+export function placeEdgeLabels(nodes, edges) {
+  const occupied = nodes.map(n => ({ x: n.x - 10, y: n.y - 10, w: n.w + 20, h: n.h + (n.node?.cost ? 40 : 20) }));
+  const changed = new Set();
+  for (const e of edges) {
+    if (!e.edge.label) continue;
+    const bubble = edgeLabelBubble(e.edge.label);
+    const anchors = [e.labelAnchor ?? e.labelPos, ...routeSamples(e)].filter(p => p && Number.isFinite(p.x) && Number.isFinite(p.y));
+    if (!anchors.length) continue;
+    let best;
+    for (const offset of [0, 32, -32, 60, -60, 92, -92, 132, -132]) {
+      for (const anchor of anchors) {
+        const position = { x: anchor.x, y: anchor.y + offset };
+        const rect = { x: position.x - bubble.w / 2 - 4, y: position.y - bubble.h / 2 - 4, w: bubble.w + 8, h: bubble.h + 8 };
+        const collisions = occupied.filter(other => rectOverlap(rect, other)).length;
+        const score = collisions * 10000 + Math.abs(offset) + Math.hypot(position.x - anchors[0].x, position.y - anchors[0].y) * .05;
+        if (!best || score < best.score) best = { position, anchor, rect, score, offset };
+      }
+      if (best.score < 10000) break;
+    }
+    e.labelPos = best.position;
+    e.labelAnchor = best.offset ? best.anchor : null;
+    occupied.push(best.rect);
+    changed.add(e);
+  }
+  return changed;
 }
 
 const distinctPoints = (points) => points.filter((p, i) => !i || p.x !== points[i - 1].x || p.y !== points[i - 1].y);
@@ -612,6 +697,8 @@ export function layoutScope(model, ownerId) {
     }
   }
   routeAutomaticEdges(nodes, edges);
+  routeParallelEdges(nodes, edges);
+  placeEdgeLabels(nodes, edges);
   {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const n of nodes) {

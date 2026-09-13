@@ -6,10 +6,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseMap } from '../shared/model.js';
 import { parseProjectIndex, PROJECT_INDEX_FILE } from '../shared/projects.js';
+import { resolveLibraryRoot } from '../server/library-location.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const LIBRARY_ROOT = process.env.SERIGRAPH_LIBRARY_DIR
-  ? path.resolve(process.env.SERIGRAPH_LIBRARY_DIR) : ROOT;
+const LIBRARY_ROOT = await resolveLibraryRoot(ROOT);
 
 // a project index file is not a map
 const INDEX_RE = /^projects\.ya?ml$/;

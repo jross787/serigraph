@@ -132,8 +132,8 @@ runtime before describing capabilities as available in another environment.
 | --- | --- |
 | Canvas authoring | Add typed objects; connect by ports or Connect; rename, duplicate, multi-select, copy/paste, align/distribute, and move into/out of sub-maps. Applied edits autosave through comment-preserving, conflict-checked writes. |
 | Navigation | Pan, zoom/Fit/presets, minimap, breadcrumbs, cross-level search, and node deep links. Inspector opening preserves the camera. |
-| Inspector | Description, facts, outcomes, automation, cost, layout, links, notes, and hierarchy are closed-by-default disclosures. Explicit Edit opens its form. Catalog and evidence warnings remain separate. |
-| Layout | Auto-layout by default; drag to pin the object's center with `position`, release to restore automatic placement. Bend/shape/attachment edits preserve connector meaning. Dense graphs still need visual review. |
+| Inspector | Selecting an item highlights its direct neighbors/connectors and opens Connections, including incoming/outgoing edges and cross-scope declared references. Follow an item or Inspect connector. Other detail disclosures stay closed by default; explicit Edit opens its form. This is declared structure, not live traffic. |
+| Layout | Auto-layout by default; drag to pin the object's center with `position`, release to restore automatic placement. Pins/handles appear on hover or keyboard focus. Measured diamond text, two-line labels, and separate parallel lanes improve readability; label leaders point to crowded paths. Bend/shape/attachment edits preserve meaning. Dense graphs still need visual review. |
 | Shared identity | Freeform definition edits affect every placement; group note/pin stays local. Remove a placement to keep other appearances; deleting an element removes all of them. |
 | Projects/templates | Related map files plus optional name/order/tags index; insert mode-compatible templates. UI moves maintain redirects; raw filesystem moves may break links. Trash is recoverable; Delete forever is not. |
 | Review/history | Attach/resolve notes and review provenance flags. Undo/Redo restores applied edits; bounded browser-local revision recovery is not a durable access audit or Git replacement. |
@@ -148,7 +148,10 @@ runtime before describing capabilities as available in another environment.
 | Agents | Existing local CLI launcher/event trail, not yet a graph-authorized, credential-isolated operational harness. Launching requires separate scope/destination approval. |
 | Share & sync | Workbench sync/share roles with explicit conflict choices transmit the map. A local deep link requires a reachable app/library; it is not a portable file. |
 | Exports | Interactive single-file HTML, static SVG/PNG, editable YAML, and readable Markdown. See below; exporting does not publish or grant access. |
-| Appearance | Frost, Paper, Night are browser preferences, not YAML. Respect reduced motion/transparency and preserve type legibility. |
+| Appearance | Frost (default), Paper, Night, and opt-in Glass are browser preferences, not YAML. All use a dot-free canvas. Glass uses translucent chrome with reduced-transparency/motion fallbacks. |
+| Installation updates | More actions → App updates, or the top-bar Update available button. Review the revision before Update & restart. Requires an idle, local-only, clean fast-forwardable Git installation; active library/configuration changes are blocked. Old installs need one manual update/restart. This is separate from mapping authority. |
+| Project-files location | More actions → Project files previews and switches an existing library folder, then restarts into Projects. Files and credentials are not migrated. The local preference is per installation; explicit launcher paths take precedence. Read the engine's PRIVATE-WORKSPACES guide before changing it, and approve the destination's .env. |
+| Bug reports | More actions → Report a bug opens a reviewed GitHub draft. Photo previews stay local; copy or download them and attach on GitHub before final submission. The issue repository is public. Never include private map data, records, or credentials; no automatic issue publication or photo upload. |
 
 Live database/API discovery, approved record previews, process telemetry, bounded
 two-source reconciliation with one Glance/Report result, and governed operational

@@ -5,10 +5,11 @@
 import { bus, state } from './state.js';
 import { ancestryOf } from '../shared/model.js';
 import { connectionPresentation, nodeTypeLabel } from '../shared/visual-language.js';
+import { connectionsOf } from '../shared/connections.js';
 import { nodeCost, compactMoney } from '../shared/cost.js';
 import { icon, TYPE_ICONS } from './icons.js';
 import { nodeObservation } from './github.js';
-import { layoutScope, miniTransform, edgePath, smoothEdgePath, routeDirect, routeEdge, routeDragged, routeAutomaticEdges, EDGE_LABEL_SIZE, edgeLabelBubble, invalidateLayouts, wrapText, fitText, CARD_FONT } from './layout.js';
+import { layoutScope, miniTransform, edgePath, smoothEdgePath, routeDirect, routeEdge, routeDragged, routeAutomaticEdges, routeParallelEdges, placeEdgeLabels, edgeLabelBubble, invalidateLayouts, wrapText, fitText, CARD_FONT } from './layout.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const el = (tag, attrs = {}, cls = '') => {
@@ -425,7 +426,7 @@ export function getCanvasSvgString() {
   layer.style.opacity = '1';
   clone.querySelector('.layers')?.replaceChildren(layer);
   clone.querySelectorAll('.github-observation, .port, .pin-badge, .sel-ring, .route-badge, .node-launch, .marquee, .connect-ghost').forEach(node => node.remove());
-  const transientClasses = ['selected', 'multi-selected', 'focus-dimmed', 'probe-dimmed', 'probe-node', 'probe-edge', 'relationship-endpoint', 'connect-target', 'drop-target'];
+  const transientClasses = ['selected', 'multi-selected', 'focus-dimmed', 'probe-dimmed', 'probe-node', 'probe-edge', 'relationship-endpoint', 'relationship-neighbor', 'relationship-active', 'connect-target', 'drop-target'];
   clone.querySelectorAll('.node, .edge').forEach(node => node.classList.remove(...transientClasses));
   clone.querySelectorAll('.identity-link').forEach(node => node.classList.remove('active'));
   clone.removeAttribute('class');
@@ -590,23 +591,6 @@ function textLines(lines, x, startY, cls, anchor = 'start', lh = 17) {
   return t;
 }
 
-function summaryLines(text, maxChars = 31, maxLines = 2) {
-  const words = String(text || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
-  const lines = [];
-  let line = '';
-  for (const word of words) {
-    const trial = line ? `${line} ${word}` : word;
-    if (trial.length <= maxChars || !line) line = trial;
-    else { lines.push(line); line = word; }
-    if (lines.length === maxLines) break;
-  }
-  if (lines.length < maxLines && line) lines.push(line);
-  if (lines.join(' ').length < words.join(' ').length && lines.length) {
-    lines[lines.length - 1] = `${lines[lines.length - 1].replace(/[.,;:]$/, '')}…`;
-  }
-  return lines;
-}
-
 function truncateLabel(text, maxChars) {
   const value = String(text || '');
   if (value.length <= maxChars) return value;
@@ -719,7 +703,8 @@ function buildNode(n) {
     g.appendChild(iconChip(node.type, 13, 10));
     const lines = launch ? wrapText(node.label, n.w - 87, CARD_FONT, 2).map(line => fitText(line, n.w - 87)) : n.lines;
     g.appendChild(textLines(lines, 45, 26, 'label', 'start', 19));
-    const desc = summaryLines(node.description);
+    const desc = wrapText(node.description, n.w - 28, '500 10.5px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif', 2)
+      .map(line => fitText(line, n.w - 28, '500 10.5px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif'));
     if (desc.length) g.appendChild(textLines(desc, 14, 58, 'node-summary', 'start', 15));
     const meta = el('text', { x: 14, y: n.h - 15 }, 'node-meta');
     const ownerLabels = (node.owners ?? [])
@@ -938,6 +923,8 @@ function buildEdge(e) {
     'aria-label': `${presentation.label}: ${from} ${presentation.arrow ? 'to' : 'and'} ${to}${e.edge.label ? `: ${e.edge.label}` : ''}`,
   }, `edge meaning-${e.edge.meaning || 'unspecified'}`);
   g.dataset.index = e.index;
+  g.dataset.from = e.edge.from;
+  g.dataset.to = e.edge.to;
   const smooth = e.smooth ? smoothEdgePath(e.points) : null;
   const d = smooth ? smooth.d : edgePath(e.points);
   g.appendChild(el('path', { d }, 'hit'));
@@ -958,12 +945,17 @@ function buildEdge(e) {
   const bubble = e.edge.label ? edgeLabelBubble(e.edge.label) : null;
   if (bubble) {
     const label = e.edge.label;
-    const { w, h, text } = bubble;
+    const { w, h, lines } = bubble;
+    if (e.labelAnchor) g.appendChild(el('path', { d: `M${e.labelAnchor.x},${e.labelAnchor.y} L${e.labelPos.x},${e.labelPos.y}` }, 'edge-label-leader'));
     g.appendChild(el('rect', {
       x: e.labelPos.x - w / 2, y: e.labelPos.y - h / 2, width: w, height: h, rx: h / 2,
     }, 'edge-label-bg'));
     const t = el('text', { x: e.labelPos.x, y: e.labelPos.y, 'text-anchor': 'middle', 'dominant-baseline': 'middle' }, 'edge-label');
-    t.textContent = text;
+    lines.forEach((line, index) => {
+      const span = el('tspan', { x: e.labelPos.x, y: e.labelPos.y + (index - (lines.length - 1) / 2) * 14 });
+      span.textContent = line;
+      t.append(span);
+    });
     g.appendChild(t);
     const title = el('title');
     title.textContent = label; // The complete wording also remains in the edge inspector.
@@ -989,20 +981,11 @@ function buildEdge(e) {
 }
 
 // ── cable bundles ────────────────────────────────────────────────────
-// Two or more edges between the same pair of nodes — either direction —
+// Three or more untyped edges between the same pair — either direction —
 // render as one cable sheath with a count chip and an arrowhead for each
 // direction present. Hovering (or tapping) the sheath fans the members out
 // so each stays clickable and draggable; a member with a custom route
 // leaves the bundle automatically.
-function fanMember(points, labelPos, i, n, normal) {
-  const spread = EDGE_LABEL_SIZE.h + 8;
-  const o = (i - (n - 1) / 2) * spread;
-  return {
-    points: points.map((p) => ({ x: p.x + normal.x * o, y: p.y + normal.y * o })),
-    labelPos: { x: labelPos.x + normal.x * o, y: labelPos.y + normal.y * o },
-  };
-}
-
 function bundleArrow(b, ang) {
   return el('polygon', {
     points: '-8,-3.5 0,0 -8,3.5',
@@ -1039,16 +1022,9 @@ function buildBundle(members, layout) {
   sheath.appendChild(chip);
   g.appendChild(sheath);
   const mem = el('g', {}, 'members');
-  // one normal for the whole corridor: a member running the other way must
-  // fan to the OPPOSITE side, not collapse onto the same offset
-  const corridorLen = Math.hypot(p2.x - p1.x, p2.y - p1.y) || 1;
-  const normal = { x: -(p2.y - p1.y) / corridorLen, y: (p2.x - p1.x) / corridorLen };
-  members.forEach((e, i) => {
-    // each member runs along the shared corridor, in its own direction
-    const pts = e.edge.from === first.from ? route.points : [...route.points].reverse();
-    const fan = fanMember(pts, route.labelPos, i, members.length, normal);
-    mem.appendChild(buildEdge({ ...e, points: fan.points, labelPos: fan.labelPos }));
-  });
+  // The layout already gives every member a separate, shape-anchored lane
+  // and collision-aware label. Reuse it for expansion and drag previews.
+  members.forEach(e => mem.appendChild(buildEdge(e)));
   g.appendChild(mem);
   return g;
 }
@@ -1065,8 +1041,10 @@ function groupEdgesForRender(edges) {
     byPair.get(key).push(e);
   }
   for (const members of byPair.values()) {
-    if (members.length >= 2) out.push({ bundle: members });
-    else out.push({ single: members[0] });
+    // Two paths deserve two visible, independently labeled connectors.
+    // Larger unspecified groups retain their existing compact bundle.
+    if (members.length >= 3) out.push({ bundle: members });
+    else for (const member of members) out.push({ single: member });
   }
   return out;
 }
@@ -1541,21 +1519,14 @@ export function paintSelection(followFocus = true) {
   const endpoints = new Set(selectedEdge ? [selectedEdge.edge.from, selectedEdge.edge.to] : []);
   const probeNodes = new Set(state.probePath?.nodeIds ?? []);
   const probeEdges = new Set(state.probePath?.edgeIndexes ?? []);
-  const adjacent = new Set(selected ? [selected] : []);
-  if (selected) {
-    for (const e of currentLayout.edges) {
-      if (e.edge.from === selected || e.edge.to === selected) {
-        adjacent.add(e.edge.from);
-        adjacent.add(e.edge.to);
-      }
-    }
-  }
+  const adjacent = new Set(selected ? [selected, ...connectionsOf(state.model, selected).map(connection => connection.target)] : []);
   for (const path of currentLayer.querySelectorAll('.identity-link')) {
     path.classList.toggle('active', !!selected && path.dataset.elementId === selected);
   }
   for (const g of currentLayer.querySelectorAll('.node')) {
     g.classList.toggle('selected', g.dataset.id === state.selectedId);
     g.classList.toggle('relationship-endpoint', endpoints.has(g.dataset.id));
+    g.classList.toggle('relationship-neighbor', !!selected && g.dataset.id !== selected && adjacent.has(g.dataset.id));
     g.classList.toggle('multi-selected', state.selectionIds.has(g.dataset.id));
     g.classList.toggle('connect-target', !!state.connectFrom && g.dataset.id !== state.connectFrom);
     g.classList.toggle('probe-node', probeNodes.has(g.dataset.id));
@@ -1564,6 +1535,8 @@ export function paintSelection(followFocus = true) {
       ? !endpoints.has(g.dataset.id) : !!selected && !adjacent.has(g.dataset.id)));
   }
   for (const g of currentLayer.querySelectorAll('.edge')) {
+    const connected = !!selected && (g.dataset.from === selected || g.dataset.to === selected);
+    g.classList.toggle('relationship-active', connected);
     g.classList.toggle('selected', state.selectedEdge != null && Number(g.dataset.index) === state.selectedEdge.index);
     g.setAttribute('aria-pressed', String(Number(g.dataset.index) === state.selectedEdge?.index));
     const e = currentLayout.edges.find((x) => x.index === Number(g.dataset.index));
@@ -1571,7 +1544,7 @@ export function paintSelection(followFocus = true) {
     g.classList.toggle('probe-edge', isProbeEdge);
     g.classList.toggle('probe-dimmed', probeNodes.size > 0 && !isProbeEdge);
     g.classList.toggle('focus-dimmed', probeNodes.size === 0 && (selectedEdge
-      ? e?.index !== selectedEdge.index : !!selected && e?.edge.from !== selected && e?.edge.to !== selected));
+      ? e?.index !== selectedEdge.index : !!selected && !connected));
   }
   svg.classList.toggle('connecting', !!state.connectFrom);
   // focus follows the selection for keyboard users, but only when focus is
@@ -1630,11 +1603,14 @@ function updateEdgesFor(ln) {
     if (e.edge.from !== ln.id && e.edge.to !== ln.id) continue;
     changed.add(e);
     delete e.autoFallback;
+    e.labelAnchor = null;
     Object.assign(e, routeEdge(byId.get(e.edge.from), byId.get(e.edge.to), e.edge));
   }
   for (const e of routeAutomaticEdges(currentLayout.nodes, currentLayout.edges)) {
     changed.add(e);
   }
+  for (const e of routeParallelEdges(currentLayout.nodes, currentLayout.edges)) changed.add(e);
+  for (const e of placeEdgeLabels(currentLayout.nodes, currentLayout.edges)) changed.add(e);
   const bundles = new Set();
   for (const e of changed) {
     const old = currentLayer.querySelector(`.edge[data-index="${e.index}"]`);
@@ -1709,9 +1685,15 @@ function wirePointer() {
     const label = drag.el.querySelector('.edge-label');
     if (labelBg && label) {
       labelBg.setAttribute('x', route.labelPos.x - Number(labelBg.getAttribute('width')) / 2);
-      labelBg.setAttribute('y', route.labelPos.y - EDGE_LABEL_SIZE.h / 2);
+      labelBg.setAttribute('y', route.labelPos.y - Number(labelBg.getAttribute('height')) / 2);
       label.setAttribute('x', route.labelPos.x);
       label.setAttribute('y', route.labelPos.y);
+      const lines = [...label.querySelectorAll('tspan')];
+      lines.forEach((line, index) => {
+        line.setAttribute('x', route.labelPos.x);
+        line.setAttribute('y', route.labelPos.y + (index - (lines.length - 1) / 2) * 14);
+      });
+      drag.el.querySelector('.edge-label-leader')?.setAttribute('d', '');
     }
     drag.via = route.via;
     drag.style = route.style;

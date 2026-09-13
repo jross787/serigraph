@@ -7,6 +7,9 @@ import { state, bus } from './state.js';
 const etags = new Map();
 
 async function jfetch(url, opts) {
+  if (state.updateApplying && opts?.method && opts.method !== 'GET' && !url.startsWith('/api/updates') && !url.startsWith('/api/library')) {
+    throw new Error('Serigraph is restarting. Wait before making changes.');
+  }
   const headers = { ...opts?.headers };
   if (state.libraryId) headers['X-Serigraph-Library'] = state.libraryId;
   const res = await fetch(url, { ...opts, headers });
@@ -32,6 +35,18 @@ async function jfetch(url, opts) {
 }
 
 export const api = {
+  libraryStatus: signal => jfetch('/api/library', { signal }),
+  libraryAction: (action, token, payload) => jfetch(`/api/library/${action}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Serigraph-Settings-Token': token },
+    body: JSON.stringify(payload), signal: AbortSignal.timeout(10_000),
+  }),
+  updateStatus: signal => jfetch('/api/updates', { signal }),
+  updateAction: (action, token, payload = {}) => jfetch(`/api/updates/${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Serigraph-Update-Token': token },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(90_000),
+  }),
   exportHtml: (id, source) => jfetch('/api/export', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

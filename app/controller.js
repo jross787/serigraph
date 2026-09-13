@@ -396,6 +396,7 @@ export async function loadAiSettings(force = false) {
 // ── the edit pipeline ────────────────────────────────────────────────
 // commit(() => { ...mutate state.doc via edit.js... })
 export async function commit(mutator, { select = undefined, historyLabel = 'edit map' } = {}) {
+  if (state.updateApplying) { bus.emit('toast', 'Wait for Serigraph to finish restarting.'); return false; }
   if (state.standalone) { bus.emit('toast', 'This is a read-only export.', true); return false; }
   const before = state.source;
   const action = cleanHistoryLabel(historyLabel);

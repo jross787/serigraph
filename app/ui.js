@@ -18,6 +18,7 @@ import { disconnectWorkbenchLink, useWorkbenchCopy, sendLocalCopy } from './work
 import { renderCatalog } from './catalog.js';
 import { renderGitHubGlance } from './github.js';
 import { NODE_VISUALS, CONNECTION_MEANINGS, nodeTypeLabel, connectionPresentation } from '../shared/visual-language.js';
+import { connectionsOf } from '../shared/connections.js';
 
 let fieldId = 0;
 
@@ -47,6 +48,7 @@ export function appearanceDialog() {
     h('p', { class: 'hint' }, 'Choose the surface that helps you read the map. Your choice stays in this browser.'));
   for (const [value, name, description] of [
     ['frost', 'Frost', 'Warm ivory controls over a deep, opaque canvas.'],
+    ['glass', 'Glass', 'Pearl glass, soft light, and a clear canvas. Apple-inspired; opt in here.'],
     ['light', 'Paper', 'A quiet light canvas for bright rooms.'],
     ['dark', 'Night', 'Low-glare charcoal surfaces throughout.'],
   ]) body.append(h('button', {
@@ -1624,7 +1626,7 @@ function renderDetail() {
   const inspectorKey = JSON.stringify([state.libraryId, state.mapId, state.scopeId, state.detailNodeId]);
   const expanded = !panel.hidden && panel.dataset.inspectorKey === inspectorKey
     ? new Set([...panel.querySelectorAll('.inspector-section[open]')].map(section => section.dataset.inspectorSection))
-    : new Set();
+    : new Set(['connections']);
   delete panel.dataset.inspectorKey;
   const catalogOpen = catalogView.open && !!state.model?.dataExplorer;
   panel.classList.toggle('catalog-detail', catalogOpen);
@@ -1673,6 +1675,22 @@ function renderDetail() {
 
   if (!editMode) {
     body.classList.add('focus-shelf-body');
+    const connections = connectionsOf(state.model, node.id);
+    body.append(inspectorSection('connections', `Connections · ${connections.length}`,
+      h('p', { class: 'field-help' }, 'Direct neighbors and their connectors are highlighted. These are declared relationships, not live traffic.'),
+      h('div', { class: 'connection-list' }, connections.length ? connections.map(connection => {
+        const other = state.model.byId.get(connection.target);
+        const scopeName = connection.scopeId == null ? state.model.name : state.model.byId.get(connection.scopeId)?.label;
+        return h('div', { class: 'connection-row' },
+          h('span', { class: 'connection-direction' }, connection.direction),
+          h('button', { class: 'connection-target', onClick: () => ctrl.gotoNode(connection.target) }, other?.label ?? connection.target),
+          h('span', { class: 'connection-description' }, connection.label),
+          h('small', {}, scopeName),
+          connection.index == null ? null : h('button', { class: 'connection-inspect', onClick: async () => {
+            await ctrl.gotoScope(connection.scopeId);
+            ctrl.selectEdge(connection.index);
+          } }, 'Inspect connector'));
+      }) : h('p', { class: 'field-help' }, 'No declared connections yet.'))));
     if (node.type === 'decision') body.append(inspectorSection('outcomes', 'Outcomes', decisionOutcomes(node)));
     const glance = renderGitHubGlance(node);
     if (glance) body.append(glance);
