@@ -36,6 +36,7 @@ import { ROOT, LIBRARY_ROOT, ENV_PATH, LIBRARY_LOCKED, PREFERENCES_FILE } from '
 import { createGitHubReader, GITHUB_SOURCE, GITHUB_REFRESH_MS } from './github.js';
 import { createUpdater } from './updater.js';
 import { inspectLibraryDirectory, saveLibraryPreference } from './library-location.js';
+import { createLocalLinks, isLocalLink } from './local-links.js';
 
 const github = process.env.SERIGRAPH_GITHUB_PILOT === '1' ? createGitHubReader() : null;
 
@@ -60,6 +61,9 @@ const BIND_HOST = LAN ? '0.0.0.0' : '127.0.0.1';
 const LOCAL_HOSTS = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
 
 const ENGINE_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const localLinks = createLocalLinks({ engineRoot: ENGINE_ROOT, enabled: !LAN,
+  registryFile: `${PREFERENCES_FILE}.links-${LIBRARY_ID.slice(0, 20)}.json` });
+let localLinkPlan = null;
 const updater = createUpdater({
   root: ENGINE_ROOT,
   branch: process.env.SERIGRAPH_UPDATE_BRANCH?.trim() || 'main',
@@ -313,6 +317,7 @@ async function mapSummaries(dir, project = null) {
 // maps/. safeId has already run, so the segments are clean and the result can
 // never escape the two roots.
 function mapPathFor(id) {
+  if (isLocalLink(id)) throw new Error('A linked map must already exist at its original location. Refresh Projects or relink it.');
   const slash = id.indexOf('/');
   return slash === -1
     ? path.join(MAPS_DIR, id + '.yaml')
@@ -320,6 +325,7 @@ function mapPathFor(id) {
 }
 
 async function resolveMapPath(id) {
+  if (isLocalLink(id)) return localLinks.resolve(id);
   const slash = id.indexOf('/');
   const dir = slash === -1 ? MAPS_DIR : path.join(PROJECTS_DIR, id.slice(0, slash));
   const base = slash === -1 ? id : id.slice(slash + 1);
@@ -384,11 +390,11 @@ async function readProjectIndex(dir) {
 }
 
 // every immediate subdirectory of projects/ is a project, even an empty one
-async function projectIndex() {
+async function projectIndex(includeLinkedMaps = false) {
   let entries;
   try {
     entries = await fs.readdir(PROJECTS_DIR, { withFileTypes: true });
-  } catch { return []; } // no projects/ yet — zero projects
+  } catch { entries = []; } // linked locations do not need a projects/ folder
   const out = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || !safeSlug(entry.name)) continue;
@@ -404,6 +410,10 @@ async function projectIndex() {
       tags: index.tags,
       mapCount,
     });
+  }
+  for (const project of await localLinks.projects()) {
+    const { maps, ...summary } = project;
+    out.push(includeLinkedMaps ? project : summary);
   }
   return out.sort((a, b) => a.slug.localeCompare(b.slug));
 }
@@ -436,6 +446,11 @@ function followMoves(id) {
 // the project context embedded in a standalone export: the project itself
 // plus a summary of every map in it
 async function projectMetaFor(slug) {
+  if (isLocalLink(slug)) {
+    const project = (await localLinks.projects()).find(item => item.slug === slug);
+    if (!project || project.unavailable) throw new Error('This linked location is unavailable. Reconnect it and reload.');
+    return { index: { order: project.order, tags: project.tags }, ...project };
+  }
   const index = await readProjectIndex(path.join(PROJECTS_DIR, slug));
   const name = index.name ?? slug;
   return { index, slug, name, maps: await mapSummaries(path.join(PROJECTS_DIR, slug), { slug, name }) };
@@ -623,7 +638,7 @@ let changeTimer = null;
 
 async function primeHashes() {
   const dirs = [MAPS_DIR];
-  for (const project of await projectIndex()) dirs.push(path.join(PROJECTS_DIR, project.slug));
+  for (const project of await projectIndex()) if (!project.linked) dirs.push(path.join(PROJECTS_DIR, project.slug));
   for (const dir of dirs) {
     for (const file of await listDir(dir)) {
       try {
@@ -712,6 +727,29 @@ function unwatchProjectDir(slug) {
   watchedProjects.delete(slug);
 }
 
+const localLinkWatchers = new Map();
+async function watchLocalLinks() {
+  const links = await localLinks.entries();
+  for (const [id, watcher] of localLinkWatchers) if (!links.some(link => link.id === id)) {
+    watcher.close(); localLinkWatchers.delete(id);
+  }
+  for (const link of links) {
+    if (localLinkWatchers.has(link.id)) continue;
+    const directory = link.kind === 'file' ? path.dirname(link.path) : link.path;
+    const watcher = watchDir(directory, () => {
+      // Map IDs are virtual, never inferred from a path relative to the app.
+      // Refresh the scoped list too, so new and removed folder members appear.
+      localLinks.projects().then(projects => {
+        const project = projects.find(item => item.slug === link.id);
+        broadcast({ type: 'maps-changed', ids: project?.maps.map(map => map.id) || [] });
+        broadcast({ type: 'library-changed', reason: 'local-link' });
+      }).catch(() => {});
+    }, filename => link.kind === 'file' ? String(filename) === path.basename(link.path)
+      : !String(filename).startsWith('.') && /\.ya?ml$/i.test(String(filename)));
+    if (watcher) localLinkWatchers.set(link.id, watcher);
+  }
+}
+
 // The projects/ root itself is watched too: a project folder created (or
 // removed) directly on disk gets its own watcher and a library-changed
 // broadcast without a server restart. Folder events carry no .yaml extension,
@@ -737,6 +775,7 @@ function watchProjectsRoot() {
 // create projects/<slug>/ and a minimal index when either is missing, and
 // make sure the file watcher covers the folder
 async function ensureProject(slug, name = slug) {
+  if (isLocalLink(slug)) throw new Error('Linked folders stay at their original locations. Create new files there, or choose a regular library project.');
   const dir = path.join(PROJECTS_DIR, slug);
   await fs.mkdir(dir, { recursive: true });
   if (!existsSync(path.join(dir, PROJECT_INDEX_FILE))) {
@@ -790,6 +829,41 @@ async function handleApi(req, res, url) {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', ...]
   if (parts[1] === 'updates') return handleUpdates(req, res, url);
   if (parts[1] === 'library') return handleLibrary(req, res, url);
+  if (parts[1] === 'local-links') {
+    if (req.method === 'GET' && parts.length === 2) return json(res, 200, {
+      enabled: localLinks.enabled, token: localLinks.enabled ? libraryToken : null,
+      message: localLinks.enabled ? '' : 'Local links are available only in the local app, not LAN mode.',
+    });
+    if (!localLinks.enabled || !localAction(req, 'x-serigraph-links-token', libraryToken)) return json(res, 403, { error: 'Manage local links from this local Serigraph app after reloading.' });
+    if (req.method !== 'POST' || parts.length !== 3 || url.search) return json(res, 405, { error: 'Unknown local-library action.' });
+    let body;
+    try { body = JSON.parse(await readBody(req, 8192)); } catch { return json(res, 400, { error: 'Invalid local-library request.' }); }
+    try {
+      if (parts[2] === 'preview') {
+        localLinkPlan = null;
+        const preview = await localLinks.preview(body?.path);
+        localLinkPlan = { ...preview, nonce: randomUUID(), checkedAt: Date.now() };
+        return json(res, 200, localLinkPlan);
+      }
+      if (parts[2] === 'add') {
+        if (!localLinkPlan || body?.nonce !== localLinkPlan.nonce || body?.editOriginals !== true || Date.now() - localLinkPlan.checkedAt > 600_000) {
+          return json(res, 409, { error: 'Preview the location and approve editing its originals before linking.' });
+        }
+        const approved = localLinkPlan; localLinkPlan = null;
+        const result = await localLinks.add(approved);
+        await watchLocalLinks();
+        broadcast({ type: 'library-changed', reason: 'local-link' });
+        return json(res, 201, result);
+      }
+      if (parts[2] === 'remove') {
+        await localLinks.remove(body?.id);
+        await watchLocalLinks();
+        broadcast({ type: 'library-changed', reason: 'local-link' });
+        return json(res, 200, { removed: true });
+      }
+      return json(res, 400, { error: 'Unknown local-library action.' });
+    } catch (error) { return json(res, 400, { error: error.message }); }
+  }
   if (parts[1] === 'export' && parts.length === 2) {
     if (req.method !== 'POST') return json(res, 405, { error: 'Use POST with the map source.' });
     let body;
@@ -877,8 +951,8 @@ async function handleApi(req, res, url) {
 
   if (parts[1] === 'maps' && parts.length === 2) {
     if (req.method === 'GET') {
-      const projects = await projectIndex();
-      const nested = await Promise.all(projects.map((p) => mapSummaries(path.join(PROJECTS_DIR, p.slug), { slug: p.slug, name: p.name })));
+      const projects = await projectIndex(true);
+      const nested = await Promise.all(projects.map((p) => p.linked ? p.maps : mapSummaries(path.join(PROJECTS_DIR, p.slug), { slug: p.slug, name: p.name })));
       return json(res, 200, [...await mapSummaries(MAPS_DIR), ...nested.flat()]);
     }
     if (req.method === 'POST') {
@@ -891,6 +965,7 @@ async function handleApi(req, res, url) {
       if (!MAP_MODES.includes(mode)) return json(res, 400, { error: `mode must be one of: ${MAP_MODES.join(', ')}` });
       if (project !== null && !safeSlug(project)) return json(res, 400, { error: 'invalid project slug' });
       if (project === 'project') return json(res, 400, { error: '"project" is a reserved project slug' });
+      if (isLocalLink(project)) return json(res, 409, { error: 'Create new files in the original linked folder, or choose a regular library project.' });
       const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'untitled';
       if (project && slug === 'projects') return json(res, 400, { error: '"projects" is a reserved name inside a project' });
       const id = project ? `${project}/${slug}` : slug;
@@ -920,6 +995,8 @@ async function handleApi(req, res, url) {
     if (!safeId(id)) return json(res, 400, { error: 'invalid map id' });
     if (isProjectIndexId(id)) return json(res, 400, { error: `"${id}" is the project index, not a map` });
     const file = await resolveMapPath(id);
+    if (isLocalLink(id) && (isMove || req.method === 'DELETE')) return json(res, 409, { error: 'Linked originals cannot be moved or trashed here. Remove the location from the library instead; its files will stay untouched.' });
+    if (isLocalLink(id) && !file) return json(res, 404, { error: 'This linked map is unavailable or its link was removed. No replacement was created.' });
 
     if (isMove) {
       let body;
@@ -927,6 +1004,7 @@ async function handleApi(req, res, url) {
       const project = body?.project == null ? null : String(body.project).trim();
       if (project !== null && !safeSlug(project)) return json(res, 400, { error: 'invalid project slug' });
       if (project === 'project') return json(res, 400, { error: '"project" is a reserved project slug' });
+      if (isLocalLink(project)) return json(res, 409, { error: 'Move files into a linked folder using your file manager, not the library Move action.' });
       if (!file) return json(res, 404, { error: `no map "${id}" (looked for ${path.relative(LIBRARY_ROOT, mapPathFor(id))})` });
       const fromProject = id.includes('/') ? id.slice(0, id.indexOf('/')) : null;
       const mapSlug = id.includes('/') ? id.slice(id.indexOf('/') + 1) : id;
@@ -988,7 +1066,9 @@ async function handleApi(req, res, url) {
             return json(res, 409, { error: 'Map changed on disk', code: 'conflict' });
           }
         }
-        if (id.includes('/')) await ensureProject(id.slice(0, id.indexOf('/')));
+        if (isLocalLink(id)) {
+          if (await localLinks.resolve(id) !== target) return json(res, 409, { error: 'The local link changed. Reload before saving.' });
+        } else if (id.includes('/')) await ensureProject(id.slice(0, id.indexOf('/')));
         else { await fs.mkdir(MAPS_DIR, { recursive: true }); watchMapsDir(); }
         await writeFileAtomic(target, body.source);
         return json(res, 200, { ok: true, etag: await etagFor(target) });
@@ -1003,6 +1083,7 @@ async function handleApi(req, res, url) {
   if (parts[1] === 'projects' && parts.length === 3 && req.method === 'DELETE') {
     const slug = decodeURIComponent(parts[2]);
     if (!safeSlug(slug)) return json(res, 400, { error: 'invalid project slug' });
+    if (isLocalLink(slug)) return json(res, 409, { error: 'Remove this library link instead of trashing its original folder.' });
     const source = path.join(PROJECTS_DIR, slug);
     if (!existsSync(source)) return json(res, 404, { error: `no project "${slug}"` });
     const item = await trashProject(slug);
@@ -1217,7 +1298,7 @@ const server = createServer(async (req, res) => {
       if (rest.startsWith('project/')) {
         const slug = rest.slice('project/'.length);
         if (!safeSlug(slug)) return json(res, 400, { error: 'invalid project slug' });
-        if (!existsSync(path.join(PROJECTS_DIR, slug))) return json(res, 404, { error: `no project "${slug}"` });
+        if (!isLocalLink(slug) && !existsSync(path.join(PROJECTS_DIR, slug))) return json(res, 404, { error: `no project "${slug}"` });
         const { index, name, maps } = await projectMetaFor(slug);
         if (!maps.length) return json(res, 404, { error: `project "${slug}" has no maps to export` });
         // the bundle opens on the lead map: first in the index's "order:", else first file
@@ -1307,7 +1388,8 @@ async function start(port, attempt = 0) {
     // already treats a missing dir as zero projects, so creating it is a no-op
     await fs.mkdir(PROJECTS_DIR, { recursive: true });
     watchProjectsRoot();
-    for (const project of await projectIndex()) watchProjectDir(project.slug);
+    for (const project of await projectIndex()) if (!project.linked) watchProjectDir(project.slug);
+    await watchLocalLinks();
     process.send?.({ type: 'ready', port });
     const urlStr = `http://localhost:${port}/`;
     console.log('');

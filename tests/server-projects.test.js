@@ -6,7 +6,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { request } from 'node:http';
-import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -70,7 +70,7 @@ before(async () => {
   work = mkdtempSync(path.join(os.tmpdir(), 'serigraph-projects-'));
   const started = boot({ PORT: String(4960 + Math.floor(Math.random() * 100)),
     OPSMAP_ROOT: ROOT, OPSMAP_MAPS_DIR: '', OPSMAP_ENV_FILE: '', OPSMAP_SKIP_DOTENV: '1',
-    SERIGRAPH_LIBRARY_DIR: work });
+    SERIGRAPH_LIBRARY_DIR: work, SERIGRAPH_PREFERENCES_FILE: path.join(work, 'preferences', 'install.json') });
   proc = started.child;
   port = await started.childPort;
 });
@@ -602,4 +602,62 @@ test('POST /api/import with no provider configured is a 400 with code and hint',
     child.kill();
     rmSync(cleanWork, { recursive: true, force: true });
   }
+});
+
+test('local links save originals, reject stale edits, refresh externally, and remove references without deleting', async () => {
+  const source = 'name: Original Synthetic Map\nnodes: [{id: start, type: process, label: Start}]\n';
+  const originals = path.join(work, 'linked-originals');
+  mkdirSync(originals);
+  const file = path.join(originals, 'Original flow.yaml');
+  writeFileSync(file, source);
+  const status = await raw({p: '/api/local-links'}), info = JSON.parse(status.body);
+  assert.equal(info.enabled, true);
+  const headers = {Origin: `http://127.0.0.1:${port}`, 'X-Serigraph-Library': status.headers['x-serigraph-library'],
+    'X-Serigraph-Links-Token': info.token};
+  const action = (name, body, overrides = {}) => api('POST', `/api/local-links/${name}`, body, {...headers, ...overrides});
+  assert.equal((await api('POST', '/api/local-links/preview', {path: file})).status, 403);
+  assert.equal((await action('preview', {path: file}, {Origin: 'https://untrusted.example'})).status, 403);
+  assert.equal((await action('preview', {path: file}, {'X-Serigraph-Library': 'stale'})).status, 412);
+  const preview = JSON.parse((await action('preview', {path: file})).body);
+  assert.equal(preview.mapCount, 1);
+  assert.equal((await action('add', {nonce: preview.nonce, editOriginals: false})).status, 409);
+  const added = await action('add', {nonce: preview.nonce, editOriginals: true});
+  assert.equal(added.status, 201, added.body);
+  const {id} = JSON.parse(added.body), mapId = `${id}/map`, url = `/api/maps/${mapId}`;
+  assert.equal(existsSync(path.join(work, 'projects', id)), false, 'no copied project directory');
+  assert.equal(existsSync(path.join(work, 'preferences', `install.json.links-${headers['X-Serigraph-Library'].slice(0, 20)}.json`)), true);
+  const project = JSON.parse((await raw({p: '/api/projects'})).body).find(p => p.slug === id);
+  assert.equal(project.linked, true); assert.equal(project.location, realpathSync(file)); assert.equal(project.maps, undefined);
+  const map = JSON.parse((await raw({p: url})).body);
+  assert.equal(map.source, source);
+  assert.equal((await api('PUT', url, {source: source + '# From Serigraph\n'}, {'If-Match': map.etag})).status, 200);
+  assert.equal(readFileSync(file, 'utf8'), source + '# From Serigraph\n');
+  assert.equal((await api('PUT', url, {source}, {'If-Match': map.etag})).status, 409);
+  assert.equal((await api('DELETE', url)).status, 409);
+  assert.equal((await api('POST', url + '/move', {project: null})).status, 409);
+  assert.equal((await api('DELETE', `/api/projects/${id}`)).status, 409);
+  assert.equal((await api('POST', '/api/maps', {name: 'New', project: id})).status, 409);
+  const exported = await raw({p: `/export/${mapId}.html`});
+  assert.equal(exported.status, 200);
+  assert.ok(exported.body.includes('opsmap/app/library-links.js'), 'standalone import map contains the new module');
+  await new Promise((resolve, reject) => {
+    const req = request({host: '127.0.0.1', port, path: '/api/events'});
+    const timer = setTimeout(() => {req.destroy(); reject(new Error('No linked-file change event'));}, 5000);
+    req.on('error', error => {clearTimeout(timer); reject(error);});
+    req.on('response', res => {
+      let events = '';
+      res.on('data', chunk => {
+        events += chunk;
+        if (events.includes(mapId)) {clearTimeout(timer); req.destroy(); resolve();}
+      });
+      writeFileSync(file, source + '# External change\n');
+    });
+    req.end();
+  });
+  assert.equal(JSON.parse((await raw({p: url})).body).source, source + '# External change\n');
+  assert.equal((await action('remove', {id})).status, 200);
+  assert.equal(readFileSync(file, 'utf8'), source + '# External change\n');
+  assert.equal((await raw({p: url})).status, 404);
+  assert.equal((await api('PUT', url, {source})).status, 404);
+  assert.equal(existsSync(path.join(work, 'projects', id)), false, 'removed links never fall back into the base library');
 });

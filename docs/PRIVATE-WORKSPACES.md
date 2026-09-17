@@ -62,6 +62,41 @@ LAN mode cannot change folders. Standalone exports have no folder controls.
 The validator uses the same saved preference when no library is specified;
 pass explicit approved filenames when validating a narrow scope.
 
+## Linking local files and folders
+
+Use **Projects → Add to library…**, **File → Link local file or folder…**, or
+the map switcher's **Link local file or folder…** action. Paste the absolute
+path to a local YAML file or map folder, preview its contents, and confirm that
+edits will change the originals. Nothing is copied or moved into the engine or
+the current library folder. A linked location appears as a project with its
+original path and a **Remove link** action.
+
+The reference list is a mode-600 JSON file beside this installation's folder
+preference, scoped to the current library identity. It survives app restarts and
+is never stored in the engine checkout or in map YAML. Switching libraries gives
+each library its own links. LAN mode and standalone exports cannot manage or
+access these local references. Exports explicitly created from a linked map
+remain ordinary snapshots of its approved YAML, without its local path/registry.
+
+A file link grants access to that file only. A folder link includes immediate,
+regular `.yaml`/`.yml` files and optional `projects.yaml` metadata. It does not
+traverse subfolders, follow child symlinks, load `.env`, copy credentials, or
+configure providers. Preview is bounded to 100 YAML files, 1 MB per file, and
+8 MB per folder. Validation problems are visible rather than rewritten. Files
+with unusual names receive stable library IDs without renaming the originals.
+
+Applied edits use the existing atomic, conflict-checked saves at the original
+path. File watchers refresh maps after external changes; missing or redirected
+locations show as unavailable and never fall back to a file in the app repo.
+Create new files or move files with your file manager; the library does not move
+or trash linked originals. **Remove link** deletes only the saved reference, not
+any source file, and the same location can be linked again later.
+
+Linking is explicit local read/write authority, not a security sandbox. It does
+not publish or sync anything, but editing an original inside another Git repo or
+cloud-synced folder still follows that folder's own Git/sync behavior. Finish
+drafts and saves before removing an open map's link.
+
 ## Catalog boundary
 
 A Freeform map may carry `dataExplorer` with `objects`, `canonicalFields`,

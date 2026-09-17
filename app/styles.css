@@ -4034,6 +4034,10 @@ g.node:focus-visible, g.node-body:focus-visible { outline: 2px solid var(--accen
 .library-dialog::backdrop { background: #07110dc2; }
 .library-dialog > .bug-check { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 1.6; }
 .library-dialog .update-version { overflow-wrap: anywhere; }
+.local-links-list { max-height: 220px; overflow: auto; padding-left: 20px; font-size: 13px; line-height: 1.8; }
+.local-links-dialog h3 { font-size: 14px; overflow-wrap: anywhere; }
+.linked-location { display: grid; gap: 4px; overflow-wrap: anywhere; }
+.linked-location strong { font-size: 11px; color: var(--accent); }
 .bug-draft-link { color: var(--accent); font-size: 12px; }
 .bug-photo-picker input::file-selector-button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 8px 12px; color: var(--ink); font: inherit; cursor: pointer; margin-right: 10px; }
 @media (prefers-reduced-transparency: reduce) {

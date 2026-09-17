@@ -35,6 +35,11 @@ async function jfetch(url, opts) {
 }
 
 export const api = {
+  localLinksStatus: () => jfetch('/api/local-links'),
+  localLinksAction: (action, token, payload) => jfetch(`/api/local-links/${action}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Serigraph-Links-Token': token },
+    body: JSON.stringify(payload),
+  }),
   libraryStatus: signal => jfetch('/api/library', { signal }),
   libraryAction: (action, token, payload) => jfetch(`/api/library/${action}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Serigraph-Settings-Token': token },

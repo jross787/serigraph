@@ -20,6 +20,7 @@ import { renderGitHubGlance } from './github.js';
 import { NODE_VISUALS, CONNECTION_MEANINGS, nodeTypeLabel, connectionPresentation } from '../shared/visual-language.js';
 import { connectionsOf } from '../shared/connections.js';
 import { openAnnotationEditor, renderAnnotationDetail, duplicateBoardSelection, deleteBoardSelection } from './board.js';
+import { localLibraryDialog } from './library-links.js';
 
 let fieldId = 0;
 
@@ -248,7 +249,7 @@ function openMapMenu(anchor) {
     },
     h('span', { class: 'mi-name' }, m.name || m.id, isCurrent ? icon('check', 14) : null),
     h('span', { class: 'mi-sub' }, m.invalid ? icon('warning-circle', 14) : null, m.invalid ? `${m.errorCount} problem${m.errorCount === 1 ? '' : 's'} — open to see details` : `${m.nodeCount} nodes`));
-    if (!state.standalone) {
+    if (!state.standalone && !m.project?.linked) {
       row.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
         closeMenus();
@@ -306,6 +307,8 @@ function openMapMenu(anchor) {
       h('span', { class: 'mi-name' }, '+ New map…')));
     menu.append(h('button', { class: 'menu-item', onClick: () => { closeMenus(); newProjectDialog(); } },
       h('span', { class: 'mi-name' }, '+ New project…')));
+    menu.append(h('button', { class: 'menu-item', onClick: () => { closeMenus(); localLibraryDialog(); } },
+      h('span', { class: 'mi-name' }, 'Link local file or folder…')));
   }
   document.body.append(menu);
   setTimeout(() => {
@@ -331,7 +334,7 @@ function mapStatusDot(m) {
 
 function projectIndexFor(slug) {
   const p = state.projects.find((item) => item.slug === slug);
-  return p ? { name: p.name, description: p.description ?? null, order: p.order ?? [], tags: p.tags ?? {} } : null;
+  return p ? { ...p, description: p.description ?? null, order: p.order ?? [], tags: p.tags ?? {} } : null;
 }
 
 function mapTile(m, index) {
@@ -350,7 +353,7 @@ function mapTile(m, index) {
     h('span', { class: `proj-dot ${dot.cls}` })),
   h('span', { class: 'proj-tile-name' }, m.name || mapSlug),
   h('span', { class: 'proj-tile-meta' }, `${m.mode === 'freeform' ? 'Freeform' : 'Process'} · ${m.nodeCount ?? 0} nodes`));
-  if (state.standalone) return tile;
+  if (state.standalone || m.project?.linked) return tile;
   return h('div', { class: 'proj-tile-wrap' }, tile,
     h('button', {
       class: 'proj-tile-trash',
@@ -395,6 +398,7 @@ function renderHome() {
     state.standalone ? null : h('div', { class: 'proj-head-actions' },
       homeFilter ? h('button', { class: 'd-btn', onClick: () => { homeFilter = null; renderHome(); } }, '‹ All projects') : null,
       h('button', { class: 'd-btn', onClick: () => openTrashDialog() }, `Trash${state.trash.length ? ` (${state.trash.length})` : ''}`),
+      h('button', { class: 'd-btn', onClick: () => localLibraryDialog() }, 'Add to library…'),
       h('button', { class: 'd-btn', onClick: () => newProjectDialog() }, '+ New project'),
       h('button', { class: 'd-btn primary', onClick: () => newMapDialog() }, '+ New map')));
 
@@ -416,7 +420,10 @@ function renderHome() {
         h('h2', {}, index?.name ?? slug),
         h('div', { class: 'proj-card-actions' },
           h('span', { class: 'proj-count' }, `${maps.length} map${maps.length === 1 ? '' : 's'}`),
-          state.standalone ? null : h('button', {
+          state.standalone ? null : index?.linked ? h('button', {
+            class: 'd-btn', onClick: () => localLibraryDialog(index),
+            title: 'Remove the library reference without deleting original files',
+          }, 'Remove link') : h('button', {
             class: 'proj-card-trash',
             title: `Move ${index?.name ?? slug} to Trash`,
             onClick: () => moveToTrashDialog('project', {
@@ -426,9 +433,12 @@ function renderHome() {
             }),
           }, 'Trash'))),
       index?.description ? h('p', { class: 'proj-desc' }, index.description) : null,
+      index?.linked ? h('p', { class: 'proj-desc linked-location' },
+        h('strong', {}, index.unavailable ? 'Linked location unavailable' : `Linked ${index.linkKind} · edits save to originals`),
+        h('span', {}, index.location), index.error ? h('span', {}, index.error) : null) : null,
       h('div', { class: 'proj-tiles' }, tiles.length
         ? tiles.map((m) => mapTile(m, index))
-        : [h('p', { class: 'proj-empty' }, 'No maps yet — move one in from the map switcher.')])));
+        : [h('p', { class: 'proj-empty' }, index?.linked ? 'Check the original location, then reload Projects.' : 'No maps yet — move one in from the map switcher.')])));
   }
 
   if (!homeFilter && rootMaps.length) {
@@ -474,7 +484,7 @@ function moveMapDialog(mapSummary) {
   const current = mapSummary.project?.slug ?? null;
   const options = [
     { slug: null, name: 'Ungrouped (root maps/ folder)' },
-    ...state.projects.map((p) => ({ slug: p.slug, name: p.name })),
+    ...state.projects.filter(p => !p.linked).map((p) => ({ slug: p.slug, name: p.name })),
   ].filter((o) => o.slug !== current);
   const list = h('div', { class: 'move-list' }, options.map((o) =>
     h('button', {
@@ -972,7 +982,7 @@ function newMapDialog() {
   const mode = mapModeSegment('process');
   const projectSel = h('select', { class: 'f-select' },
     h('option', { value: '' }, 'Ungrouped (root maps/ folder)'),
-    state.projects.map((p) => h('option', { value: p.slug, ...(p.slug === currentProjectSlug() || p.slug === homeFilter ? { selected: '' } : {}) }, p.name)));
+    state.projects.filter(p => !p.linked).map((p) => h('option', { value: p.slug, ...(p.slug === currentProjectSlug() || p.slug === homeFilter ? { selected: '' } : {}) }, p.name)));
   modal('New map', h('div', {},
     h('div', { class: 'f-field' }, h('label', {}, 'Map name'), name),
     h('div', { class: 'f-field' }, h('label', {}, 'Mode'), mode),

@@ -13,7 +13,7 @@ import { flowShortcut } from './flow.js';
 import { refresh as refreshAgents, initAgents } from './agents.js';
 import { icon } from './icons.js';
 import { initGitHub } from './github.js';
-import { initUpdates } from './updates.js';
+import { initUpdates, maintenanceBlocker } from './updates.js';
 import { bugReportDialog } from './bug-report.js';
 import { libraryLocationDialog } from './library-location.js';
 import { initBoardGestures } from './board.js';
@@ -497,8 +497,12 @@ async function boot() {
         const openId = state.mapId;
         await Promise.all([ctrl.loadMapList(), ctrl.loadProjects(), ctrl.loadTrash()]);
         if (openId && !state.maps.some((map) => map.id === openId)) {
+          if (event.reason === 'local-link' && maintenanceBlocker()) {
+            ui.toast('The linked original is unavailable. Your open edits are still here; recover them before leaving this map.', true);
+            return;
+          }
           ctrl.goHome();
-          ui.toast('The open map was moved to Trash in another tab.');
+          ui.toast(event.reason === 'local-link' ? 'The local link was removed or its original file is unavailable.' : 'The open map was moved to Trash in another tab.');
         }
       }
     } catch { /* server briefly unavailable — the next event or reconnect recovers */ }
