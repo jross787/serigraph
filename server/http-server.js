@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseMap, MAP_MODES } from '../shared/model.js';
 import { parseProjectIndex, PROJECT_INDEX_FILE } from '../shared/projects.js';
-import { collectProvenance } from '../shared/provenance.js';
+import { summarizeMapSource } from './map-summary.js';
 import { buildExport } from './export.js';
 import { callLLM, resolveProvider, callTranscription, killLlmChildren } from './llm.js';
 import { importTranscript, ImportError } from './importer.js';
@@ -279,13 +279,6 @@ const PROJECT_INDEX_RE = /^projects\.ya?ml$/;
 // "<project>/projects" names the index, so it is reserved as a map id
 const isProjectIndexId = (id) => id.includes('/') && id.slice(id.indexOf('/') + 1) === 'projects';
 
-// any edge in any scope carrying an "issue:" note
-function hasIssueEdges(model) {
-  const scopes = [model.root];
-  for (const node of model.byId.values()) if (node.children) scopes.push(node.children);
-  return scopes.some((scope) => scope.edges.some((e) => e.issue));
-}
-
 async function mapSummaries(dir, project = null) {
   const out = [];
   for (const file of await listDir(dir)) {
@@ -294,18 +287,7 @@ async function mapSummaries(dir, project = null) {
     const id = project ? `${project.slug}/${base}` : base;
     try {
       const source = await fs.readFile(path.join(dir, file), 'utf8');
-      const { doc, model, errors } = parseMap(source);
-      // flags are comments, so they show up even in a map that fails to parse
-      let hasFlags = false;
-      try {
-        const provenance = collectProvenance(doc);
-        hasFlags = provenance.nodes.size > 0 || provenance.edges.length > 0;
-      } catch { /* a broken doc just means no flags */ }
-      if (model) {
-        out.push({ id, file, name: model.name, description: model.description, nodeCount: model.nodeCount, kind: model.document.kind, mode: model.mode, project, hasFlags, hasIssues: hasIssueEdges(model) });
-      } else {
-        out.push({ id, file, name: id, description: '', nodeCount: 0, invalid: true, errorCount: errors.length, project, hasFlags, hasIssues: false });
-      }
+      out.push({ id, file, project, ...summarizeMapSource(source, id) });
     } catch (e) {
       out.push({ id, file, name: id, description: '', nodeCount: 0, invalid: true, errorCount: 1, project, hasFlags: false, hasIssues: false });
     }
@@ -391,6 +373,9 @@ async function readProjectIndex(dir) {
 
 // every immediate subdirectory of projects/ is a project, even an empty one
 async function projectIndex(includeLinkedMaps = false) {
+  // A drive may have been absent at startup or replaced since it was watched.
+  // Refreshing Projects/maps reconnects live reload without a server restart.
+  await watchLocalLinks();
   let entries;
   try {
     entries = await fs.readdir(PROJECTS_DIR, { withFileTypes: true });
@@ -688,6 +673,7 @@ function watchDir(dir, onChange, filter = (filename) => /\.ya?ml$/.test(filename
   };
   attach();
   const handle = {
+    get active() { return !closed && !!(watcher || respawnTimer); },
     close() {
       if (closed) return;
       closed = true;
@@ -730,12 +716,17 @@ function unwatchProjectDir(slug) {
 const localLinkWatchers = new Map();
 async function watchLocalLinks() {
   const links = await localLinks.entries();
-  for (const [id, watcher] of localLinkWatchers) if (!links.some(link => link.id === id)) {
-    watcher.close(); localLinkWatchers.delete(id);
+  for (const [id, entry] of localLinkWatchers) if (!links.some(link => link.id === id)) {
+    entry.watcher.close(); localLinkWatchers.delete(id);
   }
   for (const link of links) {
-    if (localLinkWatchers.has(link.id)) continue;
     const directory = link.kind === 'file' ? path.dirname(link.path) : link.path;
+    let identity = null;
+    try { const stat = statSync(directory); if (stat.isDirectory()) identity = `${stat.dev}:${stat.ino}`; } catch { /* disconnected */ }
+    const previous = localLinkWatchers.get(link.id);
+    if (previous?.watcher.active && previous.identity === identity) continue;
+    if (previous) { previous.watcher.close(); localLinkWatchers.delete(link.id); }
+    if (!identity) continue;
     const watcher = watchDir(directory, () => {
       // Map IDs are virtual, never inferred from a path relative to the app.
       // Refresh the scoped list too, so new and removed folder members appear.
@@ -746,7 +737,7 @@ async function watchLocalLinks() {
       }).catch(() => {});
     }, filename => link.kind === 'file' ? String(filename) === path.basename(link.path)
       : !String(filename).startsWith('.') && /\.ya?ml$/i.test(String(filename)));
-    if (watcher) localLinkWatchers.set(link.id, watcher);
+    if (watcher) localLinkWatchers.set(link.id, { watcher, identity });
   }
 }
 

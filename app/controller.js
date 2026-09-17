@@ -2,7 +2,7 @@
 // navigation (scopes, selection, deep links, history), and remote changes.
 import { parseMap, ancestryOf, scopeOf, placementInScope, placementsOf } from '../shared/model.js';
 import { collectProvenance } from '../shared/provenance.js';
-import { parseHash, buildHash } from './routes.js';
+import { parseHash, buildHash, movedMapCandidate } from './routes.js';
 import { state, bus } from './state.js';
 import { invalidateLayouts } from './layout.js';
 import * as canvas from './canvas.js';
@@ -167,9 +167,8 @@ export async function openMap(mapId, { nodeId = null, inId = null, replace = fal
     // the same file under a new id, follow it silently.
     if (e.status === 404) {
       await loadMapList().catch(() => {});
-      const tail = mapId.includes('/') ? mapId.slice(mapId.lastIndexOf('/') + 1) : mapId;
-      const hit = state.maps.find((m) => m.id === tail || m.id.endsWith(`/${tail}`) || m.id.split('/').pop() === tail);
-      if (hit && hit.id !== mapId) return followMoved(hit.id, { nodeId, inId });
+      const hit = movedMapCandidate(mapId, state.maps);
+      if (hit) return followMoved(hit.id, { nodeId, inId });
     }
     throw e;
   }

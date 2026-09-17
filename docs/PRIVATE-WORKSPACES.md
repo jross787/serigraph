@@ -86,8 +86,9 @@ configure providers. Preview is bounded to 100 YAML files, 1 MB per file, and
 with unusual names receive stable library IDs without renaming the originals.
 
 Applied edits use the existing atomic, conflict-checked saves at the original
-path. File watchers refresh maps after external changes; missing or redirected
-locations show as unavailable and never fall back to a file in the app repo.
+path. File watchers refresh maps after external changes; after reconnecting a
+drive, refresh Projects to resume live reload. Missing or redirected locations
+show as unavailable and never fall back to another map with the same filename.
 Create new files or move files with your file manager; the library does not move
 or trash linked originals. **Remove link** deletes only the saved reference, not
 any source file, and the same location can be linked again later.

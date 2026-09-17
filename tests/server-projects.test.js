@@ -6,11 +6,13 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { request } from 'node:http';
-import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, realpathSync, renameSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseMap } from '../shared/model.js';
+import { createLocalLinks } from '../server/local-links.js';
 
 // etags are "<size>-<mtimeMs>-<contentHash>" — mtimeMs keeps sub-millisecond
 // decimals and the hash separates same-size writes within one tick
@@ -660,4 +662,53 @@ test('local links save originals, reject stale edits, refresh externally, and re
   assert.equal((await raw({p: url})).status, 404);
   assert.equal((await api('PUT', url, {source})).status, 404);
   assert.equal(existsSync(path.join(work, 'projects', id)), false, 'removed links never fall back into the base library');
+});
+
+test('linked folders and file parents reconnect their watchers after being unavailable at startup or replaced', async () => {
+  const temp = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'serigraph-link-reconnect-')));
+  const library = path.join(temp, 'library'), preferences = path.join(temp, 'preferences.json');
+  mkdirSync(library);
+  const libraryId = createHash('sha256').update(JSON.stringify([library, path.join(library, 'maps')])).digest('hex');
+  const links = createLocalLinks({engineRoot: ROOT, registryFile: `${preferences}.links-${libraryId.slice(0, 20)}.json`});
+  const source = 'name: Reconnected Synthetic Map\nnodes: []\n';
+  const originals = [];
+  let child;
+  try {
+    for (const kind of ['file', 'folder']) {
+      const directory = path.join(temp, kind), file = path.join(directory, 'flow.yaml');
+      mkdirSync(directory); writeFileSync(file, source);
+      const {id} = await links.add(await links.preview(kind === 'file' ? file : directory));
+      originals.push({directory, file, mapId: `${id}/${kind === 'file' ? 'map' : 'flow'}`});
+      renameSync(directory, directory + '-offline');
+    }
+    const started = boot({PORT: String(port + 120), OPSMAP_ROOT: ROOT, OPSMAP_MAPS_DIR: '', OPSMAP_ENV_FILE: '', OPSMAP_SKIP_DOTENV: '1',
+      SERIGRAPH_LIBRARY_DIR: library, SERIGRAPH_PREFERENCES_FILE: preferences});
+    child = started.child;
+    const onPort = await started.childPort;
+    assert.ok(JSON.parse((await raw({p: '/api/projects', onPort})).body).every(project => project.unavailable));
+    const expectChange = ({file, mapId}, label) => new Promise((resolve, reject) => {
+      const req = request({host: '127.0.0.1', port: onPort, path: '/api/events'});
+      const timer = setTimeout(() => {req.destroy(); reject(new Error(`No reconnected change event: ${label}`));}, 5000);
+      req.on('error', error => {clearTimeout(timer); reject(error);});
+      req.on('response', res => {
+        let events = '';
+        res.on('data', chunk => {
+          events += chunk;
+          if (events.includes(mapId)) {clearTimeout(timer); req.destroy(); resolve();}
+        });
+        writeFileSync(file, source + `# ${label}\n`);
+      });
+      req.end();
+    });
+    for (const original of originals) renameSync(original.directory + '-offline', original.directory);
+    const maps = JSON.parse((await raw({p: '/api/maps', onPort})).body);
+    assert.deepEqual(maps.map(map => map.id).sort(), originals.map(item => item.mapId).sort());
+    for (const original of originals) {
+      await expectChange(original, 'Returned drive');
+      renameSync(original.directory, original.directory + '-old');
+      mkdirSync(original.directory); writeFileSync(original.file, source);
+      await raw({p: '/api/projects', onPort});
+      await expectChange(original, 'Replaced folder');
+    }
+  } finally {child?.kill(); rmSync(temp, {recursive: true, force: true});}
 });

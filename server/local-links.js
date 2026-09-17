@@ -4,11 +4,10 @@
 import { promises as fs, constants } from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { parseMap } from '../shared/model.js';
-import { parseProjectIndex } from '../shared/projects.js';
-import { collectProvenance } from '../shared/provenance.js';
+import { parseProjectIndex, isLocalLink } from '../shared/projects.js';
+import { summarizeMapSource } from './map-summary.js';
 
-export const isLocalLink = id => typeof id === 'string' && /^linked-[0-9a-f-]{36}(?:\/|$)/.test(id);
+export { isLocalLink };
 const within = (root, target) => { const rel = path.relative(root, target); return !rel || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel)); };
 const digest = text => createHash('sha256').update(text).digest('hex');
 const mapSlug = file => {
@@ -108,14 +107,7 @@ export function createLocalLinks({ engineRoot, registryFile, enabled = true }) {
       if (bytes > 8 * 1024 * 1024) throw new Error('Link a folder with at most 8 MB of YAML.');
       hashes.push([file.name, digest(source)]);
       if (file.id === 'projects') { index = parseProjectIndex(source); continue; }
-      const { model, doc, errors } = parseMap(source);
-      let hasFlags = false;
-      try { const flags = collectProvenance(doc); hasFlags = flags.nodes.size > 0 || flags.edges.length > 0; } catch { /* invalid YAML */ }
-      const scopes = model ? [model.root, ...[...model.byId.values()].map(node => node.children).filter(Boolean)] : [];
-      maps.push({ id: `${link.id}/${file.id}`, file: file.name, name: model?.name || file.name,
-        description: model?.description || '', nodeCount: model?.nodeCount || 0, kind: model?.document.kind,
-        mode: model?.mode, invalid: !model, errorCount: errors.length, hasFlags,
-        hasIssues: scopes.some(scope => scope.edges.some(edge => edge.issue)) });
+      maps.push({ id: `${link.id}/${file.id}`, file: file.name, ...summarizeMapSource(source, file.name) });
     }
     const name = index.name || (link.kind === 'file' ? maps[0]?.name : null) || path.basename(link.path);
     const project = { slug: link.id, name, linked: true };
