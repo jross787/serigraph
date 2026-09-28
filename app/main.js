@@ -13,7 +13,7 @@ import { flowShortcut } from './flow.js';
 import { refresh as refreshAgents, initAgents } from './agents.js';
 import { icon } from './icons.js';
 import { initGitHub } from './github.js';
-import { initUpdates, maintenanceBlocker } from './updates.js';
+import { initUpdates, maintenanceBlocker, serverReconnected } from './updates.js';
 import { bugReportDialog } from './bug-report.js';
 import { libraryLocationDialog } from './library-location.js';
 import { initNativeBridge, isNativeMac, openFile } from './library-links.js';
@@ -516,7 +516,7 @@ async function boot() {
         }
       }
     } catch { /* server briefly unavailable — the next event or reconnect recovers */ }
-  });
+  }, serverReconnected);
 }
 
 boot();

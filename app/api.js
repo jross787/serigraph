@@ -256,12 +256,16 @@ export const api = {
       body: JSON.stringify({ audio: base64, mime }),
     });
   },
-  subscribe(onEvent) {
+  subscribe(onEvent, onReconnect = () => {}) {
     if (state.standalone || typeof EventSource === 'undefined') return;
     const es = new EventSource('/api/events');
     es.onmessage = (msg) => {
       try { onEvent(JSON.parse(msg.data)); } catch { /* ignore */ }
     };
-    // EventSource auto-reconnects; nothing else to do.
+    // EventSource reconnects by itself; say so, because a restarted server
+    // may be running newer code.
+    let dropped = false;
+    es.onerror = () => { dropped = true; };
+    es.onopen = () => { if (dropped) { dropped = false; onReconnect(); } };
   },
 };

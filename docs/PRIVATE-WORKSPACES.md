@@ -62,41 +62,46 @@ LAN mode cannot change folders. Standalone exports have no folder controls.
 The validator uses the same saved preference when no library is specified;
 pass explicit approved filenames when validating a narrow scope.
 
-## Linking local files and folders
+## Opening files that live elsewhere
 
-Use **Projects → Add to library…**, **File → Link local file or folder…**, or
-the map switcher's **Link local file or folder…** action. Paste the absolute
-path to a local YAML file or map folder, preview its contents, and confirm that
-edits will change the originals. Nothing is copied or moved into the engine or
-the current library folder. A linked location appears as a project with its
-original path and a **Remove link** action.
+Use **File → Open…** (⌘O), **Open…** on the Projects home, or the map
+switcher's **Open file…**. In the Mac app this shows the Mac file picker; you
+can also drag a map onto the Serigraph Dock icon or use Finder's **Open With**.
+In a browser, paste the file's path instead. The file stays where it is, such
+as inside a code repo, and edits save to it. Nothing is copied into the engine
+or the library folder. Opened files appear in **Recent** and under **Opened from
+other folders**; opening a folder lists its maps as a project.
 
-The reference list is a mode-600 JSON file beside this installation's folder
-preference, scoped to the current library identity. It survives app restarts and
-is never stored in the engine checkout or in map YAML. Switching libraries gives
-each library its own links. LAN mode and standalone exports cannot manage or
-access these local references. Exports explicitly created from a linked map
-remain ordinary snapshots of its approved YAML, without its local path/registry.
+Each opened location is recorded as one small JSON file in the library's
+`.serigraph/links/` folder, so every Mac that shares the library sees it. A
+path inside your home folder is saved as `~/…`, because the same repo or drive
+folder has a different absolute path on a Mac with a different user name. A
+location that does not exist on the current Mac shows as **Not on this
+computer** and never falls back to another file with the same name. When the
+library sits inside the engine checkout, these records stay beside this
+installation's preferences instead, so private paths never enter the repository.
+Recent maps work the same way: each machine writes its own file in
+`.serigraph/recents/`, and the home screen merges them by time.
 
 A file link grants access to that file only. A folder link includes immediate,
 regular `.yaml`/`.yml` files and optional `projects.yaml` metadata. It does not
 traverse subfolders, follow child symlinks, load `.env`, copy credentials, or
-configure providers. Preview is bounded to 100 YAML files, 1 MB per file, and
+configure providers. Opening is bounded to 100 YAML files, 1 MB per file, and
 8 MB per folder. Validation problems are visible rather than rewritten. Files
 with unusual names receive stable library IDs without renaming the originals.
 
 Applied edits use the existing atomic, conflict-checked saves at the original
 path. File watchers refresh maps after external changes; after reconnecting a
-drive, refresh Projects to resume live reload. Missing or redirected locations
-show as unavailable and never fall back to another map with the same filename.
-Create new files or move files with your file manager; the library does not move
-or trash linked originals. **Remove link** deletes only the saved reference, not
-any source file, and the same location can be linked again later.
+drive, refresh Projects to resume live reload. Create or move files with your
+file manager; the library does not move or trash opened originals. **Remove**
+deletes only the saved reference on every Mac, not the file, and the same
+location can be opened again later.
 
-Linking is explicit local read/write authority, not a security sandbox. It does
-not publish or sync anything, but editing an original inside another Git repo or
-cloud-synced folder still follows that folder's own Git/sync behavior. Finish
-drafts and saves before removing an open map's link.
+Opening is explicit local read/write authority, not a security sandbox. A
+shared address (LAN mode or a listed proxy host) cannot open local files. It
+does not publish or sync anything, but editing an original inside another Git
+repo or cloud-synced folder still follows that folder's own Git/sync behavior.
+Finish drafts and saves before removing an open map's link.
 
 ## Catalog boundary
 

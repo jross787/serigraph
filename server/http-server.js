@@ -150,7 +150,7 @@ async function handleLibrary(req, res, url) {
 function updateStatus() {
   return {
     ...updateState, enabled: updatesEnabled, checking: checkingUpdate, applying: applyingUpdate,
-    running: runningRevision, instance: updateInstance,
+    running: runningRevision, instance: updateInstance, managed: process.env.SERIGRAPH_MANAGED === '1',
     token: updatesEnabled ? updateToken : null,
     ...(!updatesEnabled ? { status: 'disabled', message: 'In-app updates need a local, unshared Git installation launched with npm start or node server/main.js. Update managed/shared installations on their host.' } : {}),
   };

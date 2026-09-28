@@ -1050,7 +1050,7 @@ export function addNodeDialog(ownerId, options = {}) {
   ]);
 }
 
-function newMapDialog() {
+export function newMapDialog() {
   const name = h('input', { class: 'f-input', placeholder: 'e.g. Customer systems' });
   const mode = mapModeSegment('process');
   const projectSel = h('select', { class: 'f-select' },

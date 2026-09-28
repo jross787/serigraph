@@ -1,7 +1,7 @@
 import { api } from './api.js';
 import { state } from './state.js';
 import * as ctrl from './controller.js';
-import { toast } from './ui.js';
+import { toast, newMapDialog, openSearch } from './ui.js';
 import { maintenanceBlocker } from './updates.js';
 
 // The Mac app hosts this page in a native window and answers File → Open,
@@ -42,11 +42,42 @@ export function openFile() {
 
 export function initNativeBridge() {
   if (state.standalone) return;
-  window.serigraph = Object.freeze({ openPath: openLocalPath, openFile });
+  window.serigraph = Object.freeze({
+    openPath: openLocalPath,
+    openFile,
+    newMap: () => newMapDialog(),
+    goHome: () => ctrl.goHome(),
+    search: () => openSearch(),
+    checkForUpdates: () => document.getElementById('btn-updates')?.click(),
+  });
   const host = nativeHost();
   if (!host) return;
   document.documentElement.classList.add('native-mac');
+  reportTitleBar(host);
   host.postMessage({ type: 'ready' });
+}
+
+// In the Mac app the top bar is also the window's title bar. Tell the app
+// where the bar's controls are, so a press anywhere else moves the window.
+// While a dialog covers the page, the bar is not draggable.
+function reportTitleBar(host) {
+  const bar = document.getElementById('topbar');
+  if (!bar) return;
+  let frame = 0;
+  const report = () => {
+    frame = 0;
+    const covered = document.querySelector('dialog[open], .dialog-backdrop, #search-overlay:not([hidden])');
+    const controls = covered ? [] : [...bar.querySelectorAll('button, a, input, select, [role="button"], [tabindex]:not([tabindex="-1"])')]
+      .map((control) => control.getBoundingClientRect())
+      .filter((rect) => rect.width && rect.height)
+      .map((rect) => ({ x: rect.x - 3, y: rect.y - 3, width: rect.width + 6, height: rect.height + 6 }));
+    host.postMessage({ type: 'titlebar', height: covered ? 0 : bar.getBoundingClientRect().bottom, controls });
+  };
+  const schedule = () => { if (!frame) frame = requestAnimationFrame(report); };
+  new ResizeObserver(schedule).observe(bar);
+  new MutationObserver(schedule).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['hidden', 'open', 'class'] });
+  window.addEventListener('resize', schedule);
+  report();
 }
 
 export async function localLibraryDialog(removing = null) {

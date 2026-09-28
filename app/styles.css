@@ -236,6 +236,11 @@ button { font-family: inherit; color: inherit; }
   border-bottom: 1px solid var(--border);
   z-index: 30;
 }
+/* In the Mac app the top bar is the window's title bar: leave room for the
+   close, minimize, and zoom buttons, and let the window name the app. */
+.native-mac #topbar { padding-left: 84px; -webkit-user-select: none; user-select: none; }
+.native-mac.native-fullscreen #topbar { padding-left: 12px; }
+.native-mac .logo-word { display: none; }
 .tb-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; }
 .tb-right { display: flex; align-items: center; gap: 6px; flex: none; }
 
