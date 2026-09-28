@@ -16,6 +16,7 @@ import { initGitHub } from './github.js';
 import { initUpdates, maintenanceBlocker } from './updates.js';
 import { bugReportDialog } from './bug-report.js';
 import { libraryLocationDialog } from './library-location.js';
+import { initNativeBridge, isNativeMac, openFile } from './library-links.js';
 import { initBoardGestures } from './board.js';
 
 // ── theme ────────────────────────────────────────────────────────────
@@ -332,6 +333,13 @@ function wireKeyboard() {
       ui.saveMap();
       return;
     }
+    // The Mac app's File menu owns ⌘O; in a browser, show the path field
+    // instead of the browser's own open dialog.
+    if (meta && !ev.shiftKey && ev.key.toLowerCase() === 'o' && !isNativeMac()) {
+      ev.preventDefault();
+      openFile();
+      return;
+    }
     if (isTyping() || dialogOpen() || state.presenting) return;
     if (ev.target.closest?.('.catalog-detail')) return;
 
@@ -465,7 +473,8 @@ async function boot() {
     ui.toast('Could not reach the Serigraph server: ' + e.message, true);
     return;
   }
-  await Promise.all([ctrl.loadProjects(), ctrl.loadTrash()]);
+  await Promise.all([ctrl.loadProjects(), ctrl.loadTrash(), ctrl.loadRecents()]);
+  initNativeBridge();
 
   const route = ctrl.readHash();
   let mapId = route.mapId && state.maps.some((m) => m.id === route.mapId) ? route.mapId : null;
@@ -492,6 +501,7 @@ async function boot() {
     try {
       if (event.type === 'maps-changed') await ctrl.handleRemoteChange(event.ids ?? []);
       if (event.type === 'templates-changed') await ctrl.loadTemplates();
+      if (event.type === 'recents-changed') await ctrl.loadRecents();
       if (event.type === 'agents-changed') await refreshAgents();
       if (event.type === 'library-changed') {
         const openId = state.mapId;

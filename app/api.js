@@ -40,6 +40,16 @@ export const api = {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Serigraph-Links-Token': token },
     body: JSON.stringify(payload),
   }),
+  async listRecents() {
+    if (state.standalone) return { machine: null, items: [] };
+    return jfetch('/api/recents');
+  },
+  async recordRecent(id) {
+    if (state.standalone) return null;
+    return jfetch('/api/recents', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+    });
+  },
   libraryStatus: signal => jfetch('/api/library', { signal }),
   libraryAction: (action, token, payload) => jfetch(`/api/library/${action}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Serigraph-Settings-Token': token },

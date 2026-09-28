@@ -37,6 +37,7 @@ import { createGitHubReader, GITHUB_SOURCE, GITHUB_REFRESH_MS } from './github.j
 import { createUpdater } from './updater.js';
 import { inspectLibraryDirectory, saveLibraryPreference } from './library-location.js';
 import { createLocalLinks, isLocalLink } from './local-links.js';
+import { createRecents } from './recents.js';
 
 const github = process.env.SERIGRAPH_GITHUB_PILOT === '1' ? createGitHubReader() : null;
 
@@ -57,12 +58,27 @@ const NO_OPEN = process.argv.includes('--no-open') || process.env.OPSMAP_NO_OPEN
 // maps hold confidential client operations data: serve localhost-only unless
 // the user explicitly opts into LAN exposure with --lan (or OPSMAP_LAN=1)
 const LAN = process.argv.includes('--lan') || process.env.OPSMAP_LAN === '1';
-const BIND_HOST = LAN ? '0.0.0.0' : '127.0.0.1';
+// A reverse proxy on the same machine (for example Caddy serving a private
+// tailnet name) reaches a localhost-bound server with its own Host header.
+// Listing that name keeps the DNS-rebinding check while allowing the proxy.
+// Requests through such a name are shared access, never local-only actions.
+const ALLOWED_HOSTS = new Set((process.env.SERIGRAPH_ALLOWED_HOSTS || '').split(',').map(host => host.trim().toLowerCase()).filter(Boolean));
+const SHARED = LAN || ALLOWED_HOSTS.size > 0;
+const BIND_HOST = process.env.SERIGRAPH_BIND_HOST || (LAN ? '0.0.0.0' : '127.0.0.1');
 const LOCAL_HOSTS = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+const allowedHost = host => LOCAL_HOSTS.test(host ?? '') || ALLOWED_HOSTS.has(String(host ?? '').replace(/:\d+$/, '').toLowerCase());
 
 const ENGINE_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const localLinks = createLocalLinks({ engineRoot: ENGINE_ROOT, enabled: !LAN,
-  registryFile: `${PREFERENCES_FILE}.links-${LIBRARY_ID.slice(0, 20)}.json` });
+// Library metadata (linked files, recent maps) travels with the library, so a
+// cloud-synced library shows the same list on every machine. A library inside
+// the engine checkout keeps it beside this installation's preferences instead,
+// so private paths never land in the application repository.
+const libraryInEngine = !path.relative(ENGINE_ROOT, LIBRARY_ROOT).startsWith('..') && !path.isAbsolute(path.relative(ENGINE_ROOT, LIBRARY_ROOT));
+const META_DIR = libraryInEngine
+  ? path.join(path.dirname(PREFERENCES_FILE), `library-${LIBRARY_ID.slice(0, 20)}`)
+  : path.join(LIBRARY_ROOT, '.serigraph');
+const localLinks = createLocalLinks({ engineRoot: ENGINE_ROOT, enabled: !SHARED, registryDir: path.join(META_DIR, 'links') });
+const recents = createRecents({ dir: path.join(META_DIR, 'recents'), validId: id => safeId(id) || isLocalLink(id) });
 let localLinkPlan = null;
 const updater = createUpdater({
   root: ENGINE_ROOT,
@@ -73,14 +89,14 @@ const updater = createUpdater({
 const runningRevision = await updater.revision();
 const updateToken = randomUUID();
 const updateInstance = randomUUID();
-const updatesEnabled = !LAN && ROOT === ENGINE_ROOT && !!process.send && process.env.SERIGRAPH_DISABLE_UPDATES !== '1';
+const updatesEnabled = !SHARED && ROOT === ENGINE_ROOT && !!process.send && process.env.SERIGRAPH_DISABLE_UPDATES !== '1';
 let updateState = { status: 'unchecked', current: runningRevision, checkedAt: null };
 let updatePlan = null;
 let checkingUpdate = false;
 let applyingUpdate = false;
 let activeOperations = 0;
 const libraryToken = randomUUID();
-const librarySettingsEnabled = !LAN && ROOT === ENGINE_ROOT && !!process.send && !LIBRARY_LOCKED && process.env.SERIGRAPH_DISABLE_LIBRARY_SETTINGS !== '1';
+const librarySettingsEnabled = !SHARED && ROOT === ENGINE_ROOT && !!process.send && !LIBRARY_LOCKED && process.env.SERIGRAPH_DISABLE_LIBRARY_SETTINGS !== '1';
 let libraryPlan = null;
 let switchingLibrary = false;
 
@@ -93,7 +109,7 @@ function localAction(req, header, token) {
 
 async function handleLibrary(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/library') return json(res, 200, {
-    enabled: librarySettingsEnabled, path: LAN ? null : LIBRARY_ROOT, libraryId: LIBRARY_ID,
+    enabled: librarySettingsEnabled, path: SHARED ? null : LIBRARY_ROOT, libraryId: LIBRARY_ID,
     token: librarySettingsEnabled ? libraryToken : null,
     message: librarySettingsEnabled ? '' : LIBRARY_LOCKED
       ? 'The launching environment controls the project-files folder. Remove SERIGRAPH_LIBRARY_DIR, OPSMAP_ROOT, OPSMAP_MAPS_DIR, and OPSMAP_ENV_FILE overrides and restart to use this setting.'
@@ -823,7 +839,7 @@ async function handleApi(req, res, url) {
   if (parts[1] === 'local-links') {
     if (req.method === 'GET' && parts.length === 2) return json(res, 200, {
       enabled: localLinks.enabled, token: localLinks.enabled ? libraryToken : null,
-      message: localLinks.enabled ? '' : 'Local links are available only in the local app, not LAN mode.',
+      message: localLinks.enabled ? '' : 'Opening local files is available only in the local app, not on a shared address.',
     });
     if (!localLinks.enabled || !localAction(req, 'x-serigraph-links-token', libraryToken)) return json(res, 403, { error: 'Manage local links from this local Serigraph app after reloading.' });
     if (req.method !== 'POST' || parts.length !== 3 || url.search) return json(res, 405, { error: 'Unknown local-library action.' });
@@ -852,8 +868,26 @@ async function handleApi(req, res, url) {
         broadcast({ type: 'library-changed', reason: 'local-link' });
         return json(res, 200, { removed: true });
       }
+      if (parts[2] === 'open') {
+        const result = await localLinks.open(body?.path);
+        await watchLocalLinks();
+        if (!result.existing) broadcast({ type: 'library-changed', reason: 'local-link' });
+        const project = (await localLinks.projects()).find(item => item.slug === result.id);
+        const mapId = result.kind === 'file' ? project?.maps[0]?.id ?? null : null;
+        if (mapId) await recents.record(mapId).catch(() => {});
+        return json(res, result.existing ? 200 : 201, { ...result, mapId, name: project?.name ?? null });
+      }
       return json(res, 400, { error: 'Unknown local-library action.' });
     } catch (error) { return json(res, 400, { error: error.message }); }
+  }
+  if (parts[1] === 'recents' && parts.length === 2 && !url.search) {
+    if (req.method === 'GET') return json(res, 200, { machine: recents.machine, machineLabel: recents.label, items: await recents.list() });
+    if (req.method !== 'POST') return json(res, 405, { error: 'Use GET or POST.' });
+    let body;
+    try { body = JSON.parse(await readBody(req, 1024)); } catch { return json(res, 400, { error: 'Invalid recent-map request.' }); }
+    try { await recents.record(body?.id); } catch (error) { return json(res, 400, { error: error.message }); }
+    broadcast({ type: 'recents-changed' });
+    return json(res, 200, { recorded: true });
   }
   if (parts[1] === 'export' && parts.length === 2) {
     if (req.method !== 'POST') return json(res, 405, { error: 'Use POST with the map source.' });
@@ -1266,7 +1300,7 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   // DNS-rebinding guard: a page at evil.example that resolves to 127.0.0.1
   // arrives with its own Host header; refuse anything that isn't local
-  if (!LAN && !LOCAL_HOSTS.test(req.headers.host ?? '')) {
+  if (!LAN && !allowedHost(req.headers.host)) {
     return json(res, 403, { error: 'forbidden: unrecognized Host header (start with --lan to serve beyond localhost)' });
   }
   try {
@@ -1381,6 +1415,19 @@ async function start(port, attempt = 0) {
     watchProjectsRoot();
     for (const project of await projectIndex()) if (!project.linked) watchProjectDir(project.slug);
     await watchLocalLinks();
+    // Another machine sharing this library adds links and recent maps through
+    // the cloud drive; pick those changes up without a restart. Metadata kept
+    // beside a library inside the engine is private to this installation.
+    if (!libraryInEngine) {
+      await fs.mkdir(path.join(META_DIR, 'links'), { recursive: true, mode: 0o700 }).catch(() => {});
+      await fs.mkdir(path.join(META_DIR, 'recents'), { recursive: true, mode: 0o700 }).catch(() => {});
+      const isRecord = filename => /\.json$/.test(String(filename)) && !String(filename).startsWith('.');
+      if (localLinks.enabled) watchDir(path.join(META_DIR, 'links'), () => {
+        watchLocalLinks().catch(() => {});
+        broadcast({ type: 'library-changed', reason: 'local-link' });
+      }, isRecord);
+      watchDir(path.join(META_DIR, 'recents'), () => broadcast({ type: 'recents-changed' }), isRecord);
+    }
     process.send?.({ type: 'ready', port });
     const urlStr = `http://localhost:${port}/`;
     console.log('');
@@ -1392,7 +1439,9 @@ async function start(port, attempt = 0) {
     console.log(`  maps:      ${path.relative(process.cwd(), MAPS_DIR) || 'maps'}/*.yaml  (edit them in any editor — the canvas follows)`);
     console.log(`  templates: ${path.relative(process.cwd(), TEMPLATES_DIR) || 'templates'}/*.yaml`);
     console.log(`  projects:  ${path.relative(process.cwd(), PROJECTS_DIR) || 'projects'}/*/`);
-    console.log(LAN ? '  serving:   all interfaces (--lan)' : '  serving:   localhost only (start with --lan to share on your network)');
+    console.log(LAN ? '  serving:   all interfaces (--lan)'
+      : ALLOWED_HOSTS.size ? `  serving:   localhost, shared through ${[...ALLOWED_HOSTS].join(', ')}`
+      : '  serving:   localhost only (start with --lan to share on your network)');
     console.log('');
     if (!NO_OPEN) openBrowser(urlStr);
   };

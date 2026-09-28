@@ -6,7 +6,6 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { request } from 'node:http';
-import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, realpathSync, renameSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -627,7 +626,7 @@ test('local links save originals, reject stale edits, refresh externally, and re
   assert.equal(added.status, 201, added.body);
   const {id} = JSON.parse(added.body), mapId = `${id}/map`, url = `/api/maps/${mapId}`;
   assert.equal(existsSync(path.join(work, 'projects', id)), false, 'no copied project directory');
-  assert.equal(existsSync(path.join(work, 'preferences', `install.json.links-${headers['X-Serigraph-Library'].slice(0, 20)}.json`)), true);
+  assert.equal(existsSync(path.join(work, '.serigraph', 'links', `${id}.json`)), true, 'the link travels with the library');
   const project = JSON.parse((await raw({p: '/api/projects'})).body).find(p => p.slug === id);
   assert.equal(project.linked, true); assert.equal(project.location, realpathSync(file)); assert.equal(project.maps, undefined);
   const map = JSON.parse((await raw({p: url})).body);
@@ -668,8 +667,7 @@ test('linked folders and file parents reconnect their watchers after being unava
   const temp = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'serigraph-link-reconnect-')));
   const library = path.join(temp, 'library'), preferences = path.join(temp, 'preferences.json');
   mkdirSync(library);
-  const libraryId = createHash('sha256').update(JSON.stringify([library, path.join(library, 'maps')])).digest('hex');
-  const links = createLocalLinks({engineRoot: ROOT, registryFile: `${preferences}.links-${libraryId.slice(0, 20)}.json`});
+  const links = createLocalLinks({engineRoot: ROOT, registryDir: path.join(library, '.serigraph', 'links')});
   const source = 'name: Reconnected Synthetic Map\nnodes: []\n';
   const originals = [];
   let child;
@@ -711,4 +709,51 @@ test('linked folders and file parents reconnect their watchers after being unava
       await expectChange(original, 'Replaced folder');
     }
   } finally {child?.kill(); rmSync(temp, {recursive: true, force: true});}
+});
+
+test('opening a file links it in one step, reuses the link, and records it in Recent', async () => {
+  const originals = path.join(work, 'opened-originals');
+  mkdirSync(originals);
+  const file = path.join(originals, 'Opened flow.yaml');
+  writeFileSync(file, 'name: Opened Synthetic Map\nnodes: [{id: start, type: process, label: Start}]\n');
+  const status = await raw({p: '/api/local-links'}), info = JSON.parse(status.body);
+  const headers = {Origin: `http://127.0.0.1:${port}`, 'X-Serigraph-Library': status.headers['x-serigraph-library'],
+    'X-Serigraph-Links-Token': info.token};
+  assert.equal((await api('POST', '/api/local-links/open', {path: file})).status, 403, 'opening needs the local token');
+  const first = await api('POST', '/api/local-links/open', {path: file}, headers);
+  assert.equal(first.status, 201, first.body);
+  const opened = JSON.parse(first.body);
+  assert.equal(opened.kind, 'file');
+  assert.equal(opened.mapId, `${opened.id}/map`);
+  assert.equal(opened.name, 'Opened Synthetic Map');
+  const again = JSON.parse((await api('POST', '/api/local-links/open', {path: file}, headers)).body);
+  assert.equal(again.id, opened.id);
+  assert.equal(again.existing, true);
+  const recents = JSON.parse((await raw({p: '/api/recents'})).body);
+  assert.equal(recents.items[0].id, opened.mapId);
+  assert.equal(recents.items[0].machine, recents.machine);
+  assert.equal((await api('POST', '/api/recents', {id: '../escape'})).status, 400);
+  assert.equal((await api('POST', '/api/recents', {id: 'some-map'})).status, 200);
+  assert.equal(JSON.parse((await raw({p: '/api/recents'})).body).items[0].id, 'some-map');
+  await api('POST', '/api/local-links/remove', {id: opened.id}, headers);
+});
+
+test('a listed proxy host is served as shared access without local-only actions', async () => {
+  const temp = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'serigraph-proxy-host-')));
+  let child;
+  try {
+    const started = boot({PORT: String(port + 140), OPSMAP_ROOT: ROOT, OPSMAP_MAPS_DIR: '', OPSMAP_ENV_FILE: '', OPSMAP_SKIP_DOTENV: '1',
+      SERIGRAPH_LIBRARY_DIR: temp, SERIGRAPH_PREFERENCES_FILE: path.join(temp, 'preferences.json'),
+      SERIGRAPH_ALLOWED_HOSTS: 'graph.example.test'});
+    child = started.child;
+    const onPort = await started.childPort;
+    assert.equal((await raw({p: '/api/maps', onPort, headers: {Host: 'graph.example.test'}})).status, 200);
+    assert.equal((await raw({p: '/api/maps', onPort, headers: {Host: 'graph.example.test:443'}})).status, 200);
+    assert.equal((await raw({p: '/api/maps', onPort, headers: {Host: 'attacker.example.test'}})).status, 403);
+    assert.equal(JSON.parse((await raw({p: '/api/local-links', onPort})).body).enabled, false);
+    assert.equal(JSON.parse((await raw({p: '/api/updates', onPort})).body).status, 'disabled');
+  } finally {
+    child?.kill();
+    rmSync(temp, {recursive: true, force: true});
+  }
 });

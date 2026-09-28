@@ -7,6 +7,8 @@ export const state = {
   projects: [],        // [{slug, name, mapCount}]
   templates: [],       // [{id, name, description, nodeCount, source}]
   trash: [],           // [{id, kind, name, originalId|originalSlug, deletedAt, mapCount}]
+  recents: [],         // [{id, openedAt, machine}] newest first, merged across machines
+  machine: null,       // this server's machine name, to label recents opened here
 
   mapId: null,
   libraryId: null,     // opaque server identity; pins this tab to its library

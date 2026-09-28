@@ -1,7 +1,13 @@
-// Local file references live in private installation metadata, never in YAML
-// or the engine checkout. Linking grants access only to the selected file or
-// the immediate YAML children of the selected folder, not its settings.
+// Local file references live in library metadata, never in YAML or the engine
+// checkout. Linking grants access only to the selected file or the immediate
+// YAML children of the selected folder, not its settings.
+//
+// Each link is its own small JSON file, so a library shared through a cloud
+// drive never has two machines rewriting one list. Paths inside the home
+// folder are stored as "~/…" because the same repo or drive folder has a
+// different absolute path on a Mac with a different user name.
 import { promises as fs, constants } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { parseProjectIndex, isLocalLink } from '../shared/projects.js';
@@ -10,6 +16,19 @@ import { summarizeMapSource } from './map-summary.js';
 export { isLocalLink };
 const within = (root, target) => { const rel = path.relative(root, target); return !rel || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel)); };
 const digest = text => createHash('sha256').update(text).digest('hex');
+const LINK_FILE = /^(linked-[0-9a-f-]{36})\.json$/;
+
+export function portablePath(absolute, home = os.homedir()) {
+  const rel = path.relative(home, absolute);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return absolute;
+  return `~/${rel.split(path.sep).join('/')}`;
+}
+
+export function expandPath(stored, home = os.homedir()) {
+  if (typeof stored !== 'string') return null;
+  if (stored.startsWith('~/')) return path.join(home, ...stored.slice(2).split('/'));
+  return path.isAbsolute(stored) ? stored : null;
+}
 const mapSlug = file => {
   const base = file.replace(/\.ya?ml$/i, '');
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(base) && !base.includes('..') ? base : `file-${digest(file).slice(0, 20)}`;
@@ -32,54 +51,57 @@ async function boundedSource(file) {
   } finally { await handle.close(); }
 }
 
-export function createLocalLinks({ engineRoot, registryFile, enabled = true }) {
+export function createLocalLinks({ engineRoot, registryDir, enabled = true, home = os.homedir() }) {
   let writes = Promise.resolve();
   const serial = action => { const next = writes.then(action, action); writes = next.catch(() => {}); return next; };
   async function checkedPath(target, kind) {
     if (!enabled) throw new Error('Local links are available only in the local app, not LAN mode.');
+    if (typeof target === 'string' && target.startsWith('~/')) target = expandPath(target, home);
     if (typeof target !== 'string' || !path.isAbsolute(target) || /[\0\r\n]/.test(target)) throw new Error('Enter an absolute path to a YAML file or map folder.');
     let resolved, stat;
     try { resolved = await fs.realpath(target); stat = await fs.lstat(resolved); }
-    catch { throw new Error('This location is unavailable. Reconnect the drive or check the path and permissions.'); }
+    catch { throw new Error(kind ? 'Not found on this Mac. The file may live in a folder or repo that only another computer has.' : 'This location is unavailable. Reconnect the drive or check the path and permissions.'); }
     if (within(await fs.realpath(engineRoot), resolved)) throw new Error('Choose a location outside the Serigraph application repository.');
     const actual = stat.isDirectory() ? 'folder' : stat.isFile() && /\.ya?ml$/i.test(resolved) ? 'file' : null;
-    if (!actual || (kind && (actual !== kind || resolved !== target))) throw new Error('The linked location changed. Remove the link and preview the location again.');
+    if (!actual || (kind && (actual !== kind || resolved !== target))) throw new Error('The linked location changed. Remove the link and open the location again.');
     if (actual === 'file' && /^projects\.ya?ml$/i.test(path.basename(resolved))) throw new Error('Choose the project folder, not its projects.yaml index.');
     return { path: resolved, kind: actual };
   }
+  // A half-synced or hand-edited record is skipped rather than blocking the
+  // library: it never grants access to anything by itself.
   async function readRegistry() {
     if (!enabled) return [];
-    try {
-      const stat = await fs.lstat(registryFile);
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 256 * 1024) throw new Error();
-      const data = JSON.parse(await fs.readFile(registryFile, 'utf8'));
-      if (data.version !== 1 || !Array.isArray(data.links) || data.links.length > 100) throw new Error();
-      const ids = new Set(), paths = new Set();
-      for (const link of data.links) {
-        if (!isLocalLink(link.id) || link.id.includes('/') || !['file', 'folder'].includes(link.kind)
-          || typeof link.path !== 'string' || !path.isAbsolute(link.path) || ids.has(link.id) || paths.has(link.path)) throw new Error();
-        ids.add(link.id); paths.add(link.path);
-      }
-      return data.links;
-    } catch (error) {
-      if (error.code === 'ENOENT') return [];
-      throw new Error('The local-library link list cannot be read safely. Restore its private metadata before changing links.');
+    let names;
+    try { names = await fs.readdir(registryDir); }
+    catch (error) { if (error.code === 'ENOENT') return []; throw new Error('The linked-file list cannot be read. Check the library folder permissions.'); }
+    const links = [], paths = new Set();
+    for (const name of names.sort()) {
+      const match = name.match(LINK_FILE);
+      if (!match || links.length >= 200) continue;
+      try {
+        const file = path.join(registryDir, name);
+        const stat = await fs.lstat(file);
+        if (!stat.isFile() || stat.size > 16_384) continue;
+        const data = JSON.parse(await fs.readFile(file, 'utf8'));
+        const absolute = expandPath(data.path, home);
+        if (data.version !== 1 || data.id !== match[1] || !['file', 'folder'].includes(data.kind) || !absolute || paths.has(absolute)) continue;
+        paths.add(absolute);
+        links.push({ id: data.id, kind: data.kind, path: absolute, stored: data.path, added: data.added || null });
+      } catch { /* skip an unreadable record */ }
     }
+    return links;
   }
-  async function saveRegistry(links) {
-    let ancestor = path.dirname(registryFile);
-    while (true) {
-      try { ancestor = await fs.realpath(ancestor); break; }
-      catch (error) { if (error.code !== 'ENOENT' || path.dirname(ancestor) === ancestor) throw error; ancestor = path.dirname(ancestor); }
-    }
+  async function writeRecord(link) {
     const engine = await fs.realpath(engineRoot);
-    if (within(engine, path.resolve(registryFile)) || within(engine, ancestor)) throw new Error('The local-library link list must be stored outside the application repository.');
-    await fs.mkdir(path.dirname(registryFile), { recursive: true, mode: 0o700 });
-    if (within(engine, await fs.realpath(path.dirname(registryFile)))) throw new Error('The local-library link list must be stored outside the application repository.');
-    const temporary = `${registryFile}.${randomUUID()}.tmp`;
+    if (within(engine, path.resolve(registryDir))) throw new Error('The linked-file list must be stored outside the application repository.');
+    await fs.mkdir(registryDir, { recursive: true, mode: 0o700 });
+    if (within(engine, await fs.realpath(registryDir))) throw new Error('The linked-file list must be stored outside the application repository.');
+    const target = path.join(registryDir, `${link.id}.json`);
+    const temporary = path.join(registryDir, `.${link.id}.${randomUUID()}.tmp`);
+    const record = { version: 1, id: link.id, kind: link.kind, path: portablePath(link.path, home), added: new Date().toISOString() };
     try {
-      await fs.writeFile(temporary, JSON.stringify({ version: 1, links }) + '\n', { flag: 'wx', mode: 0o600 });
-      await fs.rename(temporary, registryFile);
+      await fs.writeFile(temporary, JSON.stringify(record, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+      await fs.rename(temporary, target);
     } finally { await fs.unlink(temporary).catch(() => {}); }
   }
   async function filesFor(link) {
@@ -111,7 +133,7 @@ export function createLocalLinks({ engineRoot, registryFile, enabled = true }) {
     }
     const name = index.name || (link.kind === 'file' ? maps[0]?.name : null) || path.basename(link.path);
     const project = { slug: link.id, name, linked: true };
-    return { ...project, location: link.path, linkKind: link.kind, description: index.description || '',
+    return { ...project, location: portablePath(link.path, home), linkKind: link.kind, description: index.description || '',
       order: index.order || [], tags: index.tags || {}, mapCount: maps.length,
       indexErrors: index.errors?.length || 0, maps: maps.map(map => ({ ...map, project })),
       fingerprint: digest(JSON.stringify([link.path, link.kind, hashes])) };
@@ -131,21 +153,27 @@ export function createLocalLinks({ engineRoot, registryFile, enabled = true }) {
       if (current.fingerprint !== preview.fingerprint) throw new Error('The files changed since preview. Preview the location again before linking.');
       const links = await readRegistry();
       const existing = links.find(link => link.path === next.path);
-      if (existing) return { id: existing.id, existing: true };
-      if (links.length >= 100) throw new Error('Remove an unused location before adding more than 100 links.');
+      if (existing) return { id: existing.id, existing: true, kind: existing.kind };
+      if (links.length >= 200) throw new Error('Remove an unused location before adding more than 200 links.');
       const link = { ...next, id: `linked-${randomUUID()}` };
-      await saveRegistry([...links, link]);
-      return { id: link.id, existing: false };
+      await writeRecord(link);
+      return { id: link.id, existing: false, kind: link.kind };
     }),
+    // Opening a file from the Mac menu or Finder is the approval: preview and
+    // save the reference in one step, reusing an existing link for the path.
+    async open(target) {
+      const preview = await this.preview(target);
+      return this.add(preview);
+    },
     remove: id => serial(async () => {
       const links = await readRegistry();
       if (!links.some(link => link.id === id)) throw new Error('This library link no longer exists. Refresh Projects.');
-      await saveRegistry(links.filter(link => link.id !== id));
+      await fs.unlink(path.join(registryDir, `${id}.json`));
     }),
     async projects() {
       return Promise.all((await readRegistry()).map(async link => {
         try { const { fingerprint, ...project } = await describe(link); return project; }
-        catch (error) { return { slug: link.id, name: path.basename(link.path), linked: true, location: link.path,
+        catch (error) { return { slug: link.id, name: path.basename(link.path), linked: true, location: portablePath(link.path, home),
           linkKind: link.kind, unavailable: true, error: error.message, mapCount: 0, maps: [] }; }
       }));
     },

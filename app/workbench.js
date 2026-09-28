@@ -14,7 +14,7 @@ import * as edit from './edit.js';
 import * as ui from './ui.js';
 import { icon as svgIcon, TYPE_ICONS as ICONS } from './icons.js';
 import { openAnnotationEditor } from './board.js';
-import { localLibraryDialog } from './library-links.js';
+import { openFile } from './library-links.js';
 
 function h(tag, props = {}, ...children) {
   const n = document.createElement(tag);
@@ -183,7 +183,7 @@ function refreshRail() {
     save: !canEdit || state.saveStatus === 'saving',
     'import-transcript': state.standalone,
     'import-file': state.standalone,
-    'link-local': state.standalone,
+    'open-file': state.standalone,
     'export-png': !state.mapId,
     'export-svg': !state.mapId,
     'export-yaml': !state.mapId,
@@ -976,7 +976,7 @@ function runToolbarAction(action, target) {
     case 'appearance': ui.appearanceDialog(); break;
     case 'import-transcript': ui.importDialog(); break;
     case 'import-file': importMapFile(); break;
-    case 'link-local': localLibraryDialog(); break;
+    case 'open-file': openFile(); break;
     case 'export-png': downloadPng(); break;
     case 'export-svg': downloadSvg(); break;
     case 'export-yaml': downloadYaml(); break;
@@ -1071,8 +1071,8 @@ function renderRail() {
     toolbarMenuAction('save', 'Save', 'save', '⌘S'),
     h('p', { class: 'toolbar-menu-note' }, 'Applied changes save automatically. Draft forms still need Apply.'),
     toolbarMenuAction('open-map', 'Open map…', 'file'),
-    toolbarMenuAction('import-file', 'Load YAML file…', 'import'),
-    toolbarMenuAction('link-local', 'Link local file or folder…', 'import'),
+    toolbarMenuAction('open-file', 'Open file…', 'import', '⌘O'),
+    toolbarMenuAction('import-file', 'Import a copy…', 'import'),
     toolbarMenuAction('import-transcript', 'Import transcript…', 'note'),
     h('div', { class: 'toolbar-menu-separator' }),
     toolbarMenuAction('export-yaml', 'Save a copy · YAML', 'export'),

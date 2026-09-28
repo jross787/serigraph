@@ -177,6 +177,7 @@ export async function openMap(mapId, { nodeId = null, inId = null, replace = fal
   }
   const { source } = payload;
   if (mapChanged) canvas.resetScopeCameras();
+  if (mapChanged && !state.standalone) api.recordRecent(mapId).catch(() => {});
   state.mapId = mapId;
   saveConflictPending = false;
   state.undoStack = [];
@@ -253,6 +254,18 @@ export async function loadProjects() {
   }
   bus.emit('projects-listed');
   return state.projects;
+}
+
+export async function loadRecents() {
+  try {
+    const { machine, items } = await api.listRecents();
+    state.machine = machine;
+    state.recents = items ?? [];
+  } catch {
+    state.recents = [];
+  }
+  bus.emit('recents-listed');
+  return state.recents;
 }
 
 export async function loadTrash() {
