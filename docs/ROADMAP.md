@@ -1,5 +1,9 @@
 # Serigraph roadmap
 
+## Focus update — September 28, 2026
+
+**Mapping business processes comes first.** The owner's everyday use is drawing and reading process and systems maps across several Macs, so the near-term work is the mapping experience itself: the same app, updates, and files on every Mac; opening maps that live in other repos; a library of systems and tools shared across maps; and an app that looks and moves like a Mac app. The data-exploration stages below remain the direction afterward, in the same order, but they wait until mapping feels finished. Automation, agent, and product-planning views stay available under **More views** without new investment.
+
 ## Current direction — September 5, 2026
 
 **Serigraph is a living map of real systems, and eventually the place to direct narrowly scoped agents within them.** Understand what exists, see what is happening, investigate a bounded problem, approve a specific action, and verify its effect. Useful findings and decisions accumulate on the map.
