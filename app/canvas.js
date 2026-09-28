@@ -392,7 +392,7 @@ function zoomAt(factor, cx, cy) {
 // current theme, plus every stylesheet rule that targets canvas marks. Rules
 // with pseudo-classes (hover/focus state) and app-chrome id selectors are
 // skipped — they neither apply nor belong in a standalone file.
-const EXPORT_SELECTORS = ['.node', '.edge', '.board-annotation', '.annotation-', '.grid-dots', '.bundle', '.scope', '.peer', '.identity', '.icon', '.type-chip', '.count-chip', '.sel-ring', '.stack', '.shape', '.marquee', '#griddots'];
+const EXPORT_SELECTORS = ['.node', '.edge', '.board-annotation', '.annotation-', '.draw-', '.boundary-label', '.shape-label', '.grid-dots', '.bundle', '.scope', '.peer', '.identity', '.icon', '.type-chip', '.count-chip', '.sel-ring', '.stack', '.shape', '.marquee', '#griddots'];
 function exportStylesheet() {
   const cs = getComputedStyle(document.documentElement);
   const vars = [];
@@ -508,10 +508,14 @@ function glideAfterRelease() {
   panSamples = [];
   if (samples.length < 2 || prefersReducedMotion()) return;
   const first = samples[0], last = samples[samples.length - 1];
-  const span = last.time - first.time;
-  if (span <= 0 || performance.now() - last.time > 60) return;
+  // Measure over at least one frame, and cap the speed, so a single jump of
+  // the pointer glides about a screen instead of flinging the map away.
+  const span = Math.max(16, last.time - first.time);
+  if (performance.now() - last.time > 60) return;
   let vx = (last.x - first.x) / span, vy = (last.y - first.y) / span; // px per ms
-  if (Math.hypot(vx, vy) < 0.35) return;
+  const speed = Math.hypot(vx, vy);
+  if (speed < 0.35) return;
+  if (speed > 4) { vx *= 4 / speed; vy *= 4 / speed; }
   let previous = performance.now();
   const step = (now) => {
     const elapsed = Math.min(34, now - previous);
@@ -1062,10 +1066,16 @@ function renderScopeContent(model, ownerId) {
     edgesG.appendChild(item.bundle ? buildBundle(item.bundle, layout) : buildEdge(item.single));
   }
   for (const n of layout.nodes) nodesG.appendChild(buildNode(n));
+  // Shapes and boundaries sit behind the cards they surround; text, lines,
+  // arrows, and pen strokes sit on top.
+  const behindG = el('g', {}, 'annotations annotations-behind');
   const annotationsG = el('g', {}, 'annotations');
-  for (const item of layout.annotations ?? []) annotationsG.append(buildAnnotation(item.annotation,
-    { interactive: true }));
+  for (const item of layout.annotations ?? []) {
+    const behind = item.annotation.kind === 'shape' || item.annotation.kind === 'boundary';
+    (behind ? behindG : annotationsG).append(buildAnnotation(item.annotation, { interactive: true }));
+  }
   layer.appendChild(lanesG);
+  layer.appendChild(behindG);
   layer.appendChild(edgesG);
   layer.appendChild(nodesG);
   layer.appendChild(annotationsG);
@@ -1473,12 +1483,43 @@ export const getLayout = () => currentLayout;
 
 // Gesture previews only replace SVG marks; the authoritative model and cached
 // layout remain unchanged until one undoable edit is applied on pointerup.
-export function previewAnnotation(annotation) {
+export function previewAnnotation(annotation, { selected = true } = {}) {
   const previous = currentLayer?.querySelector(`.board-annotation[data-annotation-id="${CSS.escape(annotation.id)}"]`);
   if (!previous || previous.closest('[data-peer-scope]')) return;
   const fresh = buildAnnotation(annotation);
-  fresh.classList.add('selected');
+  if (selected) fresh.classList.add('selected');
   previous.replaceWith(fresh);
+}
+
+// A drawing in progress, shown in place without touching the map file.
+export function showDraft(annotation) {
+  if (!currentLayer) return;
+  const behind = annotation.kind === 'shape' || annotation.kind === 'boundary';
+  const content = currentLayer.querySelector('.active-scope') ?? currentLayer;
+  const host = content.querySelector(behind ? ':scope > .annotations-behind' : ':scope > .annotations:not(.annotations-behind)');
+  const fresh = buildAnnotation(annotation, { interactive: false });
+  fresh.classList.add('draw-draft');
+  const previous = currentLayer.querySelector('.draw-draft');
+  if (previous) previous.replaceWith(fresh);
+  else host?.appendChild(fresh);
+}
+export function clearDraft() { currentLayer?.querySelector('.draw-draft')?.remove(); }
+
+// Cards riding along with a moving boundary. The layout is rebuilt when the
+// move is saved or cancelled, so these offsets never outlive the gesture.
+export function previewNodeOffsets(ids, dx, dy) {
+  const moved = [];
+  for (const id of ids) {
+    const ln = currentLayout?.nodes.find((node) => node.id === id);
+    const nodeEl = currentLayer?.querySelector(`.active-scope > .nodes > .node[data-id="${CSS.escape(id)}"]`);
+    if (!ln || !nodeEl) continue;
+    ln.boundaryOrigin ??= { x: ln.x, y: ln.y };
+    ln.x = ln.boundaryOrigin.x + dx;
+    ln.y = ln.boundaryOrigin.y + dy;
+    nodeEl.setAttribute('transform', `translate(${ln.x},${ln.y})`);
+    moved.push(ln);
+  }
+  if (moved.length) updateEdgesFor(moved);
 }
 
 export function previewEdgeAnchor(index, endpoint, anchor) {

@@ -118,6 +118,7 @@ function flowPositions(node) {
     for (const pair of node.items) {
       const key = typeof pair.key === 'string' ? pair.key : pair.key?.value;
       if (['position', 'size'].includes(key) && isMap(pair.value)) pair.value.flow = true;
+      else if (key === 'points' && isSeq(pair.value)) pair.value.flow = true;
       else flowPositions(pair.value);
     }
   } else if (isSeq(node)) {
@@ -189,22 +190,39 @@ export function addAnnotation(ownerId, fields) {
   if (!scope) throw new Error('Scope not found');
   const path = [...scope.nodesPath.slice(0, -1), 'annotations'];
   if (!state.doc.getIn(path, true)) state.doc.setIn(path, state.doc.createNode([]));
-  const id = uniqueId(state.model, fields.kind === 'text' ? 'text' : 'note');
-  const item = state.doc.createNode({ id, kind: fields.kind, markdown: fields.markdown,
-    position: fields.position, size: fields.size, font: fields.font ?? 'system', fontSize: fields.fontSize ?? 16 });
+  const id = uniqueId(state.model, fields.kind);
+  const item = state.doc.createNode(plainAnnotation(fields, id));
   flowPositions(item);
   const seq = useBlockSequence(state.doc, path);
   seq.add(item);
   return id;
 }
 
+// The fields an annotation keeps in YAML: text blocks keep their typography,
+// drawings keep their look (color, weight, fill, dashes, and points).
+function plainAnnotation(fields, id) {
+  const textKind = fields.kind === 'note' || fields.kind === 'text';
+  const plain = { id, kind: fields.kind };
+  if (textKind || fields.markdown?.trim()) plain.markdown = fields.markdown ?? '';
+  plain.position = fields.position;
+  plain.size = fields.size;
+  if (textKind) Object.assign(plain, { font: fields.font ?? 'system', fontSize: fields.fontSize ?? 16 });
+  else for (const key of ['shape', 'color', 'stroke', 'fill', 'dash', 'arrow']) if (fields[key] !== undefined) plain[key] = fields[key];
+  if (fields.points) plain.points = fields.points.map(Math.round);
+  return plain;
+}
+
 export function updateAnnotation(id, fields) {
   const path = annotationPath(id);
   const item = state.doc.getIn(path, true);
   const current = state.model.annotationById.get(id);
-  for (const key of ['kind', 'markdown', 'position', 'size', 'font', 'fontSize']) {
+  for (const key of ['kind', 'markdown', 'position', 'size', 'font', 'fontSize', 'shape', 'color', 'stroke', 'fill', 'dash', 'arrow', 'points']) {
     if (fields[key] === undefined || JSON.stringify(fields[key]) === JSON.stringify(current[key])) continue;
-    if (['position', 'size'].includes(key)) {
+    if (key === 'points') {
+      item.set('points', state.doc.createNode(fields.points.map(Math.round), { flow: true }));
+    } else if (key === 'markdown' && !fields.markdown && !['note', 'text'].includes(current.kind)) {
+      if (item.get('markdown', true)) item.delete('markdown'); // a drawing's label was cleared
+    } else if (['position', 'size'].includes(key)) {
       const previous = item.get(key, true);
       if (isMap(previous)) {
         for (const [part, value] of Object.entries(fields[key])) previous.set(part, value);
@@ -1290,7 +1308,7 @@ export function insertTemplate(ownerId, templateModel) {
       }
       return plainEdge;
     }),
-    ...(scope.annotations?.length ? { annotations: scope.annotations.map(({ ownerId: _ownerId, ...annotation }) => ({ ...annotation, id: rid(annotation.id) })) } : {}),
+    ...(scope.annotations?.length ? { annotations: scope.annotations.map((annotation) => plainAnnotation(annotation, rid(annotation.id))) } : {}),
   });
   const plain = plainScope(templateModel.root);
   if (templateModel.elements.length) {

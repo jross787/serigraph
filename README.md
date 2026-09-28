@@ -128,18 +128,21 @@ configuration you approve. A missing saved folder stops startup instead of
 silently opening another library. Launcher environment overrides take precedence
 and disable the button; see [Private workspaces](docs/PRIVATE-WORKSPACES.md).
 
-## Board notes, text, and precise anchors
+## Text, drawings, and precise anchors
 
-Use **Add → Note block** for resizable explainers, or **Freeform text** for
-unframed headings and labels. Double-click to edit Markdown with font/size
-controls, bold/italic, lists, and a live preview. Drag to move; select to resize;
-**Fit text** sizes the block to its content. Applied edits, duplication and
-deletion support Undo/Redo. Notes stay separate from process nodes and costs.
+Press **T**, click the board, and type. Double-click any text to edit it in
+place. Press **D** to draw freely with the pen, or open **Shapes** for
+rectangles, ellipses, boundaries, arrows, and lines. Draw a boundary around
+cards to name an area of the map; moving the boundary moves the cards inside
+it. Select a drawing to change its color, line weight, fill, dashes, or
+arrowheads. For longer explanations, **Add → Note block** opens a Markdown
+editor with font and size controls and a live preview. Every change supports
+Undo and Redo. Text and drawings stay separate from process cards and costs.
 
 Select a connector to reveal its two endpoint handles. Drag either around its
 card, or set **Attach to card → From/To side + Position (%)**. Anchors follow
 the card when it moves; Side **Auto** releases them. See the
-[format guide](docs/FORMAT.md#board-notes-and-freeform-text-optional) for YAML,
+[format guide](docs/FORMAT.md#board-notes-text-and-drawings-optional) for YAML,
 supported Markdown, local font stacks, bounds, and export behavior.
 
 ## Appearance and connection focus

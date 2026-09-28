@@ -8,6 +8,24 @@ export const ANNOTATION_FONTS = {
 };
 export const ANNOTATION_LIMITS = { minWidth: 80, maxWidth: 2400, minHeight: 40, maxHeight: 3200, minFont: 10, maxFont: 72, maxText: 40000 };
 
+// Drawings on the board: shapes and boundaries sit behind cards; lines,
+// arrows, and pen strokes sit on top. Colors are names the theme renders,
+// so a drawing reads well in Light and Dark Mode.
+export const TEXT_KINDS = ['note', 'text'];
+export const DRAWING_KINDS = ['shape', 'boundary', 'line', 'ink'];
+export const ANNOTATION_KINDS = [...TEXT_KINDS, ...DRAWING_KINDS];
+export const ANNOTATION_COLORS = ['gray', 'blue', 'green', 'orange', 'red', 'purple', 'yellow', 'teal'];
+export const ANNOTATION_STROKES = { thin: 1.5, medium: 3, thick: 6 };
+export const ANNOTATION_SHAPES = ['rect', 'ellipse'];
+export const ANNOTATION_ARROWS = ['none', 'end', 'both'];
+const DRAWING_MAX = 20000, MAX_POINTS = 8000;
+
+function drawingLimits(kind) {
+  if (kind === 'line' || kind === 'ink') return { minWidth: 0, maxWidth: DRAWING_MAX, minHeight: 0, maxHeight: DRAWING_MAX };
+  if (kind === 'shape' || kind === 'boundary') return { minWidth: 12, maxWidth: DRAWING_MAX, minHeight: 12, maxHeight: DRAWING_MAX };
+  return ANNOTATION_LIMITS;
+}
+
 export function normalizeAnnotations(raw, ownerId, path, err) {
   if (raw == null) return [];
   if (!Array.isArray(raw)) { err(path, '"annotations:" must be a list.'); return []; }
@@ -18,25 +36,62 @@ export function normalizeAnnotations(raw, ownerId, path, err) {
     }
     const id = typeof value.id === 'string' ? value.id.trim() : '';
     if (!id || !/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(id)) err([...p, 'id'], 'An annotation needs a unique id using letters, digits, hyphens or underscores.');
-    if (!['note', 'text'].includes(value.kind)) err([...p, 'kind'], 'Annotation kind must be "note" or "text".');
-    if (typeof value.markdown !== 'string' || value.markdown.length > ANNOTATION_LIMITS.maxText) {
+    if (!ANNOTATION_KINDS.includes(value.kind)) err([...p, 'kind'], `Annotation kind must be one of: ${ANNOTATION_KINDS.join(', ')}.`);
+    const textKind = TEXT_KINDS.includes(value.kind);
+    // Text blocks need words; a shape or boundary may carry a short label.
+    if ((textKind || value.markdown != null) && (typeof value.markdown !== 'string' || value.markdown.length > ANNOTATION_LIMITS.maxText)) {
       err([...p, 'markdown'], `Annotation markdown must be text of at most ${ANNOTATION_LIMITS.maxText} characters.`);
     }
     for (const key of ['x', 'y']) if (!Number.isFinite(value.position?.[key]) || Math.abs(value.position[key]) > 1000000) {
       err([...p, 'position', key], 'Annotation position must use finite coordinates between -1000000 and 1000000.');
     }
-    for (const [key, min, max] of [['width', ANNOTATION_LIMITS.minWidth, ANNOTATION_LIMITS.maxWidth],
-      ['height', ANNOTATION_LIMITS.minHeight, ANNOTATION_LIMITS.maxHeight]]) {
+    const limits = drawingLimits(value.kind);
+    for (const [key, min, max] of [['width', limits.minWidth, limits.maxWidth],
+      ['height', limits.minHeight, limits.maxHeight]]) {
       if (!Number.isFinite(value.size?.[key]) || value.size[key] < min || value.size[key] > max) err([...p, 'size', key], `Annotation ${key} must be ${min}–${max}.`);
     }
+    const drawing = drawingStyle(value, p, err);
     const font = value.font ?? 'system', fontSize = value.fontSize ?? 16;
     if (!Object.hasOwn(ANNOTATION_FONTS, font)) err([...p, 'font'], `Annotation font must be one of: ${Object.keys(ANNOTATION_FONTS).join(', ')}.`);
     if (!Number.isFinite(fontSize) || fontSize < ANNOTATION_LIMITS.minFont || fontSize > ANNOTATION_LIMITS.maxFont) {
       err([...p, 'fontSize'], `Annotation fontSize must be ${ANNOTATION_LIMITS.minFont}–${ANNOTATION_LIMITS.maxFont}.`);
     }
     return [{ id, kind: value.kind, markdown: typeof value.markdown === 'string' ? value.markdown : '',
-      position: value.position, size: value.size, font, fontSize, ownerId }];
+      position: value.position, size: value.size, font, fontSize, ...drawing, ownerId }];
   });
+}
+
+// Color, line weight, fill, dashes, arrowheads, and points for drawings.
+function drawingStyle(value, p, err) {
+  if (!DRAWING_KINDS.includes(value.kind)) return {};
+  const style = {
+    color: value.color ?? (value.kind === 'boundary' ? 'blue' : 'gray'),
+    stroke: value.stroke ?? (value.kind === 'ink' ? 'medium' : 'thin'),
+    fill: value.fill ?? value.kind === 'boundary',
+    dash: value.dash ?? false,
+  };
+  if (!ANNOTATION_COLORS.includes(style.color)) err([...p, 'color'], `Drawing color must be one of: ${ANNOTATION_COLORS.join(', ')}.`);
+  if (!Object.hasOwn(ANNOTATION_STROKES, style.stroke)) err([...p, 'stroke'], `Drawing stroke must be one of: ${Object.keys(ANNOTATION_STROKES).join(', ')}.`);
+  for (const key of ['fill', 'dash']) if (typeof style[key] !== 'boolean') err([...p, key], `Drawing "${key}" must be true or false.`);
+  if (value.kind === 'shape') {
+    style.shape = value.shape ?? 'rect';
+    if (!ANNOTATION_SHAPES.includes(style.shape)) err([...p, 'shape'], `Shape must be one of: ${ANNOTATION_SHAPES.join(', ')}.`);
+  }
+  if (value.kind === 'line') {
+    style.arrow = value.arrow ?? 'end';
+    if (!ANNOTATION_ARROWS.includes(style.arrow)) err([...p, 'arrow'], `Arrow must be one of: ${ANNOTATION_ARROWS.join(', ')}.`);
+  }
+  if (value.kind === 'line' || value.kind === 'ink') {
+    const points = value.points;
+    const count = value.kind === 'line' ? 4 : null;
+    if (!Array.isArray(points) || points.length % 2 || points.length < 4 || points.length > MAX_POINTS * 2
+      || (count && points.length !== count) || points.some((n) => !Number.isFinite(n) || Math.abs(n) > DRAWING_MAX)) {
+      err([...p, 'points'], value.kind === 'line'
+        ? 'A line needs "points: [x1, y1, x2, y2]" relative to its position.'
+        : `A pen stroke needs "points:" as x, y pairs relative to its position (2 to ${MAX_POINTS} points).`);
+    } else style.points = points;
+  }
+  return style;
 }
 
 // A deliberately bounded Markdown subset. Unmatched markup and raw HTML stay

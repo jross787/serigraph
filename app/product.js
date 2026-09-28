@@ -350,6 +350,12 @@ export function mapMarkdown(model) {
   const visit = (scope, scopeName) => {
     sections.push(`### ${mdText(scopeName)}`);
     for (const annotation of scope.annotations ?? []) {
+      // Drawings explain the board; only a boundary's name or a shape's
+      // label carries words worth exporting.
+      if (annotation.kind !== 'note' && annotation.kind !== 'text') {
+        if (annotation.markdown) sections.push(`#### ${annotation.kind === 'boundary' ? 'Boundary' : 'Shape label'}: ${mdText(annotation.markdown)}`);
+        continue;
+      }
       // Use a fenced source block: opening a Markdown export must not turn
       // literal annotation image/HTML syntax into active remote resources.
       const fence = '`'.repeat(Math.max(3, ...[...annotation.markdown.matchAll(/`+/g)].map(match => match[0].length + 1)));
