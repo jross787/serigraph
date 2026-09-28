@@ -65,11 +65,14 @@ async function git(cwd, args) {
   return stdout.trim();
 }
 
-// launchd agents do not inherit a shell PATH. Point them at a node path that
-// survives Homebrew upgrades instead of a versioned Cellar path.
+// launchd agents do not inherit a shell PATH. Use the node that runs this
+// installer, through Homebrew's per-formula link so an upgrade that removes
+// the versioned Cellar folder does not break the agents.
 function stableNode() {
-  for (const candidate of ['/opt/homebrew/bin/node', '/usr/local/bin/node']) {
-    if (existsSync(candidate)) return candidate;
+  const cellar = process.execPath.match(/^(.*)\/Cellar\/([^/]+)\/[^/]+\/bin\/node$/);
+  if (cellar) {
+    const linked = path.join(cellar[1], 'opt', cellar[2], 'bin', 'node');
+    if (existsSync(linked)) return linked;
   }
   return process.execPath;
 }
@@ -99,7 +102,14 @@ async function loadAgent(label, contents) {
   await fs.mkdir(AGENTS, { recursive: true });
   await fs.writeFile(file, contents);
   await exec('launchctl', ['bootout', `${domain()}/${label}`]).catch(() => {});
-  await exec('launchctl', ['bootstrap', domain(), file]);
+  // launchd can still be stopping the old copy right after bootout.
+  for (let attempt = 1; ; attempt++) {
+    try { await exec('launchctl', ['bootstrap', domain(), file]); return; }
+    catch (error) {
+      if (attempt >= 10) throw new Error(`Could not start ${label}: ${error.stderr?.trim() || error.message}`);
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  }
 }
 
 async function computerName() {
