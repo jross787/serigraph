@@ -52,11 +52,55 @@ export async function serverReconnected() {
   toast('Serigraph was updated. Finish this edit, then reload to use the new version.', true);
 }
 
+const nativeHost = () => window.webkit?.messageHandlers?.serigraph ?? null;
+const DISMISSED_KEY = 'serigraph-update-later';
+const whatsNew = (update) => update?.subjects?.length
+  ? update.subjects[0] + (update.behind > 1 ? ` and ${update.behind - 1} more change${update.behind === 2 ? '' : 's'}` : '')
+  : `${update?.behind ?? 1} change${update?.behind === 1 ? '' : 's'} from GitHub`;
+
 function paintIndicator() {
   const button = document.getElementById('btn-update-available');
-  if (!button) return;
-  button.hidden = !latest?.enabled || latest.status !== 'available';
-  button.title = latest?.target ? `Serigraph ${latest.target.slice(0, 8)} is available. Review before installing.` : 'Review the available Serigraph update';
+  const available = !!latest?.enabled && latest.status === 'available';
+  if (button) {
+    button.hidden = !available;
+    button.title = latest?.target ? `A new version of Serigraph is ready: ${whatsNew(latest)}` : 'Review the available Serigraph update';
+  }
+  paintNotice(available);
+  // The Mac app badges its Dock icon and posts a notification once per
+  // version, and offers a restart when the app itself was rebuilt.
+  const host = nativeHost();
+  if (host) {
+    host.postMessage(available
+      ? { type: 'update-available', target: latest.target, title: 'Serigraph update available', body: whatsNew(latest) }
+      : { type: 'update-cleared' });
+    if (latest?.appHash) host.postMessage({ type: 'app-version', hash: latest.appHash });
+  }
+}
+
+// A small card at the bottom of the window: what changed, Update Now, and
+// Later, which hides it for this version until the app is opened again.
+function paintNotice(available) {
+  let notice = document.getElementById('update-notice');
+  let later = null;
+  try { later = sessionStorage.getItem(DISMISSED_KEY); } catch { /* storage blocked */ }
+  const show = available && later !== latest.target && !state.updateApplying && !panel;
+  if (!show) { if (notice) notice.hidden = true; return; }
+  if (!notice) {
+    notice = document.createElement('aside');
+    notice.id = 'update-notice';
+    notice.setAttribute('role', 'status');
+    notice.innerHTML = `<div class="update-notice-text"><strong>A new version of Serigraph is ready</strong><span data-update-summary></span></div>
+      <button type="button" class="d-btn" data-update-later>Later</button>
+      <button type="button" class="d-btn primary" data-update-now>Update Now</button>`;
+    notice.querySelector('[data-update-later]').addEventListener('click', () => {
+      try { sessionStorage.setItem(DISMISSED_KEY, latest?.target ?? ''); } catch { /* storage blocked */ }
+      notice.hidden = true;
+    });
+    notice.querySelector('[data-update-now]').addEventListener('click', () => { notice.hidden = true; openPanel({ install: true }); });
+    document.body.append(notice);
+  }
+  notice.querySelector('[data-update-summary]').textContent = whatsNew(latest);
+  notice.hidden = false;
 }
 
 async function check(force = false) {
@@ -85,7 +129,21 @@ function renderPanel() {
     : latest?.status === 'available' ? 'Update available'
       : latest?.status === 'current' ? 'You’re up to date'
         : latest?.message || 'Check for a newer version of Serigraph.';
-  if (latest?.managed) panel.querySelector('[data-update-schedule]').textContent = 'This Mac installs updates from GitHub automatically every hour and reloads open windows. Check now installs one sooner.';
+  if (latest?.managed) {
+    panel.querySelector('[data-update-schedule]').textContent = latest.mode === 'auto'
+      ? 'This Mac installs updates from GitHub automatically every hour and reloads open windows.'
+      : 'This Mac checks GitHub every hour and tells you when an update is ready. Nothing installs until you choose Update & restart.';
+    const auto = panel.querySelector('[data-update-auto]');
+    auto.hidden = false;
+    auto.querySelector('input').checked = latest.mode === 'auto';
+  }
+  const changes = panel.querySelector('[data-update-changes]');
+  changes.replaceChildren(...(latest?.status === 'available' ? latest.subjects ?? [] : []).map((subject) => {
+    const item = document.createElement('li');
+    item.textContent = subject;
+    return item;
+  }));
+  changes.hidden = !changes.children.length;
   panel.querySelector('[data-update-version]').textContent = [
     `Running: ${latest?.running?.slice(0, 8) || 'unknown'}`,
     latest?.target ? `Available: ${latest.target.slice(0, 8)} · ${latest.remote}/${latest.branch}` : '',
@@ -137,7 +195,7 @@ async function install() {
   }
 }
 
-function openPanel() {
+function openPanel({ install: installNow = false } = {}) {
   if (state.standalone || panel) return;
   if (document.querySelector('#dialog-root .dialog')) { toast('Finish the open dialog first.'); return; }
   panel = document.createElement('dialog');
@@ -147,7 +205,9 @@ function openPanel() {
   // Static markup only; versions and server messages always use textContent.
   panel.innerHTML = `<h2 id="update-title">App updates</h2>
     <p data-update-status role="status" aria-live="polite"></p>
+    <ul class="update-changes" data-update-changes hidden></ul>
     <p class="update-version" data-update-version></p>
+    <label class="bug-check update-auto" data-update-auto hidden><input type="checkbox"> Install updates automatically on this Mac</label>
     <p class="hint" data-update-schedule>Checks run on opening the app and hourly while it is visible. They contact the configured Git remote, not your mapped systems. Nothing installs automatically.</p>
     <p class="hint">Update &amp; restart installs the revision shown above, briefly restarts this local server, and reloads this tab. Finish drafts, sync, and AI/agent work; close other Serigraph tabs first. Local map files and configuration are protected. No automatic rollback.</p>
     <p class="dialog-error" data-update-blocker></p>
@@ -159,12 +219,20 @@ function openPanel() {
   panel.querySelector('[data-update-close]').addEventListener('click', () => panel.close());
   panel.querySelector('[data-update-check]').addEventListener('click', () => check(true));
   panel.querySelector('[data-update-apply]').addEventListener('click', install);
+  panel.querySelector('[data-update-auto] input').addEventListener('change', async (event) => {
+    try { latest = await api.updateAction('mode', latest.token, { mode: event.target.checked ? 'auto' : 'ask' }); }
+    catch (error) { toast(error.message, true); }
+    renderPanel();
+  });
   panel.addEventListener('cancel', event => { if (state.updateApplying) event.preventDefault(); });
-  panel.addEventListener('close', () => { panel.remove(); panel = null; });
+  panel.addEventListener('close', () => { panel.remove(); panel = null; paintIndicator(); });
   document.getElementById('dialog-root').append(panel);
   panel.showModal();
   renderPanel();
-  check();
+  paintNotice(false);
+  // Update Now from the notice installs straight away when nothing blocks it.
+  if (installNow && latest?.status === 'available' && !maintenanceBlocker()) install();
+  else check();
 }
 
 export function initUpdates() {
@@ -196,5 +264,6 @@ export function initUpdates() {
   }, true);
   check();
   setInterval(() => { if (document.visibilityState === 'visible') check(); }, 60_000);
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(Date.now() - (latest?.checkedAt ?? 0) > 10 * 60_000); });
+  bus.on('app-updated', (event) => { latest = { ...latest, appHash: event.appHash }; paintIndicator(); });
 }

@@ -777,3 +777,25 @@ test('shared systems live in the library file and report which maps use them', a
   assert.equal((await api('PUT', '/api/systems', {label: '  '})).status, 400);
   assert.equal((await api('DELETE', '/api/systems/missing')).status, 400);
 });
+
+test('a save based on an older version combines with a newer one when they touch different lines', async () => {
+  const base = 'name: Merge Synthetic\nnodes:\n  - id: a\n    type: process\n    label: Alpha\n  - id: b\n    type: process\n    label: Beta\n';
+  mkdirSync(path.join(work, 'maps'), {recursive: true});
+  writeFileSync(path.join(work, 'maps', 'merge-synthetic.yaml'), base);
+  const opened = JSON.parse((await raw({p: '/api/maps/merge-synthetic'})).body);
+  // Someone else's newer version arrives through the shared folder.
+  const theirs = base.replace('label: Beta', 'label: Beta from a colleague');
+  writeFileSync(path.join(work, 'maps', 'merge-synthetic.yaml'), theirs);
+  const mine = base.replace('label: Alpha', 'label: Alpha from me');
+  const combined = await api('PUT', '/api/maps/merge-synthetic', {source: mine, base}, {'If-Match': opened.etag});
+  assert.equal(combined.status, 200, combined.body);
+  const result = JSON.parse(combined.body);
+  assert.equal(result.merged, true);
+  assert.match(result.source, /Alpha from me/);
+  assert.match(result.source, /Beta from a colleague/);
+  assert.equal(readFileSync(path.join(work, 'maps', 'merge-synthetic.yaml'), 'utf8'), result.source);
+  // The same line changed on both sides, or no starting version: a person chooses.
+  const clash = await api('PUT', '/api/maps/merge-synthetic', {source: mine.replace('label: Beta', 'label: Beta from me'), base: mine}, {'If-Match': opened.etag});
+  assert.equal(clash.status, 409);
+  assert.equal((await api('PUT', '/api/maps/merge-synthetic', {source: mine}, {'If-Match': opened.etag})).status, 409);
+});

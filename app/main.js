@@ -17,6 +17,7 @@ import { initUpdates, maintenanceBlocker, serverReconnected } from './updates.js
 import { bugReportDialog } from './bug-report.js';
 import { libraryLocationDialog } from './library-location.js';
 import { initNativeBridge, isNativeMac, openFile } from './library-links.js';
+import { initPresence } from './presence.js';
 import { initBoardGestures } from './board.js';
 
 // ── theme ────────────────────────────────────────────────────────────
@@ -503,6 +504,7 @@ async function boot() {
   }
   await Promise.all([ctrl.loadProjects(), ctrl.loadTrash(), ctrl.loadRecents(), ctrl.loadSystems()]);
   initNativeBridge();
+  initPresence();
 
   const route = ctrl.readHash();
   let mapId = route.mapId && state.maps.some((m) => m.id === route.mapId) ? route.mapId : null;
@@ -530,6 +532,7 @@ async function boot() {
       if (event.type === 'maps-changed') await ctrl.handleRemoteChange(event.ids ?? []);
       if (event.type === 'templates-changed') await ctrl.loadTemplates();
       if (event.type === 'recents-changed') await ctrl.loadRecents();
+      if (event.type === 'app-updated') bus.emit('app-updated', event);
       // Shared systems, and which maps use them, follow edits anywhere.
       if (event.type === 'systems-changed' || event.type === 'maps-changed' || event.type === 'library-changed') {
         clearTimeout(systemsRefresh);

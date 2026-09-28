@@ -38,8 +38,8 @@ That sets up five things:
 1. **Its own copy of the engine** in `~/Library/Application Support/Serigraph/engine`,
    always on `main`. A development clone is never the app you use.
 2. **A background server** at `http://127.0.0.1:4747` that starts at login and restarts if it stops.
-3. **Automatic updates** from GitHub every hour. Open windows reload onto the new version,
-   unless you are in the middle of an edit.
+3. **Update notices** from GitHub, with an Update Now button, or automatic updates if
+   you choose them. Open windows reload onto the new version.
 4. **Serigraph.app** in `~/Applications`, with standard Mac menus, File → Open, Open Recent,
    and Finder's Open With. It is a small native window, not a browser tab.
 5. **One library folder**, `Serigraph` in that Google Drive account's My Drive. Every Mac
@@ -49,6 +49,23 @@ AI provider keys stay in `~/Library/Application Support/Serigraph/.env` on each 
 never enter the shared library; `--env-from <file>` copies an existing `.env` once. Run
 `node tools/serigraph.mjs status` to see a Mac's setup, and run install again at any time;
 it keeps the library and settings.
+
+**Updates.** Each Mac checks GitHub every hour and when you come back to the app. When
+a new version is out, a card at the bottom of the window says what changed, with
+**Update Now** and **Later**, and the Mac app badges its Dock icon and posts one Mac
+notification. Update Now installs the version and reloads the window; if the update changed
+the Mac app itself, Serigraph offers to restart. In **More actions → App updates**, turn on
+**Install updates automatically** to skip the question on a Mac; install a server-only Mac
+with `--auto-updates`.
+
+**Working with someone.** Keep a map, or its project folder, in a Google Drive folder and share
+that folder in Google Drive. The other person adds it to their Drive with **Add shortcut to
+Drive**, installs Serigraph, and opens it with **File → Open…**. When you both edit, Serigraph
+combines changes to different parts of the map; only edits to the same lines ask which version
+to keep. People with the map open appear as initials beside its name, with a blue ring while
+they edit. Their small "I'm here" records live in a hidden `.serigraph-presence` folder next to
+the map, only for maps in cloud folders. **Share → Work on it together** repeats these steps and
+shows the file in Finder.
 
 To reach the library from other devices through a reverse proxy such as Caddy on one Mac,
 add `--allowed-host <name>` and point the proxy at `127.0.0.1:4747`. That name is shared

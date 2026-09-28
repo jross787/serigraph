@@ -69,11 +69,16 @@ let saveConflictPending = false;
 // when a second edit lands while the first save's echo is still in flight.
 let lastSavedSource = '';
 
+// The version this tab last saw on disk: the one its stored etag names.
+// Sending it with a save lets the server combine this edit with a newer one
+// that arrived from someone else in the meantime.
+let diskSource = '';
+
 async function saveMapSource(source) {
   setSaveStatus('saving');
   let result;
   try {
-    result = await api.saveMap(state.mapId, source);
+    result = await api.saveMap(state.mapId, source, diskSource);
   } catch (error) {
     if (error.status === 409) {
       // Not written: the file changed on disk and the save-conflict dialog
@@ -89,8 +94,17 @@ async function saveMapSource(source) {
   // A clean write ends any pending conflict: the buffer that just saved is
   // now the disk truth, so remote-change adoption may resume.
   saveConflictPending = false;
-  lastSavedSource = source;
+  lastSavedSource = diskSource = result?.merged ? result.source : source;
   setSaveStatus('saved');
+  if (result?.merged) {
+    // Someone else's newer change is now part of this map. Undo would
+    // silently remove it again, so this map's undo history starts over.
+    adoptSource(result.source);
+    state.undoStack = [];
+    state.redoStack = [];
+    refreshView();
+    bus.emit('toast', 'Saved together with a newer change from someone else');
+  }
   return result;
 }
 
@@ -176,6 +190,7 @@ export async function openMap(mapId, { nodeId = null, inId = null, replace = fal
     return followMoved(payload.movedTo, { nodeId, inId });
   }
   const { source } = payload;
+  diskSource = source;
   if (mapChanged) canvas.resetScopeCameras();
   if (mapChanged && !state.standalone) api.recordRecent(mapId).catch(() => {});
   state.mapId = mapId;
@@ -548,12 +563,14 @@ export async function handleRemoteChange(ids) {
   if (payload.source === state.source || payload.source === lastSavedSource) return; // our own write echoed back
 
   lastAncestry = state.scopeId && state.model ? ancestryOf(state.model, state.scopeId) : [];
+  diskSource = payload.source;
   adoptSource(payload.source);
   state.undoStack = [];
   state.redoStack = [];
   setSaveStatus(state.model ? 'saved' : 'error', state.model ? '' : 'Map file has errors');
   refreshView();
-  bus.emit('toast', state.model ? 'Map updated from file' : 'Map file has errors — see details', !state.model);
+  const by = state.collaborators?.find((person) => person.editing);
+  bus.emit('toast', !state.model ? 'Map file has errors — see details' : by ? `${by.person} updated this map` : 'Map updated from file', !state.model);
 }
 
 // ── save conflicts ───────────────────────────────────────────────────
@@ -598,6 +615,7 @@ export async function loadSavedFile() {
   }
   saveConflictPending = false;
   lastAncestry = state.scopeId && state.model ? ancestryOf(state.model, state.scopeId) : [];
+  diskSource = payload.source;
   adoptSource(payload.source);
   state.undoStack = [];
   state.redoStack = [];
