@@ -20,10 +20,20 @@ import { initNativeBridge, isNativeMac, openFile } from './library-links.js';
 import { initBoardGestures } from './board.js';
 
 // ── theme ────────────────────────────────────────────────────────────
+// Automatic follows the Mac's Light or Dark appearance, live. The page itself
+// only ever renders the light or dark palette.
 function initTheme() {
-  let saved = null;
-  try { saved = localStorage.getItem('opsmap-theme'); } catch { /* file/sandbox viewers may deny storage */ }
-  document.documentElement.dataset.theme = ['frost', 'light', 'dark', 'glass'].includes(saved) ? saved : 'frost';
+  const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+  const apply = () => {
+    let saved = document.documentElement.dataset.appearance;
+    try { saved = localStorage.getItem('opsmap-theme') ?? saved; } catch { /* file/sandbox viewers may deny storage */ }
+    const choice = ['light', 'dark'].includes(saved) ? saved : 'system';
+    document.documentElement.dataset.appearance = choice;
+    document.documentElement.dataset.theme = choice === 'system' ? (media?.matches ? 'dark' : 'light') : choice;
+  };
+  apply();
+  media?.addEventListener('change', apply);
+  window.addEventListener('serigraph-appearance', apply);
 }
 
 // ── canvas event wiring ──────────────────────────────────────────────
@@ -101,6 +111,15 @@ function wireCanvasEvents() {
     ctrl.commit(
       () => edit.setNodePosition(id, pos),
       { historyLabel: `move “${state.model?.byId.get(id)?.label ?? id}”` },
+    )
+      .then((ok) => { if (!ok) canvas.refreshScope(state.model); });
+  });
+
+  bus.on('nodes-moved', (positions) => {
+    if (state.presenting || state.standalone) return;
+    ctrl.commit(
+      () => { for (const { id, x, y } of positions) edit.setNodePosition(id, { x, y }); },
+      { historyLabel: `move ${positions.length} items` },
     )
       .then((ok) => { if (!ok) canvas.refreshScope(state.model); });
   });
@@ -429,6 +448,14 @@ function wireToolbar() {
   for (const button of document.querySelectorAll('.utility-popover button')) {
     button.addEventListener('click', () => { const menu = button.closest('details'); if (menu) menu.open = false; });
   }
+  // Like any Mac menu: a click elsewhere or Escape closes an open one.
+  document.addEventListener('pointerdown', (ev) => {
+    for (const menu of document.querySelectorAll('details.utility-menu[open], details.view-menu[open]')) if (!menu.contains(ev.target)) menu.open = false;
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    for (const menu of document.querySelectorAll('details.utility-menu[open], details.view-menu[open]')) { menu.open = false; menu.querySelector('summary')?.focus(); }
+  });
   document.querySelector('.logo')?.addEventListener('click', (ev) => {
     ev.preventDefault();
     if (state.presenting) exitPresent();

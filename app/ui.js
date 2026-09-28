@@ -47,18 +47,18 @@ export function mapLanguageDialog() {
 
 export function appearanceDialog() {
   const body = h('div', { class: 'appearance-options' },
-    h('p', { class: 'hint' }, 'Choose the surface that helps you read the map. Your choice stays in this browser.'));
+    h('p', { class: 'hint' }, 'Your choice stays on this computer.'));
   for (const [value, name, description] of [
-    ['frost', 'Frost', 'Warm ivory controls over a deep, opaque canvas.'],
-    ['glass', 'Glass', 'Pearl glass, soft light, and a clear canvas. Apple-inspired; opt in here.'],
-    ['light', 'Paper', 'A quiet light canvas for bright rooms.'],
-    ['dark', 'Night', 'Low-glare charcoal surfaces throughout.'],
+    ['system', 'Automatic', 'Follows your Mac: light during the day, dark when your Mac is in Dark Mode.'],
+    ['light', 'Light', 'White cards on a soft gray canvas.'],
+    ['dark', 'Dark', 'Dark gray surfaces with less glare.'],
   ]) body.append(h('button', {
     class: `appearance-choice appearance-${value}`,
-    'aria-pressed': String(document.documentElement.dataset.theme === value),
+    'aria-pressed': String((document.documentElement.dataset.appearance || 'system') === value),
     onClick: (event) => {
-      document.documentElement.dataset.theme = value;
+      document.documentElement.dataset.appearance = value;
       try { localStorage.setItem('opsmap-theme', value); } catch { /* session choice still works */ }
+      window.dispatchEvent(new Event('serigraph-appearance'));
       body.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', 'false'));
       event.currentTarget.setAttribute('aria-pressed', 'true');
     },

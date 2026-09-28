@@ -29,11 +29,16 @@
       <button id="btn-catalog" class="tb-btn" hidden aria-controls="detail" aria-expanded="false">Data catalog</button>
       <nav id="workspace-switcher" aria-label="Document views">
         <button data-view="map" class="active" aria-pressed="true">Map</button>
-        <button data-view="agents" aria-pressed="false">Agents</button>
-        <button data-view="flow" aria-pressed="false">Flow</button>
-        <button data-view="brief" aria-pressed="false">Brief</button>
-        <button data-view="roadmap" aria-pressed="false">Roadmap</button>
-        <button data-view="audit" aria-pressed="false">Audit</button>
+        <details class="view-menu">
+          <summary class="view-menu-button" title="Other ways to see this map"><span data-view-label>More views</span><svg data-icon="caret-down" width="12" height="12" aria-hidden="true"></svg></summary>
+          <div class="utility-popover view-popover">
+            <button data-view="flow" class="menu-item" aria-pressed="false">Flow <small>3D view of work moving through the map</small></button>
+            <button data-view="brief" class="menu-item" aria-pressed="false">Brief <small>Goals, requirements, and decisions</small></button>
+            <button data-view="roadmap" class="menu-item" aria-pressed="false">Roadmap <small>Now, next, and later</small></button>
+            <button data-view="audit" class="menu-item" aria-pressed="false">Audit <small>Readiness checks</small></button>
+            <button data-view="agents" class="menu-item" aria-pressed="false">Agents <small>Coding agents working on a repo</small></button>
+          </div>
+        </details>
       </nav>
     </div>
     <div class="tb-right">
