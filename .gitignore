@@ -15,3 +15,5 @@ dist/
 .agents/skills/serigraph-mapping-workspace/
 .claude/skills/*
 !.claude/skills/serigraph-mapping
+# the library's shared systems list when the engine checkout is the library
+/systems.yaml

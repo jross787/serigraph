@@ -19,6 +19,7 @@ export const PLAN_PRIORITIES = ['must', 'should', 'could', 'wont'];
 export const HIERARCHY_RELATION_TYPES = ['part-of', 'member-of', 'variant-of'];
 export const RELATION_TYPES = ['informed-by', 'supports', 'satisfies', 'depends-on', 'validated-by', 'measured-by', 'mitigates', 'blocks', 'delivers'];
 export const OWNER_ROLES = ['owner', 'business', 'technical', 'data-steward'];
+export const LIBRARY_ID_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 
 const TYPE_HINTS = {
   step: 'process', stage: 'process', task: 'process', activity: 'process',
@@ -273,6 +274,14 @@ export function parseMap(source) {
         }
       }
 
+      // A shared system from the library this map belongs to, by its id.
+      // The map keeps its own label and details, so it still works alone.
+      let library = '';
+      if (raw.library != null) {
+        if (typeof raw.library === 'string' && LIBRARY_ID_RE.test(raw.library.trim())) library = raw.library.trim();
+        else err([...npath, 'library'], `Node "${id}": "library:" must be the id of a shared system, such as snowflake.`);
+      }
+
       const links = [];
       if (raw.links != null) {
         if (!Array.isArray(raw.links)) {
@@ -452,6 +461,7 @@ export function parseMap(source) {
         sla: typeof raw.sla === 'string' ? raw.sla.trim() : '',
         automation,
         systems,
+        library,
         links,
         position,
         flowPosition,

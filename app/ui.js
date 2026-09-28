@@ -451,6 +451,15 @@ function renderHome() {
   const recentSection = recent.length ? h('section', { class: 'home-recent', 'aria-labelledby': 'home-recent-title' },
     h('h2', { id: 'home-recent-title', class: 'home-section-title' }, 'Recent'),
     h('div', { class: 'recent-row' }, recent)) : null;
+  const systemsSection = !homeFilter && state.systems.length ? h('section', { class: 'home-systems', 'aria-labelledby': 'home-systems-title' },
+    h('h2', { id: 'home-systems-title', class: 'home-section-title' }, 'Systems and tools'),
+    h('div', { class: 'system-row' }, state.systems.map((system) => {
+      const maps = mapsUsing(system).length;
+      return h('button', { class: 'system-chip', title: `${typeLabel(system.type)} · used in ${maps} map${maps === 1 ? '' : 's'}`, onClick: () => systemDialog(system) },
+        h('span', { class: `element-picker-icon t-${system.type}` }, typeIcon(system.type, 14)),
+        h('span', { class: 'system-chip-name' }, system.label),
+        h('span', { class: 'system-chip-count' }, String(maps)));
+    }))) : null;
 
   const body = h('div', { class: 'proj-grid' });
   for (const slug of visibleSlugs) {
@@ -528,7 +537,32 @@ function renderHome() {
       h('p', {}, 'Nothing here yet. Create a project or a map, or open a map file from anywhere on this computer.')));
   }
 
-  host.replaceChildren(head, ...(recentSection ? [recentSection] : []), body);
+  host.replaceChildren(head, ...[recentSection, systemsSection].filter(Boolean), body);
+}
+
+// One shared system: what it is and every map that uses it.
+function systemDialog(system) {
+  const maps = mapsUsing(system);
+  const close = modal(system.label, h('div', { class: 'system-dialog' },
+    h('span', { class: `type-pill t-${system.type}` }, typeIcon(system.type, 12), typeLabel(system.type)),
+    system.description ? h('p', {}, system.description) : null,
+    h('h3', { class: 'home-section-title' }, maps.length ? `Used in ${maps.length} map${maps.length === 1 ? '' : 's'}` : 'Not used in any map yet'),
+    h('div', { class: 'library-uses' }, maps.map((use) => h('button', {
+      class: 'connection-target',
+      onClick: () => { close?.(); ctrl.openMap(use.mapId, { nodeId: use.nodeId }); },
+    }, use.mapName))),
+    h('p', { class: 'hint' }, 'Add it to another map from Add: start typing its name.')), [
+    {
+      label: 'Remove from library',
+      danger: true,
+      onClick: async () => {
+        try { await api.deleteSystem(system.id); } catch (error) { toast(error.message, true); return; }
+        await ctrl.loadSystems();
+        toast(`Removed “${system.label}” from your library. Maps keep their own copies.`);
+      },
+    },
+    { label: 'Done', primary: true },
+  ]);
 }
 
 function newProjectDialog() {
@@ -757,6 +791,7 @@ function typeSegment(initial, types = activeNodeTypes()) {
     seg.append(b);
   }
   seg.value = () => value;
+  seg.set = (t) => seg.querySelector(`button.t-${t}`)?.click();
   return seg;
 }
 
@@ -876,8 +911,13 @@ function addElementDialog(ownerId, options = {}) {
         || element.label.toLowerCase().includes(query)
         || element.id.toLowerCase().includes(query)
         || typeLabel(element.type).toLowerCase().includes(query));
+    // Library systems not yet in this map can be added in one step.
+    const inMap = new Set(state.model.elements.map((element) => element.library).filter(Boolean));
+    const shared = state.systems
+      .filter((system) => !inMap.has(system.id) && FREEFORM_NODE_TYPES.includes(system.type))
+      .filter((system) => !query || system.label.toLowerCase().includes(query) || typeLabel(system.type).toLowerCase().includes(query));
     list.replaceChildren();
-    if (!available.length) {
+    if (!available.length && !shared.length) {
       list.append(h('p', { class: 'element-picker-empty' },
         query ? 'No matching shared elements.' : 'Every shared element is already in this group.'));
       return;
@@ -891,6 +931,30 @@ function addElementDialog(ownerId, options = {}) {
       h('span', { class: `element-picker-icon t-${element.type}` }, typeIcon(element.type, 15)),
       h('span', { class: 'element-picker-name' }, element.label),
       h('span', { class: 'element-picker-meta' }, `${typeLabel(element.type)} · ${count} placement${count === 1 ? '' : 's'}`)));
+    }
+    if (shared.length) list.append(h('p', { class: 'element-picker-group' }, 'From your library'));
+    for (const system of shared) {
+      const maps = mapsUsing(system).length;
+      list.append(h('button', {
+        class: 'element-picker-row',
+        onClick: () => {
+          const id = edit.uniqueId(state.model, system.id);
+          close?.();
+          ctrl.commit(() => {
+            edit.addElement({ id, type: system.type, label: system.label, description: system.description, library: system.id });
+            edit.addPlacement(ownerId, id, { position });
+          }, { select: id }).then(async (ok) => {
+            if (!ok) return;
+            if (ownerId !== state.scopeId) await ctrl.gotoScope(ownerId, { focusId: id });
+            else canvas.centerOn(id);
+            showDetail(id);
+            toast(`Added “${system.label}” from your library`);
+          });
+        },
+      },
+      h('span', { class: `element-picker-icon t-${system.type}` }, typeIcon(system.type, 15)),
+      h('span', { class: 'element-picker-name' }, system.label),
+      h('span', { class: 'element-picker-meta' }, `${typeLabel(system.type)} · in ${maps} map${maps === 1 ? '' : 's'}`)));
     }
   };
   search.addEventListener('input', renderList);
@@ -965,14 +1029,32 @@ export function addNodeDialog(ownerId, options = {}) {
   const defaultType = addingGroup ? 'item' : 'process';
   const type = typeof options === 'string' ? options : options?.type ?? defaultType;
   const ownerLabel = ownerId ? state.model.byId.get(ownerId)?.label : state.model?.name;
+  const suggestions = addingGroup ? null : h('datalist', { id: `library-systems-${Date.now()}` },
+    state.systems.map((system) => h('option', { value: system.label }, `${typeLabel(system.type)} from your library`)));
   const label = h('input', {
     class: 'f-input',
     placeholder: addingGroup ? 'e.g. Service operations' : `e.g. ${NODE_VISUALS[type]?.example || 'Review request'}`,
+    ...(suggestions ? { list: suggestions.id, autocomplete: 'off' } : {}),
   });
   const seg = typeSegment(addingGroup ? 'item' : NODE_TYPES.includes(type) ? type : defaultType);
   const desc = h('textarea', {
     class: 'f-textarea',
     placeholder: addingGroup ? 'What belongs in this group?' : 'What happens here? (optional)',
+  });
+  // Typing a shared system's name reuses it: its type and description fill
+  // in, and the new card stays linked to the library entry.
+  const libraryHint = h('p', { class: 'hint library-hint' });
+  libraryHint.hidden = true;
+  let fromLibrary = null;
+  label.addEventListener('input', () => {
+    const match = addingGroup ? null : findLibraryByLabel(label.value);
+    if (match && match !== fromLibrary) {
+      seg.set?.(match.type);
+      if (!desc.value.trim() || desc.value === fromLibrary?.description) desc.value = match.description || '';
+    }
+    fromLibrary = match;
+    libraryHint.hidden = !match;
+    libraryHint.textContent = match ? `From your library: ${match.label}. It stays linked to your other maps.` : '';
   });
   const owner = h('input', { class: 'f-input', placeholder: 'e.g. RevOps' });
   const automation = addingGroup ? null : automationSelect('');
@@ -1000,7 +1082,7 @@ export function addNodeDialog(ownerId, options = {}) {
   syncPlanningFields();
 
   const body = h('div', {},
-    h('div', { class: 'f-field' }, h('label', {}, addingGroup ? 'Group name' : 'Label'), label),
+    h('div', { class: 'f-field' }, h('label', {}, addingGroup ? 'Group name' : 'Label'), label, suggestions, libraryHint),
     addingGroup ? null : h('div', { class: 'f-field' }, h('label', {}, 'What does it represent?'), seg),
     addingGroup ? null : h('div', { class: 'form-row' },
       h('div', { class: 'f-field' }, h('label', {}, 'Owner'), owner),
@@ -1019,14 +1101,17 @@ export function addNodeDialog(ownerId, options = {}) {
       label: addingGroup ? 'Add group' : 'Add to map',
       primary: true,
       onClick: () => {
-        const text = label.value.trim();
-        if (!text) { label.focus(); return false; }
+        const typed = label.value.trim();
+        if (!typed) { label.focus(); return false; }
+        const shared = fromLibrary && findLibraryByLabel(typed) === fromLibrary ? fromLibrary : null;
+        const text = shared ? shared.label : typed;
         const id = edit.uniqueId(state.model, edit.slugify(text));
         ctrl.commit(() => edit.addNode(ownerId, {
           id,
           type: seg.value(),
           label: text,
           description: desc.value,
+          library: shared?.id,
           owner: addingGroup ? undefined : owner.value,
           automation: automation?.value,
           planning: productMode && planningEnabled.checked ? {
@@ -1704,6 +1789,57 @@ function inspectorSection(key, title, ...children) {
     h('div', { class: 'inspector-section-body' }, ...children));
 }
 
+// ── shared systems ──────────────────────────────────────────────────
+// One library-wide entry for a system or tool (Snowflake, GitHub, a team)
+// that any map can reuse. Each map keeps its own copy of the details and
+// points at the entry with `library:`, so it still works on its own.
+const LIBRARY_TYPES = ['system', 'database', 'api', 'role', 'artifact', 'item'];
+const librarySystem = (id) => (id ? state.systems.find((entry) => entry.id === id) : null);
+const findLibraryByLabel = (label) => {
+  const wanted = String(label).trim().toLowerCase();
+  return wanted ? state.systems.find((entry) => entry.label.toLowerCase() === wanted) : null;
+};
+function mapsUsing(system) {
+  const seen = new Map();
+  for (const use of system?.uses ?? []) if (!seen.has(use.mapId)) seen.set(use.mapId, use);
+  return [...seen.values()];
+}
+
+async function addToLibrary(node) {
+  let saved;
+  try {
+    saved = await api.saveSystem({ id: node.library || undefined, label: node.label, type: node.type, description: node.description });
+  } catch (error) { toast(`Couldn't update the library: ${error.message}`, true); return; }
+  if (node.library !== saved.id) await ctrl.commit(() => edit.updateNode(node.id, { library: saved.id }), { historyLabel: `share “${node.label}”` });
+  await ctrl.loadSystems();
+  renderDetail();
+  toast(node.library ? `Updated “${saved.label}” in your library` : `Added “${saved.label}” to your library. Add it to any map from Add.`);
+}
+
+function librarySection(node) {
+  if (state.standalone || node.children || !LIBRARY_TYPES.includes(node.type)) return null;
+  const system = librarySystem(node.library);
+  const maps = mapsUsing(system);
+  const content = [];
+  if (system) {
+    content.push(h('p', { class: 'field-help' }, `In your library as “${system.label}” · used in ${maps.length} map${maps.length === 1 ? '' : 's'}.`));
+    const elsewhere = maps.filter((use) => use.mapId !== state.mapId);
+    if (elsewhere.length) content.push(h('div', { class: 'library-uses' }, elsewhere.slice(0, 8).map((use) =>
+      h('button', { class: 'connection-target', title: 'Open that map at this system', onClick: () => ctrl.openMap(use.mapId, { nodeId: use.nodeId }) }, use.mapName))));
+    const differs = system.label !== node.label || system.type !== node.type || (system.description || '') !== (node.description || '');
+    if (differs) content.push(h('p', { class: 'field-help' }, 'This map’s copy differs from your library.'),
+      h('div', { class: 'library-actions' },
+        h('button', { class: 'pa-btn', onClick: () => ctrl.commit(() => edit.updateNode(node.id, { label: system.label, type: system.type, description: system.description }), { historyLabel: `use library details for “${system.label}”` }) }, 'Use library version'),
+        h('button', { class: 'pa-btn', onClick: () => addToLibrary(node) }, 'Update library')));
+  } else {
+    content.push(h('p', { class: 'field-help' }, node.library
+      ? 'This points to a shared system that isn’t in this library.'
+      : `Keep one ${node.label} for every map. Add it to your library, then pick it from Add in any map.`),
+      h('button', { class: 'pa-btn', onClick: () => addToLibrary(node) }, icon('plus', 14), ' Add to library'));
+  }
+  return inspectorSection('library', system ? `Shared system · ${maps.length} map${maps.length === 1 ? '' : 's'}` : 'Shared system', ...content);
+}
+
 function renderDetail() {
   // An explicit inspector action supersedes the delayed single-click open.
   // Otherwise that pending render can replace a newly opened outcome draft.
@@ -1803,6 +1939,8 @@ function renderDetail() {
         node.description
           ? linkifiedDesc(node.description)
           : h('div', { class: 'desc placeholder' }, ro ? 'No description.' : isWorkNode(node) ? 'Describe what happens here.' : 'Describe this element.'))));
+    const shared = librarySection(node);
+    if (shared) body.append(shared);
     const facts = inspectorSection('details', freeform ? 'Element details' : node.planning ? 'Planning details' : 'Details',
       freeform
         ? h('div', { class: 'focus-facts' },
@@ -3210,6 +3348,7 @@ export function initUI() {
   bus.on('projects-listed', () => { if (!state.mapId) renderHome(); });
   bus.on('trash-listed', () => { if (!state.mapId) renderHome(); });
   bus.on('recents-listed', () => { if (!state.mapId) renderHome(); });
+  bus.on('systems-listed', () => { if (!state.mapId) renderHome(); else if (state.detailNodeId && !editMode) renderDetail(); });
   bus.on('templates-loaded', () => {
     if (!document.getElementById('templates-panel').hidden) renderTemplates();
   });

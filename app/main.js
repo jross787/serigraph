@@ -473,6 +473,7 @@ function wireToolbar() {
 }
 
 // ── boot ─────────────────────────────────────────────────────────────
+let systemsRefresh = 0;
 async function boot() {
   // Keep a pristine copy before rendering or wiring controls. Serializing the
   // live UI later would include transient dialogs and duplicate rendered nodes.
@@ -500,7 +501,7 @@ async function boot() {
     ui.toast('Could not reach the Serigraph server: ' + e.message, true);
     return;
   }
-  await Promise.all([ctrl.loadProjects(), ctrl.loadTrash(), ctrl.loadRecents()]);
+  await Promise.all([ctrl.loadProjects(), ctrl.loadTrash(), ctrl.loadRecents(), ctrl.loadSystems()]);
   initNativeBridge();
 
   const route = ctrl.readHash();
@@ -529,6 +530,11 @@ async function boot() {
       if (event.type === 'maps-changed') await ctrl.handleRemoteChange(event.ids ?? []);
       if (event.type === 'templates-changed') await ctrl.loadTemplates();
       if (event.type === 'recents-changed') await ctrl.loadRecents();
+      // Shared systems, and which maps use them, follow edits anywhere.
+      if (event.type === 'systems-changed' || event.type === 'maps-changed' || event.type === 'library-changed') {
+        clearTimeout(systemsRefresh);
+        systemsRefresh = setTimeout(() => ctrl.loadSystems(), 250);
+      }
       if (event.type === 'agents-changed') await refreshAgents();
       if (event.type === 'library-changed') {
         const openId = state.mapId;
