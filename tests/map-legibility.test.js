@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sizeNode, routeParallelEdges, routeDirect, placeEdgeLabels, edgeLabelBubble } from '../app/layout.js';
+import { sizeNode, routeParallelEdges, routeDirect, placeEdgeLabels, edgeLabelBubble, cardLayout } from '../app/layout.js';
 import { connectionsOf } from '../shared/connections.js';
 import { parseMap } from '../shared/model.js';
 import { bugReportDraft } from '../app/bug-report.js';
@@ -8,12 +8,12 @@ import { bugReportDraft } from '../app/bug-report.js';
 const width = text => String(text).length * 7.2;
 globalThis.document = { createElement: () => ({ getContext: () => ({ measureText: text => ({ width: width(text) }) }) }) };
 
-test('decision labels fit the sloped shape at the rendered font, including long unbroken names', () => {
-  for (const label of ['Approve claim level rules', 'A very long question about which approval rules should apply?', 'AnUnbrokenIdentifierThatWouldOtherwiseOverflow']) {
+test('decision labels keep every word and fit the sloped shape, which grows for long questions', () => {
+  for (const label of ['Approve claim level rules', 'A very long question about which approval rules should apply?', 'AnUnbrokenIdentifierThatWouldOtherwiseOverflow',
+    'Does the payer accept this claim as submitted, or does it need corrected codes, a new attachment, or a call to the provider first?']) {
     const node = sizeNode({ type: 'decision', label });
-    assert.equal(node.w, 176);
-    assert.equal(node.h, 120);
-    assert.ok(node.lines.length <= 3);
+    assert.ok(node.w >= 176 && node.h >= 120);
+    assert.equal(node.lines.join('').replace(/\s+/g, ''), label.replace(/\s+/g, ''), 'no word is cut off');
     node.lines.forEach((line, index) => {
       const baseline = (node.h - node.lines.length * 17) / 2 + 13 + index * 17;
       const outerY = Math.max(Math.abs(baseline - 13 - node.h/2), Math.abs(baseline + 3 - node.h/2));
@@ -90,4 +90,18 @@ test('bug reports hand off only explicitly entered content and safe diagnostics 
   assert.match(report.body, /Attach the 2 reviewed photos/);
   assert.doesNotMatch(report.body, /localhost|\/Users\/|source:|token|data:image/);
   assert.equal(new URL(report.url).searchParams.get('body'), report.body);
+});
+
+test('cards grow to show their whole name and description, and keep a chosen width', () => {
+  const description = 'Collect the intake form, check the insurance card, and confirm the referral.\n\nThen https://example.test/a/really/long/path/that/cannot/wrap/at/spaces goes in the note.';
+  const card = cardLayout({ label: 'Verify the new patient before the first visit', description });
+  assert.equal(card.w, 200);
+  assert.ok(card.h > 64, 'a long description makes the card taller');
+  assert.equal(card.desc.join('').replace(/\s+/g, ''), description.replace(/\s+/g, ''), 'every word and the link stay visible');
+  assert.ok(card.desc.includes(''), 'a blank line between paragraphs is kept');
+  assert.equal(cardLayout({ label: 'Short' }).h, 64, 'a short card keeps the standard size');
+  const wide = cardLayout({ label: 'Verify the new patient before the first visit', description }, 480);
+  assert.equal(wide.w, 480);
+  assert.ok(wide.h < card.h, 'a wider card needs fewer lines');
+  assert.equal(cardLayout({ label: 'x' }, 9999).w, 720);
 });

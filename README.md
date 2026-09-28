@@ -183,14 +183,15 @@ upload photos, store a GitHub token, or publish an issue automatically. This use
 GitHub's [prefilled issue workflow](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-an-issue)
 and [native attachments](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/attaching-files).
 
-## Process maps and Freeform maps
+## One kind of map
 
-Choose a mode when you create a map:
-
-- **Process** maps work from step to step. They include decisions, owner lanes, path tracing, automation, cost, Flow, Brief, Roadmap, and Audit.
-- **Freeform** maps systems, databases, APIs, people, documents, and other items. One shared element can appear in several groups without copying its facts.
-
-Files without a `mode` field use Process mode. A populated map cannot switch modes because Process and Freeform files store their contents differently. Use the **Systems of Record** template to start a Freeform map.
+Every map offers every feature. Steps, decisions, owners, automation, and cost
+sit next to systems, databases, APIs, people, and documents. **Add → Group** makes a
+card that holds other cards; open it to work inside. **Add → Something already on the
+map** places a shared element again, so one system can appear in several groups without
+copying its facts. Cards show their whole name and description and grow to fit; drag
+the right edge of a selected card to widen it. Older files marked `mode: freeform` open
+the same way.
 
 ## Use the mapping skill in another repo
 

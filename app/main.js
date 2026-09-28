@@ -37,6 +37,14 @@ function initTheme() {
   window.addEventListener('serigraph-appearance', apply);
 }
 
+// Connections between steps default to a flow arrow; links that involve a
+// system, person, or other thing default to a plain relationship.
+const WORK_TYPES = new Set(['process', 'decision', 'event']);
+function defaultMeaning(fromId, toId) {
+  const types = [fromId, toId].map((id) => state.model?.byId.get(id)?.type);
+  return types.every((type) => WORK_TYPES.has(type)) ? 'flow' : null;
+}
+
 // ── canvas event wiring ──────────────────────────────────────────────
 function wireCanvasEvents() {
   let pendingContainerClick = 0;
@@ -51,7 +59,7 @@ function wireCanvasEvents() {
     if (state.connectFrom) {
       const from = state.connectFrom;
       const label = state.pendingEdgeLabel ?? null;
-      const meaning = state.pendingEdgeMeaning ?? (state.model.mode === 'process' ? 'flow' : null);
+      const meaning = state.pendingEdgeMeaning ?? defaultMeaning(from, id);
       state.connectFrom = null;
       state.pendingEdgeLabel = null;
       state.pendingEdgeMeaning = null;
@@ -116,6 +124,16 @@ function wireCanvasEvents() {
       .then((ok) => { if (!ok) canvas.refreshScope(state.model); });
   });
 
+  // A widened or narrowed card stays where it is: its left edge holds still.
+  bus.on('node-resized', (id, { width, x, y }) => {
+    if (state.presenting || state.standalone) return;
+    ctrl.commit(() => {
+      edit.updateNode(id, { width });
+      edit.setNodePosition(id, { x, y });
+    }, { historyLabel: `resize “${state.model?.byId.get(id)?.label ?? id}”` })
+      .then((ok) => { if (!ok) canvas.refreshScope(state.model); });
+  });
+
   bus.on('nodes-moved', (positions) => {
     if (state.presenting || state.standalone) return;
     ctrl.commit(
@@ -164,7 +182,7 @@ function wireCanvasEvents() {
     if (state.presenting || state.standalone) return;
     const nodeLabel = state.model?.byId.get(id)?.label ?? id;
     const contLabel = state.model?.byId.get(containerId)?.label ?? containerId;
-    const isPlacement = state.model?.mode === 'freeform' && state.model.elementById?.has(id);
+    const isPlacement = !!state.model?.elementById?.has(id);
     const fromOwnerId = state.scopeId;
     let res;
     ctrl.commit(() => {
@@ -188,12 +206,7 @@ function wireCanvasEvents() {
     const targetLabel = targetOwnerId
       ? state.model.byId.get(targetOwnerId)?.label ?? targetOwnerId
       : state.model.name;
-    const isPlacement = state.model.mode === 'freeform' && state.model.elementById?.has(id);
-    if (isPlacement && targetOwnerId == null) {
-      ui.toast('Items must stay inside a group');
-      canvas.refreshScope(state.model);
-      return;
-    }
+    const isPlacement = !!state.model.elementById?.has(id);
     const fromOwnerId = state.scopeId;
     let res;
     ctrl.commit(() => {
@@ -216,7 +229,7 @@ function wireCanvasEvents() {
   bus.on('connect-drag', (from, to) => {
     if (state.presenting || state.standalone) return;
     const label = state.pendingEdgeLabel ?? null;
-    const meaning = state.pendingEdgeMeaning ?? (state.model.mode === 'process' ? 'flow' : null);
+    const meaning = state.pendingEdgeMeaning ?? defaultMeaning(from, to);
     state.pendingEdgeLabel = null;
     state.pendingEdgeMeaning = null;
     ctrl.commit(
@@ -229,15 +242,15 @@ function wireCanvasEvents() {
         ctrl.selectEdge(scope.edges.length - 1);
         ui.toast(label
           ? `“${label}” branch added — drag the line to route it`
-          : `${state.model.mode === 'freeform' ? 'Connection' : 'Edge'} added. Set its label in the panel.`);
+          : 'Connection added. Set its label in the panel.');
       });
   });
 
-  // double-click on empty canvas creates the default node for this map mode
+  // double-click on empty canvas creates a step right there
   bus.on('bg-dblclick', (world) => {
     cancelPendingContainerClick();
     if (state.presenting || state.standalone || !state.model) return;
-    ui.createNodeAt(state.model.mode === 'freeform' ? 'item' : 'process', world);
+    ui.createNodeAt('process', world);
   });
 
   bus.on('edge-click', (index) => {

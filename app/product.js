@@ -332,7 +332,7 @@ export function mapMarkdown(model) {
   const sections = model.document.kind === 'process'
     ? [`# ${mdText(model.name)}`, mdText(model.description)]
     : [productDocumentMarkdown(model).trim()];
-  sections.push('## Map inventory', `Mode: ${model.mode}. Connections below are declared relationships, not evidence of live transfers.`);
+  sections.push('## Map inventory', 'Connections below are declared relationships, not evidence of live transfers.');
   for (const node of model.byId.values()) {
     const owners = [node.owner, ...node.owners.map((owner) => `${model.byId.get(owner.to)?.label || owner.to} (${owner.role})`)].filter(Boolean);
     sections.push(`### ${mdText(node.label)}`, `ID: ${mdText(node.id)} · Type: ${node.type}`);

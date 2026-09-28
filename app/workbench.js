@@ -78,23 +78,12 @@ const MUTATING_TOOLS = new Set(['unit', 'connect']);
 // tools that help a reviewer navigate and understand the map, but never render
 // (or keyboard-activate) controls that imply the exported model can be edited.
 function visibleToolGroups() {
-  const freeform = state.model?.mode === 'freeform';
-  const hiddenInFreeform = new Set(['lane', 'probe', 'automate']);
   return TOOL_GROUPS
     .map((group) => group
-      .filter((tool) => !(freeform && hiddenInFreeform.has(tool.id)))
       .filter((tool) => !(state.standalone && MUTATING_TOOLS.has(tool.id)))
-      .map((tool) => {
-        if (state.standalone && tool.id === 'note') {
-          return { ...tool, label: 'Review trail', description: `Inspect review notes attached to the selected ${freeform ? 'item' : 'step'}.` };
-        }
-        if (!freeform) return tool;
-        if (tool.id === 'select') return { ...tool, description: 'Select an item or drag to pan the map.' };
-        if (tool.id === 'unit') return { ...tool, label: 'Item', description: 'Add an item, system, database, API, person, or document.' };
-        if (tool.id === 'connect') return { ...tool, description: 'Connect any two items.' };
-        if (tool.id === 'note') return { ...tool, description: 'Leave a review note on the selected item.' };
-        return tool;
-      }))
+      .map((tool) => state.standalone && tool.id === 'note'
+        ? { ...tool, label: 'Review trail', description: 'Inspect review notes attached to the selected card.' }
+        : tool))
     .filter((group) => group.length);
 }
 
@@ -144,8 +133,7 @@ function alignSelection(mode, target) {
   closeToolbarMenu(target);
   const ids = effectiveSelectionIds();
   if (ids.length < 2) return;
-  const noun = state.model?.mode === 'freeform' ? 'items' : 'steps';
-  ctrl.commit(() => edit.alignNodes(ids, mode), { historyLabel: `align ${ids.length} ${noun}` });
+  ctrl.commit(() => edit.alignNodes(ids, mode), { historyLabel: `align ${ids.length} cards` });
 }
 
 function closeFlyout() {
@@ -281,16 +269,14 @@ function positionFlyout(anchor, host) {
 function showUnitFlyout(anchor) {
   const host = document.getElementById('tool-flyout');
   if (!host || !anchor) return;
-  const freeform = state.model?.mode === 'freeform';
   positionFlyout(anchor, host);
-  const addingGroup = freeform && state.scopeId == null;
-  const types = addingGroup ? [['item', 'Group']] : Object.entries(NODE_VISUALS).map(([key, value]) => [key, value.label]);
+  const types = Object.entries(NODE_VISUALS).map(([key, value]) => [key, value.label]);
   const items = types.map(([type, label]) => {
     const button = h('button', {
       class: `tool-flyout-item t-${type}`,
       title: `Drag onto the canvas to add a ${label.toLowerCase()}; click to open the form`,
-    }, svgIcon(addingGroup ? 'stack' : ICONS[type]), h('span', { class: 'tool-choice-copy' },
-      h('strong', {}, label), h('small', {}, addingGroup ? 'A map inside your map.' : NODE_VISUALS[type].hint)));
+    }, svgIcon(ICONS[type]), h('span', { class: 'tool-choice-copy' },
+      h('strong', {}, label), h('small', {}, NODE_VISUALS[type].hint)));
     ui.enableNodeTypeDrag(button, type, {
       onActivate: () => {
         closeFlyout();
@@ -304,17 +290,26 @@ function showUnitFlyout(anchor) {
     });
     return button;
   });
+  // Groups hold other cards; shared elements appear in several places.
+  const organize = [
+    h('button', { class: 'tool-flyout-item', onClick: () => { closeFlyout(); setTool('select'); ui.addNodeDialog(state.scopeId, { group: true }); } },
+      svgIcon('stack'), h('span', { class: 'tool-choice-copy' }, h('strong', {}, 'Group'), h('small', {}, 'A card that holds other cards. Open it to work inside.'))),
+    state.model?.elements?.length || state.systems?.length
+      ? h('button', { class: 'tool-flyout-item', onClick: () => { closeFlyout(); setTool('select'); ui.addSharedDialog(state.scopeId); } },
+        svgIcon('copy'), h('span', { class: 'tool-choice-copy' }, h('strong', {}, 'Something already on the map'), h('small', {}, 'Place a shared system, person, or item again. Edits show everywhere it appears.')))
+      : null,
+  ];
   host.replaceChildren(
-    h('div', { class: 'tool-flyout-title' }, addingGroup ? 'Organize this map' : 'What belongs on the map?'),
+    h('div', { class: 'tool-flyout-title' }, 'What belongs on the map?'),
     ...items,
+    h('div', { class: 'tool-flyout-title' }, 'Organize'),
+    ...organize,
     h('div', { class: 'tool-flyout-title' }, 'Explain the board'),
     ...[['note', 'Note block', 'A resizable page of Markdown notes.', 'note-pencil'],
       ['text', 'Freeform text', 'Headings, labels, and text without a box.', 'file-text']].map(([kind, title, hint, icon]) => h('button', {
         class: 'tool-flyout-item', onClick: () => { closeFlyout(); setTool('select'); openAnnotationEditor(null, kind); },
       }, svgIcon(icon), h('span', { class: 'tool-choice-copy' }, h('strong', {}, title), h('small', {}, hint)))),
-    h('p', { class: 'tool-flyout-note' }, addingGroup
-      ? 'Open a group to add steps, decisions, people, and resources inside it.'
-      : 'Click to name it, or drag it onto the map. Shape describes the kind of thing—not its status.'),
+    h('p', { class: 'tool-flyout-note' }, 'Click to name it, or drag it onto the map. Shape describes the kind of thing—not its status.'),
   );
   host.removeAttribute('hidden');
 }
@@ -361,7 +356,7 @@ function activateTool(id, anchor) {
     setTool('note');
     if (state.selectedId) openReview(state.selectedId);
     else {
-      const selection = state.model?.mode === 'freeform' ? 'an item' : 'a step';
+      const selection = 'a card';
       ui.toast(state.standalone ? `Select ${selection} to inspect its review trail` : `Select ${selection} before leaving a review note`);
     }
     return true;
@@ -482,7 +477,7 @@ function closeReview() {
 
 export function openReview(nodeId = state.selectedId) {
   const node = nodeId ? state.model?.byId.get(nodeId) : null;
-  const selection = state.model?.mode === 'freeform' ? 'an item' : 'a step';
+  const selection = 'a card';
   if (!node) {
     ui.toast(state.standalone ? `Select ${selection} to inspect its review trail` : `Select ${selection} before leaving a review note`);
     return;
@@ -491,7 +486,7 @@ export function openReview(nodeId = state.selectedId) {
   if (!tray) return;
   const notes = [...(node.review ?? [])].sort((a, b) => Number(a.resolved) - Number(b.resolved));
   const openCount = notes.filter((note) => !note.resolved).length;
-  const textarea = h('textarea', { placeholder: state.model?.mode === 'freeform' ? 'What should the owner review?' : 'What should the process owner review?', 'aria-label': 'Review note' });
+  const textarea = h('textarea', { placeholder: 'What should the owner review?', 'aria-label': 'Review note' });
   const list = h('div', { class: 'review-list' }, notes.length ? notes.map((note) =>
     h('article', { class: `review-note${note.resolved ? ' resolved' : ''}` },
       h('div', { class: 'review-note-meta' }, h('strong', {}, note.author), h('span', {}, formatReviewDate(note.createdAt))),
@@ -543,7 +538,7 @@ async function copyText(text) {
 export function openShareDialog() {
   const nodeId = state.selectedId;
   const link = nodeId ? ctrl.nodeUrl(nodeId) : `${location.origin}${location.pathname}${buildHash({ mapId: state.mapId })}`;
-  const item = state.model?.mode === 'freeform' ? 'item' : 'step';
+  const item = 'card';
   const body = h('div', { class: 'share-stack' });
   makeDialog('Share & sync', body);
 
@@ -978,8 +973,7 @@ function runToolbarAction(action, target) {
     case 'delete': {
       const ids = effectiveSelectionIds();
       if (ids.length > 1) {
-        const noun = state.model?.mode === 'freeform' ? 'items' : 'steps';
-        ctrl.commit(() => edit.bulkRemoveNodes(ids), { historyLabel: `delete ${ids.length} ${noun}` });
+        ctrl.commit(() => edit.bulkRemoveNodes(ids), { historyLabel: `delete ${ids.length} cards` });
       } else {
         ui.requestDelete();
       }
@@ -1012,10 +1006,7 @@ function runToolbarAction(action, target) {
 }
 
 function toolbarToolButton(tool, { labeled = false, className = '' } = {}) {
-  const freeform = state.model?.mode === 'freeform';
-  const label = tool.id === 'unit'
-    ? freeform && state.scopeId == null ? 'Add group' : 'Add'
-    : tool.label;
+  const label = tool.id === 'unit' ? 'Add' : tool.label;
   return h('button', {
     class: `tool-button toolbar-tool ${labeled ? 'labeled' : ''} ${className}`.trim(),
     'data-tool': tool.id,
@@ -1023,7 +1014,7 @@ function toolbarToolButton(tool, { labeled = false, className = '' } = {}) {
     title: `${label} · ${tool.shortcut}\n${tool.description}`,
     onClick: (event) => activateTool(tool.id, event.currentTarget),
   },
-  svgIcon(tool.id === 'unit' && freeform ? ICONS.item : TOOL_ICONS[tool.id]),
+  svgIcon(TOOL_ICONS[tool.id]),
   labeled ? h('span', { class: 'toolbar-button-label' }, label) : null,
   tool.flyout ? svgIcon('caret-down', 12) : null);
 }

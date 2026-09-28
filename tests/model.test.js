@@ -152,7 +152,7 @@ edges: []
   assert.match(invalid.errors[0].message, /must be one of: process, freeform/);
 });
 
-test('freeform placements reject root use, overrides, and duplicate use in one group', () => {
+test('placements reject overrides and duplicate use in one group', () => {
   const { errors } = parseMap(`
 name: Invalid placements
 mode: freeform
@@ -176,7 +176,7 @@ nodes:
       edges: []
 edges: []
 `);
-  assert.ok(errors.some((error) => /must be inside a group/.test(error.message)));
+  assert.ok(!errors.some((error) => /must be inside a group/.test(error.message)), 'a shared element can sit at the top level');
   assert.ok(errors.some((error) => /cannot override "label"/.test(error.message)));
   assert.ok(errors.some((error) => /already placed in this group/.test(error.message)));
   assert.ok(errors.some((error) => /cannot have a shared note/.test(error.message)));
@@ -484,4 +484,46 @@ test('malformed planning and relation containers fail with targeted guidance', (
 
   const badRice = parseMap(`name: X\nnodes:\n  - id: a\n    type: process\n    label: A\n    planning:\n      type: requirement\n      rice: [1, 2]`);
   assert.match(badRice.errors[0].message, /"planning\.rice:" must be a map/);
+});
+
+test('one map holds steps, groups, owners, and shared elements together', () => {
+  const { model, errors } = parseMap(`
+name: One canvas
+elements:
+  - id: crm
+    type: system
+    label: CRM
+  - id: sales
+    type: role
+    label: Sales team
+nodes:
+  - id: intake
+    type: process
+    label: Intake
+    owner: Sales
+    automation: manual
+  - use: crm
+  - id: team
+    type: item
+    label: Team
+    owners:
+      - to: sales
+        role: owner
+    children:
+      nodes:
+        - use: crm
+      edges: []
+  - id: empty-group
+    type: item
+    label: Later
+    children: []
+edges:
+  - from: intake
+    to: crm
+`);
+  assert.deepEqual(errors, []);
+  assert.equal(model.placementsByElement.get('crm').length, 2);
+  assert.equal(model.byId.get('intake').automation, 'manual');
+  assert.equal(model.byId.get('team').owners[0].to, 'sales');
+  assert.ok(model.byId.get('empty-group').children, 'declared children make a group even when empty');
 });

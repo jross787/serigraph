@@ -10,7 +10,7 @@ import { nodeCost, compactMoney } from '../shared/cost.js';
 import { icon, TYPE_ICONS } from './icons.js';
 import { nodeObservation } from './github.js';
 import { buildAnnotation } from './annotation-view.js';
-import { layoutScope, siblingContextLayout, miniTransform, edgePath, smoothEdgePath, routeDirect, routeEdge, routeDragged, routeAutomaticEdges, routeParallelEdges, placeEdgeLabels, edgeLabelBubble, invalidateLayouts, wrapText, fitText, CARD_FONT } from './layout.js';
+import { layoutScope, siblingContextLayout, miniTransform, edgePath, smoothEdgePath, routeDirect, routeEdge, routeDragged, routeAutomaticEdges, routeParallelEdges, placeEdgeLabels, edgeLabelBubble, invalidateLayouts, wrapText, fitText, CARD_FONT, CARD_LINE, SUMMARY_LINE, cardLayout } from './layout.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const el = (tag, attrs = {}, cls = '') => {
@@ -255,17 +255,13 @@ function scopeEntryCamera(model, ownerId, layout) {
   const target = fitCamera(bounds);
   const width = vw || window.innerWidth || 1200;
   const height = vh || window.innerHeight || 800;
-  const prioritizeReadability = model.mode !== 'freeform' || ownerId != null;
+  // A top level made only of groups opens as an overview; anything else
+  // opens at a readable size, starting from the left.
+  const overview = ownerId == null && model.root.nodes.length > 0 && model.root.nodes.every((node) => node.children);
   const minK = width <= 700 ? 0.62 : 0.70;
-  if (!prioritizeReadability || target.k >= minK) return target;
+  if (overview || target.k >= minK) return target;
   const k = minK;
-  return {
-    k,
-    x: width <= 700 || model.mode !== 'freeform'
-      ? 34 - bounds.x * k
-      : (width - bounds.w * k) / 2 - bounds.x * k,
-    y: (height - bounds.h * k) / 2 - bounds.y * k,
-  };
+  return { k, x: 34 - bounds.x * k, y: (height - bounds.h * k) / 2 - bounds.y * k };
 }
 
 function usableViewport() {
@@ -338,7 +334,7 @@ function boundsAround(nodes) {
 }
 
 export function focusOn(nodeId, ms = 380) {
-  const instances = state.model?.mode === 'freeform' ? visibleInstances(nodeId) : [];
+  const instances = state.model?.elementById?.has(nodeId) ? visibleInstances(nodeId) : [];
   if (instances.length > 1) {
     const usable = usableViewport();
     const target = fitCamera(boundsAround(instances), usable.width <= 700 ? 120 : 80, 1.05, usable);
@@ -536,7 +532,7 @@ function nodeShape(n) {
   if (n.node.children) return el('rect', { width: w, height: h, rx: 8 }, 'shape');
   if (t === 'decision') return el('polygon', { points: `${w / 2},0 ${w},${h / 2} ${w / 2},${h} 0,${h / 2}` }, 'shape');
   if (t === 'event') return el('circle', { cx: w / 2, cy: h / 2, r: w / 2 }, 'shape');
-  if (t === 'role') return el('rect', { width: w, height: h, rx: h / 2 }, 'shape');
+  if (t === 'role') return el('rect', { width: w, height: h, rx: Math.min(h / 2, 32) }, 'shape');
   if (t === 'artifact') {
     const f = 13;
     return el('path', { d: `M0,0 h${w - f} l${f},${f} v${h - f} h${-w} z` }, 'shape');
@@ -625,18 +621,15 @@ const ACTOR_TAGS = {
   };
 
 
-function cardText(n, details, launch) {
-  const observed = !!nodeObservation(n.id);
-  const labelWidth = launch ? n.w - 84 : 132;
-  const lines = (launch || observed) ? wrapText(n.node.label, labelWidth, CARD_FONT, observed ? 1 : 2).map(line => fitText(line, labelWidth)) : n.lines;
-  const totalH = lines.length * 17 + (details.description ? 16 : 0);
-  const startY = (n.h - totalH) / 2 + 13 + (observed && details.description ? 4 : 0);
-  const text = [textLines(lines, 44, startY, 'label')];
-  if (details.description) {
-    const width = n.w - 44 - (ACTOR_TAGS[n.node.automation] ? 40 : 14);
-    const font = '500 10.5px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
-    text.push(textLines([fitText(details.description, width, font)], 44, startY + lines.length * 17, 'node-summary'));
-  }
+// The whole name, then the whole description: centered in a standard card,
+// from the top in a card that grew to fit its words.
+function cardText(n) {
+  const lines = n.lines ?? [];
+  const desc = n.desc ?? [];
+  const content = lines.length * CARD_LINE + (desc.length ? 4 + desc.length * SUMMARY_LINE : 0);
+  const top = Math.max(14, (n.h - content) / 2);
+  const text = [textLines(lines, 44, top + 13, 'label', 'start', CARD_LINE)];
+  if (desc.length) text.push(textLines(desc, 44, top + lines.length * CARD_LINE + 4 + 12, 'node-summary', 'start', SUMMARY_LINE));
   return text;
 }
 
@@ -656,7 +649,7 @@ function buildNode(n) {
   // selection ring
   const ringPad = 5;
   g.appendChild(el('rect', { x: -ringPad, y: -ringPad, width: n.w + ringPad * 2, height: n.h + ringPad * 2, rx: 11 }, 'sel-ring'));
-  if (state.model?.mode === 'freeform' && node.isPlacement) {
+  if (node.isPlacement && node.ownerId != null) {
     const ownerLabel = state.model.byId.get(node.ownerId)?.label ?? node.ownerId;
     const visibleOwner = truncateLabel(ownerLabel, 26);
     const visibleElement = truncateLabel(node.label, 22);
@@ -685,22 +678,19 @@ function buildNode(n) {
     g.appendChild(el('rect', { x: 5, y: 5, width: n.w, height: n.h, rx: 8 }, 'stack'));
     g.appendChild(nodeShape(n));
     g.appendChild(iconChip(node.type, 13, 10));
-    const lines = launch ? wrapText(node.label, n.w - 87, CARD_FONT, 2).map(line => fitText(line, n.w - 87)) : n.lines;
+    const lines = n.lines ?? [];
     g.appendChild(textLines(lines, 45, 26, 'label', 'start', 19));
-    const desc = wrapText(node.description, n.w - 28, '500 10.5px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif', 2)
-      .map(line => fitText(line, n.w - 28, '500 10.5px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif'));
-    if (desc.length) g.appendChild(textLines(desc, 14, 58, 'node-summary', 'start', 15));
+    const desc = n.desc ?? [];
+    if (desc.length) g.appendChild(textLines(desc, 14, 12 + lines.length * 19 + 8 + 12, 'node-summary', 'start', SUMMARY_LINE));
     const meta = el('text', { x: 14, y: n.h - 15 }, 'node-meta');
     const ownerLabels = (node.owners ?? [])
       .map((owner) => state.model?.elementById?.get(owner.to)?.label ?? owner.to)
       .join(', ');
-    const metaText = state.model?.mode === 'freeform'
-      ? node.children ? `${node.stats.childCount} items` : ownerLabels || node.type
-      : node.owner || `${node.stats.childCount} steps`;
+    const metaText = node.owner || ownerLabels || `${node.stats.childCount} inside`;
     const metaChars = Math.max(10, Math.floor((n.w - chipW - 58) / 6.2));
     meta.textContent = truncateLabel(metaText, metaChars);
     g.appendChild(meta);
-    if (state.model?.mode !== 'freeform' && !ACTOR_TAGS[node.automation]) {
+    if (!node.isPlacement && node.type === 'process' && !ACTOR_TAGS[node.automation]) {
       // the actor badge already shows assessed nodes; keep the dot for unassessed ones
       g.appendChild(el('circle', { cx: n.w - 15, cy: n.h - 17, r: 4 }, 'automation-dot a-not-assessed'));
     }
@@ -719,9 +709,7 @@ function buildNode(n) {
     zi.classList.add('count-chip-icon');
     chip.appendChild(zi);
     const title = el('title');
-    title.textContent = state.model?.mode === 'freeform'
-      ? `Open group with ${node.stats.descendantCount} item${node.stats.descendantCount === 1 ? '' : 's'} inside`
-      : `Open sub-map with ${node.stats.descendantCount} node${node.stats.descendantCount === 1 ? '' : 's'} inside`;
+    title.textContent = `Open to see the ${node.stats.descendantCount} card${node.stats.descendantCount === 1 ? '' : 's'} inside`;
     chip.appendChild(title);
     g.appendChild(chip);
   } else if (node.type === 'decision') {
@@ -744,8 +732,12 @@ function buildNode(n) {
       g.appendChild(el('path', { d: `M1,11 H${n.w - 1}` }, 'shape-detail'));
       for (const x of [10, 16, 22]) g.appendChild(el('circle', { cx: x, cy: 6, r: 1.2 }, 'window-dot'));
     }
-    g.appendChild(iconChip(node.type, 11, (n.h - 24) / 2));
-    g.append(...cardText(n, details, launch));
+    g.appendChild(iconChip(node.type, 11, n.h <= 64 ? (n.h - 24) / 2 : 14));
+    g.append(...cardText(n));
+    if (!state.standalone && !state.presenting) {
+      // Drag the right edge of a selected card to make it wider or narrower.
+      g.appendChild(el('rect', { x: n.w - 4, y: 10, width: 8, height: Math.max(12, n.h - 20), rx: 4 }, 'card-resize'));
+    }
   }
 
   // provenance badge — this element was inferred from a transcript, not
@@ -791,7 +783,7 @@ function buildNode(n) {
 
   // Freeform placement notes are local to one group. Mark the card so that
   // the reader knows to open the detail panel for group-specific context.
-  if (state.model?.mode === 'freeform' && node.note) {
+  if (node.isPlacement && node.note) {
     const x = n.w - (node.position ? 29 : 7);
     const nb = el('g', { transform: `translate(${x},${-2})` }, 'local-note-badge');
     nb.appendChild(el('circle', { r: 9 }, 'local-note-bg'));
@@ -803,7 +795,7 @@ function buildNode(n) {
   }
 
   // cost chip for process maps
-  if (node.cost && state.model?.mode !== 'freeform') {
+  if (node.cost) {
     const cur = state.model?.costModel?.currency ?? 'USD';
     const rc = nodeCost(node, state.model?.costModel ?? {});
     const txt = rc.complete
@@ -1156,7 +1148,7 @@ function routeScopeLink(from, to, allFrames, shift) {
 }
 
 function renderSiblingContext(model, ownerId) {
-  if (model.mode !== 'freeform' || ownerId == null) return null;
+  if (ownerId == null) return null;
   const current = model.byId.get(ownerId);
   if (!current) return null;
   const parentScope = current.ownerId == null
@@ -1738,6 +1730,7 @@ function wirePointer() {
   let nodeDrag = null; // { ln, el, ox, oy, active, dropInto, moveOut } while a node is grabbed
   let connectDrag = null; // { fromId, fromLn, ghost, targetId, active } while dragging from a port
   let edgeDrag = null; // { le, el, active, via } while an edge is being re-routed
+  let widthDrag = null; // { ln, el, startW, active } while a card's edge is dragged
   let marquee = null; // { x0, y0, x1, y1, rect } in world coords during shift+drag
   const activePointers = new Map(); // pointerId -> client {x, y}; two or more = pinch
   let pinch = null; // { dist, midWorld, k } anchors for the two-pointer gesture
@@ -1853,6 +1846,12 @@ function wirePointer() {
           return;
         }
       }
+      const resizeEl = ev.target.closest?.('.card-resize');
+      if (resizeEl && currentLayer?.contains(resizeEl)) {
+        const cardEl = resizeEl.closest('.node');
+        const ln = currentLayout?.nodes.find((x) => x.id === cardEl.dataset.id);
+        if (ln) { widthDrag = { ln, el: cardEl, startW: ln.w, active: false }; return; }
+      }
       const nodeEl = ev.target.closest?.('.node');
       if (nodeEl && currentLayer?.contains(nodeEl)) {
         const ln = currentLayout?.nodes.find((x) => x.id === nodeEl.dataset.id);
@@ -1885,6 +1884,10 @@ function wirePointer() {
     hideMoveOutBar();
     connectDrag?.ghost?.remove();
     connectDrag = null;
+    const revertWidth = widthDrag?.active;
+    widthDrag = null;
+    svg.classList.remove('resizing-card');
+    if (revertWidth && state.model) { invalidateLayouts(); refreshScope(state.model); }
     // an interrupted edge drag only mutated DOM, not the cached layout —
     // a straight re-render restores the original route
     const revertEdgeDrag = edgeDrag?.active;
@@ -1934,6 +1937,9 @@ function wirePointer() {
         connectDrag.ghost.appendChild(el('path', {}, 'cg-line'));
         connectDrag.ghost.appendChild(el('polygon', { points: '0,-4 8,0 0,4' }, 'cg-arrow'));
         currentLayer?.appendChild(connectDrag.ghost);
+      } else if (widthDrag) {
+        widthDrag.active = true;
+        svg.classList.add('resizing-card');
       } else if (nodeDrag) {
         nodeDrag.active = true;
         svg.classList.add('dragging-node');
@@ -1972,6 +1978,15 @@ function wirePointer() {
       } else if (edgeDrag?.active) {
         const w = worldAt(ev.clientX, ev.clientY);
         previewEdgeRoute(edgeDrag, { x: w.x + edgeDrag.offset.x, y: w.y + edgeDrag.offset.y });
+      } else if (widthDrag?.active) {
+        // The text re-wraps live as the card widens or narrows.
+        const next = cardLayout(widthDrag.ln.node, widthDrag.startW + dx / camera.k);
+        Object.assign(widthDrag.ln, { w: next.w, h: next.h, lines: next.lines, desc: next.desc });
+        const fresh = buildNode(widthDrag.ln);
+        fresh.classList.add('selected');
+        widthDrag.el.replaceWith(fresh);
+        widthDrag.el = fresh;
+        updateEdgesFor(widthDrag.ln);
       } else if (nodeDrag?.active) {
         moveNodeDrag(nodeDrag, dx / camera.k, dy / camera.k, !ev.metaKey);
         // A group moves as one; only a single card can drop into a container.
@@ -2035,6 +2050,9 @@ function wirePointer() {
     const finishedNodeDrag = nodeDrag?.active ? nodeDrag : null;
     const finishedConnect = connectDrag?.active ? connectDrag : null;
     const finishedEdgeDrag = edgeDrag?.active ? edgeDrag : null;
+    const finishedWidth = widthDrag?.active ? widthDrag : null;
+    widthDrag = null;
+    svg.classList.remove('resizing-card');
     nodeDrag = null; // consumed — clearDrag/revert must not undo a completed drop
     connectDrag = null;
     edgeDrag = null;
@@ -2045,6 +2063,11 @@ function wirePointer() {
     if (wasDrag || !target) {
       if (marquee) {
         finishMarquee(true);
+        return;
+      }
+      if (finishedWidth) {
+        const ln = finishedWidth.ln;
+        bus.emit('node-resized', ln.id, { width: ln.w, x: Math.round(ln.x + ln.w / 2), y: Math.round(ln.y + ln.h / 2) });
         return;
       }
       if (finishedEdgeDrag) {

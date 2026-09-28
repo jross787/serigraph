@@ -4130,3 +4130,9 @@ g.node:focus-visible, g.node-body:focus-visible { outline: 2px solid var(--accen
 .update-auto { display: flex; gap: 8px; align-items: center; font-size: 12.5px; margin: 6px 0; }
 body:has(#update-notice:not([hidden])) #economics { bottom: 84px; }
 #update-notice .d-btn { white-space: nowrap; flex: none; }
+
+/* Cards show all their text; a selected card can be widened from its edge. */
+.node .node-summary { font: 450 12px var(--font); }
+.card-resize { fill: var(--sel); opacity: 0; pointer-events: none; cursor: ew-resize; transition: opacity .15s ease; }
+.node.selected:not(.dragging) .card-resize { opacity: .85; pointer-events: all; }
+#canvas.resizing-card, #canvas.resizing-card * { cursor: ew-resize !important; }
