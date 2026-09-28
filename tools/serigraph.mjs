@@ -196,6 +196,9 @@ async function install(args) {
   const config = { version: 1, library, port, allowedHosts, machineName };
   await fs.writeFile(CONFIG, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
 
+  // Build the app before the hourly updater starts, so the two never build at once.
+  if (!args.includes('--no-app')) await buildApp(ENGINE);
+
   const node = stableNode();
   await loadAgent(SERVER, plist({
     Label: SERVER,
@@ -230,7 +233,6 @@ async function install(args) {
     StandardErrorPath: path.join(LOGS, 'update.log'),
   }));
 
-  if (!args.includes('--no-app')) await buildApp(ENGINE);
   const running = await waitForServer(port);
   const revision = (await git(ENGINE, ['rev-parse', '--short', 'HEAD']).catch(() => '')) || 'unknown';
   console.log(`
