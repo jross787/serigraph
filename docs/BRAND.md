@@ -44,8 +44,10 @@ Broad curves and precise diagonal cuts reference printing layers in register;
 the clear central channel keeps the mark readable at toolbar size.
 
 The production source is [app/serigraph-mark.svg](../app/serigraph-mark.svg):
-a `32×32` viewBox, one path and its rotated instance, in signal emerald
-`#3DDC97`. The header uses a `22×22` box; the favicon shares the same source.
+a `32×32` viewBox, one path and its rotated instance, in system blue
+`#0A84FF` for the app. The header uses a `22×22` box; the favicon shares the same
+source. The Mac app icon (`mac/make-icon.swift`) draws the same ribbons in a blue
+gradient on a white rounded square. The marketing site keeps its emerald direction.
 Standalone exports embed it, so branding needs no network connection.
 
 - Keep the two ribbons identical and preserve their spacing.
@@ -158,12 +160,12 @@ Custom easings only: `cubic-bezier(0.32, 0.72, 0, 1)` for entrances,
 
 - **Site:** dark glass, asymmetric bento, macro-whitespace (`py-24`+),
   floating island nav. The old paper site is retired.
-- **App:** keeps its functional workbench UI; the Register mark uses emerald
-  in its top bar. No glass, no orbs there.
-  The press room stays utilitarian.
+- **App:** follows macOS: neutral grays that track Light and Dark Mode, white
+  cards, hairline edges, and one system-blue accent. The Register mark is blue in
+  its top bar. No glass, no orbs there. The press room stays utilitarian.
 - **Exports:** standalone HTML exports carry the mark and the line
   "Printed by Serigraph: one file, every impression."
-- **Favicon:** the Register mark, emerald on a transparent ground.
+- **Favicon:** the Register mark, blue on a transparent ground.
 - **OG image spec:** base ground, Register mark center-left, wordmark,
   tagline, one emerald orb behind glass.
 

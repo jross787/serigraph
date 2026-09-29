@@ -256,6 +256,16 @@ export async function loadProjects() {
   return state.projects;
 }
 
+export async function loadSystems() {
+  try {
+    state.systems = (await api.listSystems()).items ?? [];
+  } catch {
+    state.systems = [];
+  }
+  bus.emit('systems-listed');
+  return state.systems;
+}
+
 export async function loadRecents() {
   try {
     const { machine, items } = await api.listRecents();

@@ -269,6 +269,7 @@ function nodeToPlain(fields) {
   if (fields.sla?.trim()) obj.sla = fields.sla.trim();
   if (fields.automation?.trim()) obj.automation = fields.automation.trim();
   if (fields.systems?.length) obj.systems = fields.systems.map((s) => String(s).trim()).filter(Boolean);
+  if (fields.library?.trim()) obj.library = fields.library.trim();
   if (fields.planning) {
     const planning = planningToPlain(fields.planning);
     if (Object.keys(planning).length) obj.planning = planning;
@@ -480,7 +481,7 @@ export function updateNode(nodeId, fields) {
   if (!p) throw new Error(`node "${nodeId}" not found in file`);
   if (fields.label != null) doc.setIn([...p, 'label'], fields.label);
   if (fields.type != null) doc.setIn([...p, 'type'], fields.type);
-  for (const key of ['owner', 'trigger', 'sla', 'automation']) {
+  for (const key of ['owner', 'trigger', 'sla', 'automation', 'library']) {
     if (fields[key] === undefined) continue;
     if (String(fields[key] ?? '').trim()) doc.setIn([...p, key], String(fields[key]).trim());
     else if (doc.getIn([...p, key], true)) doc.deleteIn([...p, key]);
@@ -764,7 +765,7 @@ export function setReviewResolved(nodeId, reviewId, resolved) {
 // keep files predictable; unknown keys keep their relative order at the end
 const KEY_ORDER = [
   'id', 'type', 'label', 'description', 'owner', 'owners', 'trigger', 'sla',
-  'automation', 'systems', 'planning', 'links', 'relations', 'review',
+  'automation', 'systems', 'library', 'planning', 'links', 'relations', 'review',
   'cost', 'note', 'position', 'flowPosition', 'children',
 ];
 function tidyKeyOrder(doc, nodePath) {

@@ -179,6 +179,7 @@ Freeform hierarchy uses `relations` on shared elements. The supported types are 
   systems:                          # optional list of system names
     - Salesforce
     - Plaid
+  library: salesforce               # optional id of a shared system; see below
   links:                            # optional outbound references
     - label: Underwriting SOP
       url: https://docs.example.com/uw-sop
@@ -302,6 +303,28 @@ edges:
     kind: manual          # api | file | manual | event
     issue: Re-keyed from the quote PDF; typos confirmed in 3% of cases.
 ```
+
+## Shared systems (optional)
+
+A library can keep one list of the systems, tools, and teams it uses in many
+maps, such as Snowflake or GitHub. The list is `systems.yaml` beside `maps/`
+and `projects/`:
+
+```yaml
+systems:
+  - id: snowflake
+    type: database
+    label: Snowflake
+    description: Cloud data warehouse for reporting.
+```
+
+A process node or a Freeform shared element names an entry with
+`library: <id>`. The map still keeps its own `type`, `label`, and
+`description`, so it works when opened on its own, exported, or kept in
+another repository. The app uses the link to offer the same system in other
+maps, list where it is used, and point out when a map's copy differs from the
+library. An id is lowercase letters, digits, and hyphens. A link to an id that
+the current library does not have is not an error.
 
 ## Pinned positions (optional)
 

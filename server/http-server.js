@@ -38,6 +38,7 @@ import { createUpdater } from './updater.js';
 import { inspectLibraryDirectory, saveLibraryPreference } from './library-location.js';
 import { createLocalLinks, isLocalLink } from './local-links.js';
 import { createRecents } from './recents.js';
+import { createSystemsLibrary, libraryUses, SYSTEMS_FILE } from './systems.js';
 
 const github = process.env.SERIGRAPH_GITHUB_PILOT === '1' ? createGitHubReader() : null;
 
@@ -80,6 +81,8 @@ const META_DIR = libraryInEngine
 const localLinks = createLocalLinks({ engineRoot: ENGINE_ROOT, enabled: !SHARED, registryDir: path.join(META_DIR, 'links') });
 const recents = createRecents({ dir: path.join(META_DIR, 'recents'), validId: id => safeId(id) || isLocalLink(id) });
 let localLinkPlan = null;
+const systemsLibrary = createSystemsLibrary({ root: LIBRARY_ROOT });
+const usesCache = new Map(); // map file path -> { stamp, uses }
 const updater = createUpdater({
   root: ENGINE_ROOT,
   branch: process.env.SERIGRAPH_UPDATE_BRANCH?.trim() || 'main',
@@ -820,6 +823,31 @@ function idForPath(p) {
   return path.basename(p).replace(/\.ya?ml$/, '');
 }
 
+// Which maps use each shared system. Parsing is cached per file until the
+// file changes, so the Projects home stays quick with many maps.
+async function allLibraryUses() {
+  const projects = await projectIndex(true);
+  const nested = await Promise.all(projects.map((p) => p.linked ? p.maps : mapSummaries(path.join(PROJECTS_DIR, p.slug), { slug: p.slug, name: p.name })));
+  const maps = [...await mapSummaries(MAPS_DIR), ...nested.flat()].filter((map) => !map.invalid);
+  const uses = [];
+  for (const map of maps) {
+    const file = await resolveMapPath(map.id);
+    if (!file) continue;
+    try {
+      const stat = await fs.stat(file);
+      const stamp = `${stat.mtimeMs}:${stat.size}`;
+      let cached = usesCache.get(file);
+      if (cached?.stamp !== stamp) {
+        const { model } = parseMap(await fs.readFile(file, 'utf8'));
+        cached = { stamp, uses: model ? libraryUses(model) : [] };
+        usesCache.set(file, cached);
+      }
+      for (const use of cached.uses) uses.push({ ...use, mapId: map.id, mapName: map.name });
+    } catch { /* a map that cannot be read simply contributes no uses */ }
+  }
+  return uses;
+}
+
 // ---------------------------------------------------------------- routes
 async function handleApi(req, res, url) {
   res.setHeader('X-Serigraph-Library', LIBRARY_ID);
@@ -973,6 +1001,28 @@ async function handleApi(req, res, url) {
     }
   }
 
+
+  if (parts[1] === 'systems' && !url.search) {
+    try {
+      if (req.method === 'GET' && parts.length === 2) {
+        const [systems, uses] = await Promise.all([systemsLibrary.list(), allLibraryUses()]);
+        return json(res, 200, { items: systems.map((system) => ({ ...system, uses: uses.filter((use) => use.library === system.id) })) });
+      }
+      if (req.method === 'PUT' && parts.length === 2) {
+        let body;
+        try { body = JSON.parse(await readBody(req, 16_384)); } catch { return json(res, 400, { error: 'Invalid shared-system request.' }); }
+        const saved = await systemsLibrary.save(body ?? {});
+        broadcast({ type: 'systems-changed' });
+        return json(res, 200, saved);
+      }
+      if (req.method === 'DELETE' && parts.length === 3) {
+        await systemsLibrary.remove(decodeURIComponent(parts[2]));
+        broadcast({ type: 'systems-changed' });
+        return json(res, 200, { removed: true });
+      }
+      return json(res, 405, { error: 'Unknown shared-system action.' });
+    } catch (error) { return json(res, 400, { error: error.message }); }
+  }
 
   if (parts[1] === 'maps' && parts.length === 2) {
     if (req.method === 'GET') {
@@ -1428,6 +1478,7 @@ async function start(port, attempt = 0) {
       }, isRecord);
       watchDir(path.join(META_DIR, 'recents'), () => broadcast({ type: 'recents-changed' }), isRecord);
     }
+    watchDir(LIBRARY_ROOT, () => broadcast({ type: 'systems-changed' }), (filename) => String(filename) === SYSTEMS_FILE);
     process.send?.({ type: 'ready', port });
     const urlStr = `http://localhost:${port}/`;
     console.log('');

@@ -40,6 +40,18 @@ export const api = {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Serigraph-Links-Token': token },
     body: JSON.stringify(payload),
   }),
+  async listSystems() {
+    if (state.standalone) return { items: [] };
+    return jfetch('/api/systems');
+  },
+  saveSystem(system) {
+    return jfetch('/api/systems', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(system),
+    });
+  },
+  deleteSystem(id) {
+    return jfetch(`/api/systems/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
   async listRecents() {
     if (state.standalone) return { machine: null, items: [] };
     return jfetch('/api/recents');

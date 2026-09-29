@@ -127,10 +127,17 @@ supported Markdown, local font stacks, bounds, and export behavior.
 
 ## Appearance and connection focus
 
-**More actions → Appearance → Glass** opts into a pearl-glass surface with
-translucent controls, soft lighting, and readable cards. Frost remains the default;
-Paper and Night remain available. All themes have a clean, dot-free canvas. Pins,
-connection handles, and route controls appear on hover or keyboard focus.
+Serigraph follows your Mac's Light or Dark appearance: white cards on a soft gray
+canvas, or dark gray surfaces, with one blue accent for selection and actions. Choose
+**More actions → Appearance → Light** or **Dark** to fix one. Cards carry their type
+color only on their icon. Pins, connection handles, and route controls appear on hover
+or keyboard focus.
+
+Dragging feels like a Mac app. The map moves exactly with your pointer or trackpad and
+glides briefly after a quick flick; pinch to zoom around your fingers. A dragged card
+snaps its edges or center to nearby cards, with thin blue guides; hold ⌘ to place it
+freely. Pressing a card in a multi-selection moves the whole selection. **Map** stays
+in the top bar; Flow, Brief, Roadmap, Audit, and Agents are under **More views**.
 
 Decision text fits inside the diamond's slopes. Connector labels use measured,
 bounded two-line bubbles; paired return paths take separate shape-anchored lanes.
