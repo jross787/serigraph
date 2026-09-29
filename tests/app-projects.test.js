@@ -3,7 +3,15 @@
 // without confusing the id for a scope/node suffix.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseHash, buildHash } from '../app/routes.js';
+import { parseHash, buildHash, movedMapCandidate } from '../app/routes.js';
+
+test('missing linked originals never recover as a different map with the same filename', () => {
+  const first = 'linked-00000000-0000-4000-8000-000000000001/map';
+  const second = 'linked-00000000-0000-4000-8000-000000000002/map';
+  assert.equal(movedMapCandidate(first, [{id: second}, {id: 'map'}]), null);
+  assert.equal(movedMapCandidate('map', [{id: second}]), null, 'ordinary maps cannot recover into a local link either');
+  assert.deepEqual(movedMapCandidate('old/map', [{id: second}, {id: 'new/map'}]), {id: 'new/map'});
+});
 
 test('home routes: empty, bare #, and #/ all mean the projects home', () => {
   for (const h of ['', '#', '#/']) {

@@ -1,51 +1,70 @@
 #!/bin/bash
-# Build dist/Serigraph.app — a double-clickable launcher for the local
-# Serigraph server. Zero dependencies: the bundle is a plain .app folder
-# whose script starts `node server/main.js` from this repo and opens the
-# app in the default browser. The repo path is baked in at build time.
+# Build Serigraph.app, the native Mac window for the local Serigraph server.
+#
+#   tools/build-mac-app.sh [destination.app]
+#
+# The default destination is ~/Applications/Serigraph.app. The app talks to
+# the background server that `serigraph install` sets up; it does not contain
+# the engine. Needs the Swift compiler from Xcode or the Command Line Tools
+# (install them with: xcode-select --install).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$ROOT/dist/Serigraph.app"
+APP="${1:-$HOME/Applications/Serigraph.app}"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/serigraph-mac.XXXXXX")"
+trap 'rm -r "$WORK"' EXIT
 
-rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+command -v swiftc >/dev/null || { echo "Swift is missing. Run: xcode-select --install" >&2; exit 1; }
+VERSION="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo dev)"
+SOURCE_HASH="$(cat "$ROOT/mac/Serigraph.swift" "$ROOT/mac/make-icon.swift" "$0" | shasum -a 256 | cut -c1-16)"
 
-cat > "$APP/Contents/Info.plist" << 'PLIST'
+BUNDLE="$WORK/Serigraph.app"
+mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
+swiftc -O -o "$BUNDLE/Contents/MacOS/Serigraph" "$ROOT/mac/Serigraph.swift"
+swiftc -O -o "$WORK/make-icon" "$ROOT/mac/make-icon.swift"
+"$WORK/make-icon" "$WORK/AppIcon.iconset"
+iconutil -c icns -o "$BUNDLE/Contents/Resources/AppIcon.icns" "$WORK/AppIcon.iconset"
+
+cat > "$BUNDLE/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key><string>Serigraph</string>
   <key>CFBundleDisplayName</key><string>Serigraph</string>
-  <key>CFBundleIdentifier</key><string>app.serigraph.local</string>
-  <key>CFBundleVersion</key><string>1.0.0</string>
-  <key>CFBundleShortVersionString</key><string>1.0.0</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleIdentifier</key><string>app.serigraph.mac</string>
   <key>CFBundleExecutable</key><string>Serigraph</string>
-  <key>LSMinimumSystemVersion</key><string>12.0</string>
-  <key>LSUIElement</key><true/>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>2.0</string>
+  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>SerigraphSourceHash</key><string>$SOURCE_HASH</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSSupportsAutomaticTermination</key><false/>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>Serigraph map</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key><array><string>public.yaml</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Folder of Serigraph maps</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key><array><string>public.folder</string></array>
+    </dict>
+  </array>
 </dict>
 </plist>
 PLIST
 
-cat > "$APP/Contents/MacOS/Serigraph" << LAUNCHER
-#!/bin/bash
-# Serigraph launcher — starts the local server if needed, then opens the app.
-URL="http://localhost:4700/"
-ROOT="$ROOT"
-
-if ! curl -s -m 2 -o /dev/null "\$URL"; then
-  cd "\$ROOT"
-  nohup /usr/bin/env node server/main.js >/dev/null 2>&1 &
-  for _ in \$(seq 1 40); do
-    curl -s -m 1 -o /dev/null "\$URL" && break
-    sleep 0.25
-  done
-fi
-open "\$URL"
-LAUNCHER
-chmod +x "$APP/Contents/MacOS/Serigraph"
-
+codesign --force --sign - "$BUNDLE" >/dev/null 2>&1
+mkdir -p "$(dirname "$APP")"
+if [ -d "$APP" ]; then mv "$APP" "$WORK/previous.app"; fi
+mv "$BUNDLE" "$APP"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" >/dev/null 2>&1 || true
 echo "Built $APP"
-echo "Move it to /Applications or your Dock. Double-click starts the server and opens http://localhost:4700/."

@@ -20,6 +20,7 @@ import { renderGitHubGlance } from './github.js';
 import { NODE_VISUALS, CONNECTION_MEANINGS, nodeTypeLabel, connectionPresentation } from '../shared/visual-language.js';
 import { connectionsOf } from '../shared/connections.js';
 import { openAnnotationEditor, renderAnnotationDetail, duplicateBoardSelection, deleteBoardSelection } from './board.js';
+import { localLibraryDialog, openFile } from './library-links.js';
 
 let fieldId = 0;
 
@@ -248,7 +249,7 @@ function openMapMenu(anchor) {
     },
     h('span', { class: 'mi-name' }, m.name || m.id, isCurrent ? icon('check', 14) : null),
     h('span', { class: 'mi-sub' }, m.invalid ? icon('warning-circle', 14) : null, m.invalid ? `${m.errorCount} problem${m.errorCount === 1 ? '' : 's'} — open to see details` : `${m.nodeCount} nodes`));
-    if (!state.standalone) {
+    if (!state.standalone && !m.project?.linked) {
       row.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
         closeMenus();
@@ -306,6 +307,8 @@ function openMapMenu(anchor) {
       h('span', { class: 'mi-name' }, '+ New map…')));
     menu.append(h('button', { class: 'menu-item', onClick: () => { closeMenus(); newProjectDialog(); } },
       h('span', { class: 'mi-name' }, '+ New project…')));
+    menu.append(h('button', { class: 'menu-item', onClick: () => { closeMenus(); openFile(); } },
+      h('span', { class: 'mi-name' }, 'Open file…')));
   }
   document.body.append(menu);
   setTimeout(() => {
@@ -331,7 +334,7 @@ function mapStatusDot(m) {
 
 function projectIndexFor(slug) {
   const p = state.projects.find((item) => item.slug === slug);
-  return p ? { name: p.name, description: p.description ?? null, order: p.order ?? [], tags: p.tags ?? {} } : null;
+  return p ? { ...p, description: p.description ?? null, order: p.order ?? [], tags: p.tags ?? {} } : null;
 }
 
 function mapTile(m, index) {
@@ -350,7 +353,7 @@ function mapTile(m, index) {
     h('span', { class: `proj-dot ${dot.cls}` })),
   h('span', { class: 'proj-tile-name' }, m.name || mapSlug),
   h('span', { class: 'proj-tile-meta' }, `${m.mode === 'freeform' ? 'Freeform' : 'Process'} · ${m.nodeCount ?? 0} nodes`));
-  if (state.standalone) return tile;
+  if (state.standalone || m.project?.linked) return tile;
   return h('div', { class: 'proj-tile-wrap' }, tile,
     h('button', {
       class: 'proj-tile-trash',
@@ -360,6 +363,49 @@ function mapTile(m, index) {
     }, 'Trash'));
 }
 
+const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+function openedAgo(iso) {
+  const seconds = (Date.parse(iso) - Date.now()) / 1000;
+  const steps = [[60, 'second'], [60, 'minute'], [24, 'hour'], [7, 'day'], [4.35, 'week'], [12, 'month'], [Infinity, 'year']];
+  let value = seconds;
+  for (const [size, unit] of steps) {
+    if (Math.abs(value) < size) return unit === 'second' ? 'just now' : relativeTime.format(Math.round(value), unit);
+    value /= size;
+  }
+  return '';
+}
+
+function machineLabel(item) {
+  if (!item.machine || item.machine === state.machine) return 'this computer';
+  return item.machineLabel || item.machine;
+}
+
+// Linked single files are opened, not organized: list them together instead
+// of giving each one its own project card.
+const isOpenedFile = (project) => project?.linked && project.linkKind === 'file';
+
+function recentTiles() {
+  const byId = new Map(state.maps.map((m) => [m.id, m]));
+  const tiles = [];
+  for (const item of state.recents) {
+    if (tiles.length >= 8) break;
+    const map = byId.get(item.id);
+    const project = map?.project ? state.projects.find((p) => p.slug === map.project.slug) : null;
+    const linked = state.projects.find((p) => p.linked && item.id.startsWith(`${p.slug}/`));
+    if (!map && !linked?.unavailable) continue; // deleted or moved away
+    const where = map ? (isOpenedFile(project) ? project.location.replace(/\/[^/]*$/, '') : project?.name ?? 'Maps') : linked.location;
+    const when = `${openedAgo(item.openedAt)} on ${machineLabel(item)}`;
+    tiles.push(h('button', {
+      class: `recent-tile${map ? '' : ' unavailable'}`,
+      ...(map ? { onClick: () => ctrl.openMap(map.id) } : { disabled: '', title: 'Not on this computer. It lives in a folder or repo that only another computer has.' }),
+    },
+    h('span', { class: 'recent-name' }, map?.name || linked?.name || item.id),
+    h('span', { class: 'recent-where' }, where),
+    h('span', { class: 'recent-when' }, map ? when : `Not on this computer · ${when}`)));
+  }
+  return tiles;
+}
+
 function renderHome() {
   const host = document.getElementById('projects-home');
   if (!host) return;
@@ -367,15 +413,17 @@ function renderHome() {
   host.hidden = false;
 
   const rootMaps = state.maps.filter((m) => !m.project);
+  const openedFiles = [];
   const byProject = new Map();
   for (const m of state.maps) {
     if (!m.project) continue;
+    if (isOpenedFile(state.projects.find((p) => p.slug === m.project.slug))) { openedFiles.push(m); continue; }
     if (!byProject.has(m.project.slug)) byProject.set(m.project.slug, []);
     byProject.get(m.project.slug).push(m);
   }
   // a project with zero maps still gets a card
   for (const p of state.projects) {
-    if (!byProject.has(p.slug)) byProject.set(p.slug, []);
+    if (!byProject.has(p.slug) && !isOpenedFile(p)) byProject.set(p.slug, []);
   }
 
   const orderedSlugs = [...byProject.keys()].sort((a, b) => {
@@ -395,8 +443,14 @@ function renderHome() {
     state.standalone ? null : h('div', { class: 'proj-head-actions' },
       homeFilter ? h('button', { class: 'd-btn', onClick: () => { homeFilter = null; renderHome(); } }, '‹ All projects') : null,
       h('button', { class: 'd-btn', onClick: () => openTrashDialog() }, `Trash${state.trash.length ? ` (${state.trash.length})` : ''}`),
+      h('button', { class: 'd-btn', onClick: () => openFile() }, 'Open…'),
       h('button', { class: 'd-btn', onClick: () => newProjectDialog() }, '+ New project'),
       h('button', { class: 'd-btn primary', onClick: () => newMapDialog() }, '+ New map')));
+
+  const recent = homeFilter ? [] : recentTiles();
+  const recentSection = recent.length ? h('section', { class: 'home-recent', 'aria-labelledby': 'home-recent-title' },
+    h('h2', { id: 'home-recent-title', class: 'home-section-title' }, 'Recent'),
+    h('div', { class: 'recent-row' }, recent)) : null;
 
   const body = h('div', { class: 'proj-grid' });
   for (const slug of visibleSlugs) {
@@ -416,7 +470,10 @@ function renderHome() {
         h('h2', {}, index?.name ?? slug),
         h('div', { class: 'proj-card-actions' },
           h('span', { class: 'proj-count' }, `${maps.length} map${maps.length === 1 ? '' : 's'}`),
-          state.standalone ? null : h('button', {
+          state.standalone ? null : index?.linked ? h('button', {
+            class: 'd-btn', onClick: () => localLibraryDialog(index),
+            title: 'Remove the library reference without deleting original files',
+          }, 'Remove link') : h('button', {
             class: 'proj-card-trash',
             title: `Move ${index?.name ?? slug} to Trash`,
             onClick: () => moveToTrashDialog('project', {
@@ -426,9 +483,12 @@ function renderHome() {
             }),
           }, 'Trash'))),
       index?.description ? h('p', { class: 'proj-desc' }, index.description) : null,
+      index?.linked ? h('p', { class: 'proj-desc linked-location' },
+        h('strong', {}, index.unavailable ? 'Linked location unavailable' : `Linked ${index.linkKind} · edits save to originals`),
+        h('span', {}, index.location), index.error ? h('span', {}, index.error) : null) : null,
       h('div', { class: 'proj-tiles' }, tiles.length
         ? tiles.map((m) => mapTile(m, index))
-        : [h('p', { class: 'proj-empty' }, 'No maps yet — move one in from the map switcher.')])));
+        : [h('p', { class: 'proj-empty' }, index?.linked ? 'Check the original location, then reload Projects.' : 'No maps yet — move one in from the map switcher.')])));
   }
 
   if (!homeFilter && rootMaps.length) {
@@ -440,12 +500,35 @@ function renderHome() {
       h('div', { class: 'proj-tiles' }, rootMaps.map((m) => mapTile(m, null)))));
   }
 
-  if (!visibleSlugs.length && !rootMaps.length) {
-    body.append(h('div', { class: 'proj-none' },
-      h('p', {}, 'Nothing here yet. Create a project or a map to get started.')));
+  const missingFiles = state.projects.filter((p) => isOpenedFile(p) && p.unavailable);
+  if (!homeFilter && (openedFiles.length || missingFiles.length)) {
+    const fileTile = (m) => {
+      const project = state.projects.find((p) => p.slug === m.project.slug);
+      return h('div', { class: 'proj-tile-wrap' }, mapTile(m, null),
+        h('p', { class: 'opened-location', title: project.location }, project.location.replace(/\/[^/]*$/, '')),
+        h('button', { class: 'proj-tile-trash', title: 'Remove from Serigraph. The file stays where it is.', onClick: () => localLibraryDialog(project) }, 'Remove'));
+    };
+    const missingTile = (p) => h('div', { class: 'proj-tile-wrap' },
+      h('button', { class: 'proj-tile unavailable', disabled: '', title: 'Not on this computer' },
+        h('span', { class: 'proj-tile-name' }, p.name),
+        h('span', { class: 'proj-tile-meta' }, 'Not on this computer')),
+      h('p', { class: 'opened-location', title: p.location }, p.location.replace(/\/[^/]*$/, '')),
+      h('button', { class: 'proj-tile-trash', title: 'Remove from Serigraph. The file stays where it is.', onClick: () => localLibraryDialog(p) }, 'Remove'));
+    const count = openedFiles.length + missingFiles.length;
+    body.append(h('article', { class: 'proj-card opened-files' },
+      h('header', { class: 'proj-card-head' },
+        h('h2', {}, 'Opened from other folders'),
+        h('span', { class: 'proj-count' }, `${count} file${count === 1 ? '' : 's'}`)),
+      h('p', { class: 'proj-desc' }, 'Files that stay where they are, such as a map inside a code repo. Edits save to the original file.'),
+      h('div', { class: 'proj-tiles' }, [...openedFiles.map(fileTile), ...missingFiles.map(missingTile)])));
   }
 
-  host.replaceChildren(head, body);
+  if (!visibleSlugs.length && !rootMaps.length && !openedFiles.length) {
+    body.append(h('div', { class: 'proj-none' },
+      h('p', {}, 'Nothing here yet. Create a project or a map, or open a map file from anywhere on this computer.')));
+  }
+
+  host.replaceChildren(head, ...(recentSection ? [recentSection] : []), body);
 }
 
 function newProjectDialog() {
@@ -474,7 +557,7 @@ function moveMapDialog(mapSummary) {
   const current = mapSummary.project?.slug ?? null;
   const options = [
     { slug: null, name: 'Ungrouped (root maps/ folder)' },
-    ...state.projects.map((p) => ({ slug: p.slug, name: p.name })),
+    ...state.projects.filter(p => !p.linked).map((p) => ({ slug: p.slug, name: p.name })),
   ].filter((o) => o.slug !== current);
   const list = h('div', { class: 'move-list' }, options.map((o) =>
     h('button', {
@@ -967,12 +1050,12 @@ export function addNodeDialog(ownerId, options = {}) {
   ]);
 }
 
-function newMapDialog() {
+export function newMapDialog() {
   const name = h('input', { class: 'f-input', placeholder: 'e.g. Customer systems' });
   const mode = mapModeSegment('process');
   const projectSel = h('select', { class: 'f-select' },
     h('option', { value: '' }, 'Ungrouped (root maps/ folder)'),
-    state.projects.map((p) => h('option', { value: p.slug, ...(p.slug === currentProjectSlug() || p.slug === homeFilter ? { selected: '' } : {}) }, p.name)));
+    state.projects.filter(p => !p.linked).map((p) => h('option', { value: p.slug, ...(p.slug === currentProjectSlug() || p.slug === homeFilter ? { selected: '' } : {}) }, p.name)));
   modal('New map', h('div', {},
     h('div', { class: 'f-field' }, h('label', {}, 'Map name'), name),
     h('div', { class: 'f-field' }, h('label', {}, 'Mode'), mode),
@@ -3126,6 +3209,7 @@ export function initUI() {
   bus.on('maps-listed', () => { renderSwitcher(); if (!state.mapId) renderHome(); });
   bus.on('projects-listed', () => { if (!state.mapId) renderHome(); });
   bus.on('trash-listed', () => { if (!state.mapId) renderHome(); });
+  bus.on('recents-listed', () => { if (!state.mapId) renderHome(); });
   bus.on('templates-loaded', () => {
     if (!document.getElementById('templates-panel').hidden) renderTemplates();
   });

@@ -24,9 +24,40 @@ Use the map switcher, or open these seeded examples directly:
 >
 > The server listens on **localhost only** (client data stays on your machine — see [docs/DATA-HANDLING.md](docs/DATA-HANDLING.md)). To share on your network deliberately: `node server/main.js --lan`.
 
+## Use it on your Macs
+
+To run the same Serigraph with the same maps on every Mac, run this once on
+each Mac from a clone of this repository:
+
+```sh
+node tools/serigraph.mjs install --google-drive you@example.com
+```
+
+That sets up five things:
+
+1. **Its own copy of the engine** in `~/Library/Application Support/Serigraph/engine`,
+   always on `main`. A development clone is never the app you use.
+2. **A background server** at `http://127.0.0.1:4747` that starts at login and restarts if it stops.
+3. **Automatic updates** from GitHub every hour. Open windows reload onto the new version,
+   unless you are in the middle of an edit.
+4. **Serigraph.app** in `~/Applications`, with standard Mac menus, File → Open, Open Recent,
+   and Finder's Open With. It is a small native window, not a browser tab.
+5. **One library folder**, `Serigraph` in that Google Drive account's My Drive. Every Mac
+   signed in to the account sees the same maps. Use `--library <folder>` for any other folder.
+
+AI provider keys stay in `~/Library/Application Support/Serigraph/.env` on each Mac and
+never enter the shared library; `--env-from <file>` copies an existing `.env` once. Run
+`node tools/serigraph.mjs status` to see a Mac's setup, and run install again at any time;
+it keeps the library and settings.
+
+To reach the library from other devices through a reverse proxy such as Caddy on one Mac,
+add `--allowed-host <name>` and point the proxy at `127.0.0.1:4747`. That name is shared
+access: it cannot open local files, switch folders, or install updates.
+
 ## Update it
 
-Open **More actions (•••) → App updates**. A compact **Update available**
+A Mac set up with `install` updates itself; see above. For a clone started with
+`npm start`, open **More actions (•••) → App updates**. A compact **Update available**
 button also appears in the top bar when a newer revision is found. Click it
 to review the running/available Git revisions, then **Update & restart**.
 The local server restarts on the same port and the tab reloads at the same map

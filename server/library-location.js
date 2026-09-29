@@ -26,7 +26,14 @@ async function readPreference(file) {
 }
 
 export async function resolveLibraryRoot(root, env = process.env) {
-  if (env.SERIGRAPH_LIBRARY_DIR) return path.resolve(env.SERIGRAPH_LIBRARY_DIR);
+  if (env.SERIGRAPH_LIBRARY_DIR) {
+    // A cloud drive may mount after login. Never create the folder in its
+    // place, or files would land outside the drive; the launcher retries.
+    const library = path.resolve(env.SERIGRAPH_LIBRARY_DIR);
+    try { if (!(await fs.stat(library)).isDirectory()) throw new Error(); }
+    catch { throw new Error(`The library folder is unavailable: ${library}. Reconnect it (for example, open Google Drive) and start Serigraph again.`); }
+    return library;
+  }
   const saved = await readPreference(preferencesPath(root, env));
   if (!saved) return root;
   // Never silently fall back to another library when a drive is missing.

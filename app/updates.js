@@ -28,6 +28,30 @@ export function maintenanceBlocker(exclude = panel) {
   return updateBlocker(state, !!draft);
 }
 
+// Keep the exact camera even when the hash selects a node (which normally
+// fits that node on reload). Store only view metadata.
+function reloadKeepingView() {
+  try { sessionStorage.setItem(VIEW_KEY, JSON.stringify({
+    library: state.libraryId, hash: location.hash, camera: getCamera(), at: Date.now(),
+  })); } catch { /* existing hash/camera persistence still applies */ }
+  location.reload();
+}
+
+// A background update restarts the server with new code. When the live
+// connection comes back on a different revision, move this page to it too,
+// unless an edit is in progress; then ask instead of discarding it.
+let bootRevision = null;
+let reloadOffered = false;
+export async function serverReconnected() {
+  if (state.standalone || state.updateApplying || reloadOffered) return;
+  let status;
+  try { status = await api.updateStatus(AbortSignal.timeout(5000)); } catch { return; }
+  if (!bootRevision || !status.running || status.running === bootRevision) return;
+  if (!maintenanceBlocker()) { reloadKeepingView(); return; }
+  reloadOffered = true;
+  toast('Serigraph was updated. Finish this edit, then reload to use the new version.', true);
+}
+
 function paintIndicator() {
   const button = document.getElementById('btn-update-available');
   if (!button) return;
@@ -41,6 +65,7 @@ async function check(force = false) {
   renderPanel();
   try {
     latest = await api.updateStatus(AbortSignal.timeout(5000));
+    bootRevision ??= latest.running ?? null;
     if (latest.enabled && (force || !latest.checkedAt || Date.now() - latest.checkedAt >= HOUR)) {
       latest = await api.updateAction('check', latest.token);
     }
@@ -60,6 +85,7 @@ function renderPanel() {
     : latest?.status === 'available' ? 'Update available'
       : latest?.status === 'current' ? 'You’re up to date'
         : latest?.message || 'Check for a newer version of Serigraph.';
+  if (latest?.managed) panel.querySelector('[data-update-schedule]').textContent = 'This Mac installs updates from GitHub automatically every hour and reloads open windows. Check now installs one sooner.';
   panel.querySelector('[data-update-version]').textContent = [
     `Running: ${latest?.running?.slice(0, 8) || 'unknown'}`,
     latest?.target ? `Available: ${latest.target.slice(0, 8)} · ${latest.remote}/${latest.branch}` : '',
@@ -96,10 +122,7 @@ async function install() {
         if (result.instance !== approved.instance && result.running === approved.target) {
           // Keep the exact camera even when the hash selects a node (which
           // normally fits that node on reload). Store only view metadata.
-          try { sessionStorage.setItem(VIEW_KEY, JSON.stringify({
-            library: state.libraryId, hash: location.hash, camera: getCamera(), at: Date.now(),
-          })); } catch { /* existing hash/camera persistence still applies */ }
-          location.reload();
+          reloadKeepingView();
           return;
         }
       } catch { /* briefly offline during a normal restart */ }
@@ -125,7 +148,7 @@ function openPanel() {
   panel.innerHTML = `<h2 id="update-title">App updates</h2>
     <p data-update-status role="status" aria-live="polite"></p>
     <p class="update-version" data-update-version></p>
-    <p class="hint">Checks run on opening the app and hourly while it is visible. They contact the configured Git remote, not your mapped systems. Nothing installs automatically.</p>
+    <p class="hint" data-update-schedule>Checks run on opening the app and hourly while it is visible. They contact the configured Git remote, not your mapped systems. Nothing installs automatically.</p>
     <p class="hint">Update &amp; restart installs the revision shown above, briefly restarts this local server, and reloads this tab. Finish drafts, sync, and AI/agent work; close other Serigraph tabs first. Local map files and configuration are protected. No automatic rollback.</p>
     <p class="dialog-error" data-update-blocker></p>
     <div class="dialog-actions">

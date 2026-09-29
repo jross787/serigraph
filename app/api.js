@@ -35,6 +35,21 @@ async function jfetch(url, opts) {
 }
 
 export const api = {
+  localLinksStatus: () => jfetch('/api/local-links'),
+  localLinksAction: (action, token, payload) => jfetch(`/api/local-links/${action}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Serigraph-Links-Token': token },
+    body: JSON.stringify(payload),
+  }),
+  async listRecents() {
+    if (state.standalone) return { machine: null, items: [] };
+    return jfetch('/api/recents');
+  },
+  async recordRecent(id) {
+    if (state.standalone) return null;
+    return jfetch('/api/recents', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+    });
+  },
   libraryStatus: signal => jfetch('/api/library', { signal }),
   libraryAction: (action, token, payload) => jfetch(`/api/library/${action}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Serigraph-Settings-Token': token },
@@ -241,12 +256,16 @@ export const api = {
       body: JSON.stringify({ audio: base64, mime }),
     });
   },
-  subscribe(onEvent) {
+  subscribe(onEvent, onReconnect = () => {}) {
     if (state.standalone || typeof EventSource === 'undefined') return;
     const es = new EventSource('/api/events');
     es.onmessage = (msg) => {
       try { onEvent(JSON.parse(msg.data)); } catch { /* ignore */ }
     };
-    // EventSource auto-reconnects; nothing else to do.
+    // EventSource reconnects by itself; say so, because a restarted server
+    // may be running newer code.
+    let dropped = false;
+    es.onerror = () => { dropped = true; };
+    es.onopen = () => { if (dropped) { dropped = false; onReconnect(); } };
   },
 };

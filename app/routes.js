@@ -4,6 +4,15 @@
 // #/map/<id>            — root scope (id may be "<project>/<map>")
 // #/map/<id>/in/<node>  — inside a container node
 // #/map/<id>/node/<id>  — a node, selected in its parent scope
+import { isLocalLink } from '../shared/projects.js';
+
+// Only ordinary library maps can move between project folders. Linked IDs
+// identify an exact original, never another location with the same filename.
+export function movedMapCandidate(mapId, maps) {
+  if (isLocalLink(mapId)) return null;
+  const tail = mapId.split('/').pop();
+  return maps.find(map => !isLocalLink(map.id) && map.id !== mapId && map.id.split('/').pop() === tail) || null;
+}
 
 // Read a location.hash string into a route. Always decodes safely: a
 // malformed %-sequence falls back to the verbatim hash.

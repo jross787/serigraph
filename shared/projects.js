@@ -3,6 +3,7 @@
 import * as YAML from '../vendor/yaml.js';
 
 export const PROJECT_INDEX_FILE = 'projects.yaml';
+export const isLocalLink = id => typeof id === 'string' && /^linked-[0-9a-f-]{36}(?:\/|$)/.test(id);
 
 // Every field is optional: missing fields fall back to null / [] / {} and
 // only malformed YAML or wrongly-typed fields land in errors.
