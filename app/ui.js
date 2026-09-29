@@ -1,7 +1,7 @@
 // All chrome around the canvas: detail panel, dialogs, template browser,
 // search palette, breadcrumbs, map switcher, toasts, error/empty states.
 import {
-  parseMap, NODE_TYPES, PROCESS_NODE_TYPES, FREEFORM_NODE_TYPES, AUTOMATION_STATES,
+  parseMap, NODE_TYPES, AUTOMATION_STATES,
   PLANNING_TYPES, PLAN_STATUSES, PLAN_PRIORITIES, RELATION_TYPES, HIERARCHY_RELATION_TYPES,
   OWNER_ROLES, ancestryOf, placementInScope, placementsOf,
 } from '../shared/model.js';
@@ -24,8 +24,7 @@ import { localLibraryDialog, openFile } from './library-links.js';
 
 let fieldId = 0;
 
-const isFreeform = () => state.model?.mode === 'freeform';
-const activeNodeTypes = () => isFreeform() ? FREEFORM_NODE_TYPES : PROCESS_NODE_TYPES;
+const activeNodeTypes = () => NODE_TYPES;
 const typeLabel = nodeTypeLabel;
 const isWorkNode = (node) => ['process', 'decision'].includes(node.type);
 
@@ -177,59 +176,17 @@ function renderSwitcher() {
   }
 }
 
-function renderMapMode() {
+// Map-level controls that depend on the open map: the data catalog button
+// appears only for maps that carry catalog metadata.
+function renderMapChrome() {
   closeMenus();
-  const button = document.getElementById('map-mode');
-  const label = document.getElementById('map-mode-label');
-  const freeform = isFreeform();
-  if (button) {
-    button.hidden = !state.model;
-    button.classList.toggle('freeform', freeform);
-    button.title = freeform ? 'Freeform map. Choose another mode' : 'Process map. Choose another mode';
-  }
-  if (label) label.textContent = freeform ? 'Freeform' : 'Process';
   const catalogButton = document.getElementById('btn-catalog');
   if (catalogButton) catalogButton.hidden = !state.model?.dataExplorer;
   if (!state.model?.dataExplorer) catalogView.open = false;
   const workspaces = document.getElementById('workspace-switcher');
-  if (workspaces) workspaces.hidden = freeform || !state.model;
-  const economics = document.getElementById('btn-economics');
-  if (economics) economics.hidden = freeform;
-  if (freeform && state.workspaceView !== 'map') bus.emit('workspace-map-request');
+  if (workspaces) workspaces.hidden = !state.model;
   const templates = document.getElementById('templates-panel');
   if (templates && !templates.hidden) renderTemplates();
-}
-
-function openModeMenu(anchor) {
-  if (!state.model || state.standalone) return;
-  closeMenus();
-  const r = anchor.getBoundingClientRect();
-  const menu = h('div', { class: 'menu mode-menu', role: 'menu', style: `top:${r.bottom + 6}px;left:${r.left}px` });
-  const modes = [
-    ['process', 'Process', 'Steps, decisions, owners, automation, and cost.'],
-    ['freeform', 'Freeform', 'Systems, data, APIs, people, or anything else.'],
-  ];
-  for (const [mode, label, description] of modes) {
-    menu.append(h('button', {
-      class: `menu-item${state.model.mode === mode ? ' current' : ''}`,
-      role: 'menuitemradio',
-      'aria-checked': String(state.model.mode === mode),
-      onClick: () => {
-        closeMenus();
-        if (state.model.mode === mode) return;
-        ctrl.commit(() => edit.setMapMode(mode)).then((ok) => {
-          if (!ok) return;
-          ctrl.loadMapList();
-          toast(`${label} mode on`);
-        });
-      },
-    }, h('span', { class: 'mi-name' }, label), h('span', { class: 'mi-sub' }, description)));
-  }
-  document.body.append(menu);
-  setTimeout(() => {
-    const close = (ev) => { if (!menu.contains(ev.target)) closeMenus(); };
-    document.addEventListener('pointerdown', close, { once: true });
-  }, 0);
 }
 
 function openMapMenu(anchor) {
@@ -352,7 +309,7 @@ function mapTile(m, index) {
     tag ? h('span', { class: 'proj-tag' }, tag) : null,
     h('span', { class: `proj-dot ${dot.cls}` })),
   h('span', { class: 'proj-tile-name' }, m.name || mapSlug),
-  h('span', { class: 'proj-tile-meta' }, `${m.mode === 'freeform' ? 'Freeform' : 'Process'} · ${m.nodeCount ?? 0} nodes`));
+  h('span', { class: 'proj-tile-meta' }, `${m.nodeCount ?? 0} card${m.nodeCount === 1 ? '' : 's'}`));
   if (state.standalone || m.project?.linked) return tile;
   return h('div', { class: 'proj-tile-wrap' }, tile,
     h('button', {
@@ -795,29 +752,6 @@ function typeSegment(initial, types = activeNodeTypes()) {
   return seg;
 }
 
-function mapModeSegment(initial = 'process') {
-  let value = initial;
-  const seg = h('div', { class: 'map-mode-seg' });
-  const options = [
-    ['process', 'Process', 'Map steps, decisions, owners, and automation.'],
-    ['freeform', 'Freeform', 'Map systems, data, APIs, people, or anything else.'],
-  ];
-  for (const [mode, label, description] of options) {
-    const button = h('button', {
-      class: mode === value ? 'on' : '',
-      onClick: (ev) => {
-        ev.preventDefault();
-        value = mode;
-        seg.querySelectorAll('button').forEach((item) => item.classList.remove('on'));
-        button.classList.add('on');
-      },
-    }, h('strong', {}, label), h('span', {}, description));
-    seg.append(button);
-  }
-  seg.value = () => value;
-  return seg;
-}
-
 function automationSelect(initial = '') {
   const labels = {
     manual: 'Manual — a human does it',
@@ -868,10 +802,13 @@ function ownerValues(value) {
   });
 }
 
-function addElementDialog(ownerId, options = {}) {
-  const ownerLabel = state.model.byId.get(ownerId)?.label ?? ownerId;
+// Place something already on the map (a shared element) somewhere else, or
+// create a new shared element. Each placement keeps its own note/position.
+export function addSharedDialog(ownerId, options = {}) {
+  if (state.standalone || !state.model) return;
+  const ownerLabel = ownerId == null ? state.model.name : state.model.byId.get(ownerId)?.label ?? ownerId;
   const position = options?.position ?? null;
-  const initialType = FREEFORM_NODE_TYPES.includes(options?.type) ? options.type : 'item';
+  const initialType = NODE_TYPES.includes(options?.type) ? options.type : 'system';
   const search = h('input', {
     class: 'f-input element-search',
     type: 'search',
@@ -882,7 +819,7 @@ function addElementDialog(ownerId, options = {}) {
   createPanel.hidden = true;
   const createButton = h('button', { class: 'element-create-toggle' }, '+ Create a new element');
   const body = h('div', { class: 'element-picker' },
-    h('p', { class: 'hint element-picker-hint' }, `Add an existing element to “${ownerLabel}”, or create one shared definition.`),
+    h('p', { class: 'hint element-picker-hint' }, `Place something that already appears elsewhere in this map, or create a shared card that can appear in several places. It goes ${ownerId == null ? 'at the top level' : `in “${ownerLabel}”`}.`),
     search,
     list,
     createButton,
@@ -914,7 +851,7 @@ function addElementDialog(ownerId, options = {}) {
     // Library systems not yet in this map can be added in one step.
     const inMap = new Set(state.model.elements.map((element) => element.library).filter(Boolean));
     const shared = state.systems
-      .filter((system) => !inMap.has(system.id) && FREEFORM_NODE_TYPES.includes(system.type))
+      .filter((system) => !inMap.has(system.id) && NODE_TYPES.includes(system.type))
       .filter((system) => !query || system.label.toLowerCase().includes(query) || typeLabel(system.type).toLowerCase().includes(query));
     list.replaceChildren();
     if (!available.length && !shared.length) {
@@ -966,7 +903,7 @@ function addElementDialog(ownerId, options = {}) {
     list.hidden = true;
     createPanel.hidden = false;
     const label = h('input', { class: 'f-input', placeholder: 'e.g. Looker API' });
-    const type = typeSegment(initialType, FREEFORM_NODE_TYPES);
+    const type = typeSegment(initialType, NODE_TYPES);
     const description = h('textarea', { class: 'f-textarea', placeholder: 'What is this shared element?' });
     const note = h('textarea', { class: 'f-textarea compact-textarea', placeholder: `Optional note about its use in ${ownerLabel}` });
     createPanel.replaceChildren(
@@ -1007,25 +944,13 @@ function addElementDialog(ownerId, options = {}) {
     label.focus();
   });
 
-  close = modal('Add element', body, [{ label: 'Cancel' }]);
-}
-
-export function addElementToGroup(ownerId = state.scopeId, options = {}) {
-  if (!isFreeform() || ownerId == null) return false;
-  addElementDialog(ownerId, options);
-  return true;
+  close = modal('Place something already on the map', body, [{ label: 'Cancel' }]);
 }
 
 
 export function addNodeDialog(ownerId, options = {}) {
   if (state.standalone || !state.model) return;
-  const freeform = isFreeform();
-  if (freeform && ownerId != null) {
-    addElementDialog(ownerId, typeof options === 'string' ? { type: options } : options);
-    return;
-  }
-
-  const addingGroup = freeform && ownerId == null;
+  const addingGroup = !!options?.group;
   const defaultType = addingGroup ? 'item' : 'process';
   const type = typeof options === 'string' ? options : options?.type ?? defaultType;
   const ownerLabel = ownerId ? state.model.byId.get(ownerId)?.label : state.model?.name;
@@ -1061,7 +986,7 @@ export function addNodeDialog(ownerId, options = {}) {
   seg.addEventListener('click', () => {
     label.placeholder = `e.g. ${NODE_VISUALS[seg.value()]?.example || 'Review request'}`;
   });
-  const productMode = !freeform && state.model.document.kind !== 'process';
+  const productMode = state.model.document.kind !== 'process';
   const planningType = enumSelect(PLANNING_TYPES, 'requirement');
   const planningStatus = enumSelect(PLAN_STATUSES, 'draft');
   const planningPriority = enumSelect(PLAN_PRIORITIES, 'should');
@@ -1091,9 +1016,7 @@ export function addNodeDialog(ownerId, options = {}) {
       h('label', { class: 'planning-toggle' }, planningEnabled, h('span', {}, 'Include as a product-planning item')),
       planningFields) : null,
     h('div', { class: 'f-field' }, h('label', {}, 'Description'), desc),
-    h('p', { class: 'hint' }, addingGroup
-      ? `Creates a top-level group in “${ownerLabel}”.`
-      : `Will be added ${ownerId ? `inside “${ownerLabel}”` : `at the top level of “${ownerLabel}”`}.`));
+    h('p', { class: 'hint' }, `${addingGroup ? 'Creates a group' : 'Will be added'} ${ownerId ? `inside “${ownerLabel}”` : `at the top level of “${ownerLabel}”`}.${addingGroup ? ' Open it to put cards inside.' : ''}`));
 
   modal(addingGroup ? 'Add group' : 'Add to map', body, [
     { label: 'Cancel' },
@@ -1136,14 +1059,12 @@ export function addNodeDialog(ownerId, options = {}) {
 }
 
 export function newMapDialog() {
-  const name = h('input', { class: 'f-input', placeholder: 'e.g. Customer systems' });
-  const mode = mapModeSegment('process');
+  const name = h('input', { class: 'f-input', placeholder: 'e.g. Customer onboarding' });
   const projectSel = h('select', { class: 'f-select' },
     h('option', { value: '' }, 'Ungrouped (root maps/ folder)'),
     state.projects.filter(p => !p.linked).map((p) => h('option', { value: p.slug, ...(p.slug === currentProjectSlug() || p.slug === homeFilter ? { selected: '' } : {}) }, p.name)));
   modal('New map', h('div', {},
     h('div', { class: 'f-field' }, h('label', {}, 'Map name'), name),
-    h('div', { class: 'f-field' }, h('label', {}, 'Mode'), mode),
     state.projects.length ? h('div', { class: 'f-field' }, h('label', {}, 'Project'), projectSel) : null,
     h('p', { class: 'hint' }, 'Creates a new YAML file — portable, like every Serigraph map.')), [
     { label: 'Cancel' },
@@ -1155,7 +1076,7 @@ export function newMapDialog() {
         const project = projectSel.value || null;
         import('./api.js').then(async ({ api }) => {
           try {
-            const { id } = await api.createMap(v, mode.value(), project);
+            const { id } = await api.createMap(v, 'process', project);
             await ctrl.loadMapList();
             await ctrl.openMap(id);
             toast(`Created ${id}.yaml`);
@@ -1167,34 +1088,38 @@ export function newMapDialog() {
 }
 
 export function helpDialog() {
-  const freeform = isFreeform();
   const rows = [
-    ['⌘K / Ctrl+K', 'Search all nodes'],
-    ['double-click / ⏎', freeform ? 'Open a group' : 'Zoom into a container node'],
-    ...(freeform ? [['pan to another group', 'Follow its connections without zooming out']] : []),
-    ['Esc', 'Zoom back out or close a panel'],
-    ['Delete / Backspace', freeform ? 'Delete the selected item' : 'Delete the selected node'],
-    ['⌘D / Ctrl+D', freeform ? 'Duplicate the selected item' : 'Duplicate the selected node'],
-    ['⌘C / ⌘V', freeform ? 'Copy / paste the selected items' : 'Copy / paste the selected nodes'],
-    ['F2', freeform ? 'Rename the selected item' : 'Rename the selected node'],
-    ['← ↑ ↓ →', 'Move selection between nodes'],
+    ['⌘K / Ctrl+K', 'Search every card'],
+    ['double-click / ⏎', 'Open a group or a card with cards inside'],
+    ['pan to another group', 'Follow its connections without zooming out'],
+    ['Esc', 'Go back out one level, or close a panel'],
+    ['Delete / Backspace', 'Delete the selection'],
+    ['⌘D / Ctrl+D', 'Duplicate the selection'],
+    ['⌘C / ⌘V', 'Copy / paste the selection'],
+    ['F2', 'Rename the selected card'],
+    ['← ↑ ↓ →', 'Move the selection between cards'],
     ['V / H', 'Select / pan'],
-    ['N / C', freeform ? 'Add an item / connect items' : 'Add a unit / connect steps'],
-    ...(freeform ? [['T', 'Review note']] : [['L / T', 'Owner lanes / review note'], ['P / A', 'Path probe / automation lens']]),
+    ['N / C', 'Add a card / connect cards'],
+    ['T / D', 'Type on the board / draw with the pen'],
+    ['R / O', 'Draw a rectangle / an ellipse'],
+    ['B', 'Draw a boundary around cards; moving it moves them'],
+    ['A / L', 'Draw an arrow / a line'],
+    ['Shift while drawing', 'Squares, circles, and straight angles'],
+    ['double-click text', 'Edit it in place, including boundary names'],
+    ['M / P', 'Review note / path probe'],
     ['⇧P', 'Presentation mode'],
     ['+ / − / 0', 'Zoom in / out / fit'],
     ['⌘Z / Ctrl+Z', 'Undo'],
     ['⌘⇧Z / Ctrl+Shift+Z', 'Redo'],
-    ['drag a node', 'Move it and pin its position'],
-    ['drag a node onto a container', freeform ? 'Move it into that group' : 'Move it into that sub-map'],
-    ['drag from a node\'s ○ port', freeform ? 'Connect it to another item' : 'Draw an edge to another node'],
-    ['drag from the palette', 'Drop a new node where you release it'],
-    ['double-click empty canvas', 'Create a node at that spot'],
+    ['drag a card', 'Move it; it snaps into line with its neighbors (hold ⌘ to place freely)'],
+    ['drag a card onto a group', 'Move it inside that group'],
+    ['drag from a card\'s ○ port', 'Connect it to another card'],
+    ['double-click empty canvas', 'Add a card at that spot'],
     ['drag the background', 'Pan the canvas'],
-    ['Shift+click', freeform ? 'Add or remove an item in the selection' : 'Add or remove a node in the selection'],
-    ['Shift+drag', freeform ? 'Draw a box to select every item inside' : 'Draw a box to select every node inside'],
+    ['Shift+click', 'Add or remove a card in the selection'],
+    ['Shift+drag', 'Draw a box to select every card inside'],
     ['scroll · pinch', 'Pan · zoom'],
-    ...(freeform ? [] : [['Space (in Flow)', 'Pause or resume the moving payloads']]),
+    ['Space (in Flow)', 'Pause or resume the moving payloads'],
   ];
   const grid = h('div', { class: 'kbd-grid' });
   for (const [k, d] of rows) { grid.append(h('kbd', {}, k)); grid.append(h('span', {}, d)); }
@@ -1282,7 +1207,7 @@ function beginConnect(node) {
   hideContextActions();
   state.connectFrom = node.id;
   canvas.paintSelection();
-  toast(`Choose the ${isFreeform() ? 'item' : 'step'} this connects to · Esc cancels`);
+  toast('Choose the card this connects to · Esc cancels');
 }
 
 // A decision need not be yes/no. Start an explicit draft row in its inspector
@@ -1317,18 +1242,18 @@ function deleteNodeNow(node) {
 }
 
 function confirmDelete(node) {
-  if (!(isFreeform() && node.isElement)) return deleteNodeNow(node);
+  if (!node.isElement) return deleteNodeNow(node);
 
   const useCount = placementsOf(state.model, node.id).length;
-  const groupLabel = state.model.byId.get(state.scopeId)?.label ?? 'this group';
+  const groupLabel = state.scopeId == null ? 'the top level' : state.model.byId.get(state.scopeId)?.label ?? 'this group';
   modal(`Remove “${node.label}”?`,
     h('div', {},
-      h('p', { class: 'hint' }, `Remove this placement from “${groupLabel}”, or delete the shared element from all ${useCount} group${useCount === 1 ? '' : 's'}.`),
-      h('p', { class: 'hint' }, 'Removing this placement also removes its connections in this group.')),
+      h('p', { class: 'hint' }, `“${node.label}” appears in ${useCount} place${useCount === 1 ? '' : 's'}. Remove it from “${groupLabel}” only, or delete it everywhere.`),
+      h('p', { class: 'hint' }, 'Removing it here also removes its connections here.')),
     [
       { label: 'Cancel' },
       {
-        label: 'Remove from group',
+        label: 'Remove from here',
         onClick: () => {
           hideDetail();
           ctrl.commit(
@@ -1428,7 +1353,6 @@ export function openNodeMenu(nodeId, x, y) {
   armContextActions(nodeId);
   ctrl.selectNode(nodeId);
   const ro = state.standalone;
-  const freeform = isFreeform();
   const run = (fn) => () => { closeNodeMenu(); fn(); };
   const items = [
     node.children ? h('button', { onClick: run(() => ctrl.diveInto(node.id)) }, 'Open') : null,
@@ -1437,8 +1361,8 @@ export function openNodeMenu(nodeId, x, y) {
     ro ? null : h('button', { onClick: run(() => beginConnect(node)) }, 'Connect'),
     ro || node.type !== 'decision' ? null : h('button', { onClick: run(() => beginBranch(node)) }, 'Add outcome'),
     ro ? null : h('button', { onClick: run(() => askAiAbout(node.id)) }, 'AI'),
-    ro || freeform || !isWorkNode(node) ? null : h('button', { class: 'automate', onClick: run(() => beginAutomation(node)) }, 'Automate'),
-    ro || !node.children ? null : h('button', { onClick: run(() => addNodeDialog(node.id)) }, freeform ? 'Add item' : 'Add child'),
+    ro || !isWorkNode(node) ? null : h('button', { class: 'automate', onClick: run(() => beginAutomation(node)) }, 'Automate'),
+    ro || !node.children ? null : h('button', { onClick: run(() => addNodeDialog(node.id)) }, 'Add inside'),
     ro ? null : h('div', { class: 'context-menu-sep' }),
     ro ? null : h('button', { class: 'danger', onClick: run(() => confirmDelete(node)) }, 'Delete'),
   ].filter(Boolean);
@@ -1471,7 +1395,6 @@ function beginAutomation(node) {
 }
 
 export function openAutomation(nodeId = state.selectedId) {
-  if (isFreeform()) return false;
   const node = nodeId ? state.model?.byId.get(nodeId) : null;
   if (!node) { toast('Select a step to assess its automation opportunity'); return false; }
   beginAutomation(node);
@@ -1480,11 +1403,11 @@ export function openAutomation(nodeId = state.selectedId) {
 
 export function startConnect(nodeId = state.selectedId) {
   const node = nodeId ? state.model?.byId.get(nodeId) : null;
-  const visible = isFreeform()
+  const visible = state.model?.elementById?.has(nodeId)
     ? !!placementInScope(state.model, state.scopeId, nodeId)
     : node?.ownerId === (state.scopeId ?? null);
   if (!node || !visible) {
-    toast(`Select the ${isFreeform() ? 'item' : 'step'} this connection should start from`);
+    toast('Select the card this connection should start from');
     return false;
   }
   beginConnect(node);
@@ -1523,9 +1446,8 @@ function renderContextActions(node) {
   const actions = document.getElementById('context-actions');
   if (!actions || contextActionsArmed !== node.id || editMode || automationMode || state.presenting) return hideContextActions();
   const ro = state.standalone;
-  const freeform = isFreeform();
   const moreItems = [
-    node.children ? h('button', { onClick: () => addNodeDialog(node.id) }, freeform ? 'Add item' : 'Add child') : null,
+    node.children ? h('button', { onClick: () => addNodeDialog(node.id) }, 'Add inside') : null,
     ...node.links.map((l) => {
       const href = safeUrl(l.url);
       return href ? h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, l.label) : null;
@@ -1546,7 +1468,7 @@ function renderContextActions(node) {
     ro ? null : h('button', { class: 'context-btn', onClick: () => beginConnect(node) }, 'Connect'),
     ro || node.type !== 'decision' ? null : h('button', { class: 'context-btn', onClick: () => beginBranch(node) }, 'Add outcome'),
     ro ? null : h('button', { class: 'context-btn', onClick: () => askAiAbout(node.id) }, 'AI'),
-    ro || freeform || !isWorkNode(node) ? null : h('button', { class: 'context-btn automate', onClick: () => beginAutomation(node) }, 'Automate'),
+    ro || !isWorkNode(node) ? null : h('button', { class: 'context-btn automate', onClick: () => beginAutomation(node) }, 'Automate'),
     ro ? null : h('button', { class: 'context-btn danger', onClick: () => confirmDelete(node) }, 'Delete'),
   ].filter(Boolean);
   actions.replaceChildren(...primary, ...(more ? [more] : []));
@@ -1868,22 +1790,21 @@ function renderDetail() {
   renderContextActions(node);
 
   const ro = state.standalone;
-  const freeform = isFreeform();
-  const placement = freeform && node.isElement
+  const placement = node.isElement
     ? placementInScope(state.model, state.scopeId, node.id)
     : null;
   const placementPosition = placement?.position ?? node.position;
   const groupLabel = placement
     ? state.model.byId.get(placement.ownerId)?.label ?? placement.ownerId
     : null;
-  const usageLabels = freeform && node.isElement
-    ? placementsOf(state.model, node.id).map((item) => state.model.byId.get(item.ownerId)?.label ?? item.ownerId)
+  const usageLabels = node.isElement
+    ? placementsOf(state.model, node.id).map((item) => item.ownerId == null ? 'Top level' : state.model.byId.get(item.ownerId)?.label ?? item.ownerId)
     : [];
   const head = h('div', { class: 'panel-head' },
     h('div', { class: 'titles' },
       h('span', { class: 'inspector-eyebrow' },
-        node.planning ? 'Product item' : node.isElement ? 'Shared element' : freeform && node.children ? 'Group' : 'Selection'),
-      h('span', { class: `type-pill t-${node.type}` }, typeIcon(node.type, 12), freeform && node.children ? 'Group' : typeLabel(node.type)),
+        node.planning ? 'Product item' : node.isElement ? 'Shared element' : node.children ? 'Group' : 'Selection'),
+      h('span', { class: `type-pill t-${node.type}` }, typeIcon(node.type, 12), node.children && node.type === 'item' ? 'Group' : typeLabel(node.type)),
       h('h2', {}, node.label),
       h('button', {
         class: 'node-id', title: 'Copy deep link to this node',
@@ -1941,16 +1862,14 @@ function renderDetail() {
           : h('div', { class: 'desc placeholder' }, ro ? 'No description.' : isWorkNode(node) ? 'Describe what happens here.' : 'Describe this element.'))));
     const shared = librarySection(node);
     if (shared) body.append(shared);
-    const facts = inspectorSection('details', freeform ? 'Element details' : node.planning ? 'Planning details' : 'Details',
-      freeform
+    const facts = inspectorSection('details', node.isElement ? 'Shared element details' : node.planning ? 'Planning details' : 'Details',
+      node.isElement
         ? h('div', { class: 'focus-facts' },
           fact('Owners', ownerSummary),
           fact('Connections', connectionCount ? `${connectionCount} connected` : 'None'),
-          node.isElement
-            ? fact('Used in', usageLabels.length
-              ? `${usageLabels.length} group${usageLabels.length === 1 ? '' : 's'}: ${usageLabels.join(', ')}`
-              : 'No groups')
-            : null)
+          fact('Used in', usageLabels.length
+            ? `${usageLabels.length} place${usageLabels.length === 1 ? '' : 's'}: ${usageLabels.join(', ')}`
+            : 'Nowhere yet'))
         : node.planning ? h('div', { class: 'focus-facts planning-facts' },
           fact('Owner', node.owner || 'Not assigned'),
           fact('Status', node.planning.status?.replace('-', ' ') || 'Draft'),
@@ -1959,13 +1878,13 @@ function renderDetail() {
           fact('Target', node.planning.target || 'Not set'),
           fact('Acceptance', `${node.planning.acceptance.length} checks`))
           : h('div', { class: 'focus-facts' },
-            fact('Owner', node.owner || 'Not assigned'),
+            fact('Owner', node.owner || (node.owners?.length ? ownerSummary : 'Not assigned')),
             !isWorkNode(node) && !node.trigger ? null : fact('Trigger', node.trigger || 'Not documented'),
             !isWorkNode(node) && !node.sla ? null : fact('SLA', node.sla || 'No target'),
             !isWorkNode(node) && !node.systems.length ? null : h('div', { class: 'focus-fact systems-fact' }, h('span', { class: 'focus-label' }, 'Systems'), systemChips)));
     body.append(facts);
     actionSection = facts.querySelector('.inspector-section-body');
-    if (!freeform && !node.planning && (isWorkNode(node) || node.automation)) {
+    if (!node.isElement && !node.planning && (isWorkNode(node) || node.automation)) {
       const automation = inspectorSection('automation', 'Automation',
         h('div', { class: 'focus-fact readiness-fact' },
           h('span', { class: 'focus-label' }, 'Readiness'),
@@ -2002,7 +1921,7 @@ function renderDetail() {
         }, icon('check', 14), ' Mark confirmed')));
     }
 
-    if (!freeform && (isWorkNode(node) || node.cost)) {
+    if (!node.isElement && (isWorkNode(node) || node.cost)) {
       body.append(inspectorSection('cost', 'Cost — human vs. agent', renderCostSection(node, ro)));
     }
 
@@ -2021,7 +1940,7 @@ function renderDetail() {
       body.append(inspectorSection('links', node.children ? 'Contents & links' : 'Links',
         h('div', { class: 'focus-aux' },
           node.children ? h('button', { class: 'focus-link', onClick: () => ctrl.diveInto(node.id) },
-            freeform ? `Open group with ${node.stats.childCount} items` : `Open ${node.stats.childCount}-step sub-map`) : null,
+            `Open to see the ${node.stats.childCount} card${node.stats.childCount === 1 ? '' : 's'} inside`) : null,
           node.links.map((l) => {
             const href = safeUrl(l.url);
             return href ? h('a', { class: 'focus-link', href, target: '_blank', rel: 'noopener noreferrer' }, l.label.trim() || href) : null;
@@ -2033,7 +1952,7 @@ function renderDetail() {
     const seg = typeSegment(node.type);
     const desc = h('textarea', { class: 'f-textarea' });
     desc.value = node.description;
-    const owner = h('input', { class: 'f-input', value: node.owner, placeholder: freeform ? 'Who owns this item?' : 'Who owns it?' });
+    const owner = h('input', { class: 'f-input', value: node.owner, placeholder: 'Who owns it?' });
     const owners = h('textarea', {
       class: 'f-textarea compact-textarea',
       placeholder: 'business -> revenue-operations',
@@ -2051,7 +1970,11 @@ function renderDetail() {
     const sla = h('input', { class: 'f-input', value: node.sla, placeholder: 'e.g. 4 hours' });
     const automation = automationSelect(node.automation);
     const systems = h('input', { class: 'f-input', value: node.systems.join(', '), placeholder: 'Salesforce, Plaid' });
-    const productMode = !freeform && (state.model.document.kind !== 'process' || !!node.planning);
+    const productMode = !node.isElement && (state.model.document.kind !== 'process' || !!node.planning);
+    // Owners that point at shared people or teams: always for shared
+    // elements, and for other cards once the map has such people or teams.
+    const roleOwners = node.isElement || !!node.owners?.length
+      || state.model.elements.some((element) => element.type === 'role');
     const planning = node.planning ?? { type: 'requirement', status: 'draft', priority: 'should', phase: 'next', target: '', acceptance: [], evidence: [], risks: [], dependsOn: [], rice: {} };
     const planningType = enumSelect(PLANNING_TYPES, planning.type || 'requirement');
     const planningStatus = enumSelect(PLAN_STATUSES, planning.status || 'draft');
@@ -2066,7 +1989,7 @@ function renderDetail() {
     const dependsOn = h('input', { class: 'f-input', value: planning.dependsOn.join(', '), placeholder: 'node-id, another-id' });
     const relations = h('textarea', {
       class: 'f-textarea compact-textarea',
-      placeholder: freeform ? 'part-of -> parent-element-id' : 'supports -> objective-id',
+      placeholder: node.isElement ? 'part-of -> parent-element-id' : 'supports -> objective-id',
     });
     relations.value = node.relations.map((relation) => `${relation.type} -> ${relation.to}`).join('\n');
     const planningEnabled = h('input', { type: 'checkbox' });
@@ -2117,28 +2040,26 @@ function renderDetail() {
     body.append(
       h('div', { class: 'f-field' }, h('label', {}, 'Label'), label),
       h('div', { class: 'f-field' }, h('label', {}, 'Type'), seg),
-      freeform
-        ? h('div', { class: 'freeform-shared-fields' },
-          h('div', { class: 'f-field' },
-            h('label', {}, 'Owners · role -> person or team id'),
-            owners,
-            h('p', { class: 'field-help' }, roleIds.length
-              ? `Person / team ids: ${roleIds.join(', ')}`
-              : 'Create a Person / team element first, then link it here.')),
-          node.isElement ? h('div', { class: 'f-field' },
-            h('label', {}, 'Hierarchy · relation -> element id'),
-            relations,
-            h('p', { class: 'field-help' }, `${HIERARCHY_RELATION_TYPES.join(', ')}`)) : null,
-          placement ? h('div', { class: 'f-field placement-note-field' },
-            h('label', {}, `Note for ${groupLabel}`, h('span', { class: 'local-marker' }, 'Local')),
-            placementNote) : null)
-        : h('div', { class: 'form-row' },
-          h('div', { class: 'f-field' }, h('label', {}, 'Owner'), owner),
-          h('div', { class: 'f-field' }, h('label', {}, 'Automation'), automation)),
-      freeform ? null : h('div', { class: 'form-row' },
+      node.isElement ? null : h('div', { class: 'form-row' },
+        h('div', { class: 'f-field' }, h('label', {}, 'Owner'), owner),
+        h('div', { class: 'f-field' }, h('label', {}, 'Automation'), automation)),
+      roleOwners ? h('div', { class: 'f-field' },
+        h('label', {}, 'Owners · role -> person or team id'),
+        owners,
+        h('p', { class: 'field-help' }, roleIds.length
+          ? `Person / team ids: ${roleIds.join(', ')}`
+          : 'Place a shared Person / team first, then link it here.')) : null,
+      node.isElement ? h('div', { class: 'f-field' },
+        h('label', {}, 'Hierarchy · relation -> element id'),
+        relations,
+        h('p', { class: 'field-help' }, `${HIERARCHY_RELATION_TYPES.join(', ')}`)) : null,
+      placement ? h('div', { class: 'f-field placement-note-field' },
+        h('label', {}, `Note for ${groupLabel ?? 'the top level'}`, h('span', { class: 'local-marker' }, 'Local')),
+        placementNote) : null,
+      node.isElement ? null : h('div', { class: 'form-row' },
         h('div', { class: 'f-field' }, h('label', {}, 'Trigger'), trigger),
         h('div', { class: 'f-field' }, h('label', {}, 'SLA'), sla)),
-      freeform ? null : h('div', { class: 'f-field' }, h('label', {}, 'Systems (comma-separated)'), systems),
+      node.isElement ? null : h('div', { class: 'f-field' }, h('label', {}, 'Systems (comma-separated)'), systems),
       ...(planningPanel ? [planningPanel] : []),
       h('div', { class: 'f-field' }, h('label', {}, node.isElement ? 'Shared description' : 'Description'), desc),
       h('div', { class: 'f-field' }, h('label', {}, 'Links'), linksBox,
@@ -2153,12 +2074,12 @@ function renderDetail() {
                 label: label.value.trim() || node.label,
                 type: seg.value(),
                 description: desc.value,
-                owner: freeform ? undefined : owner.value,
-                owners: freeform ? ownerValues(owners.value) : undefined,
-                trigger: freeform ? undefined : trigger.value,
-                sla: freeform ? undefined : sla.value,
-                automation: freeform ? undefined : automation.value,
-                systems: freeform ? undefined : systems.value.split(',').map((s) => s.trim()).filter(Boolean),
+                owner: node.isElement ? undefined : owner.value,
+                owners: roleOwners ? ownerValues(owners.value) : undefined,
+                trigger: node.isElement ? undefined : trigger.value,
+                sla: node.isElement ? undefined : sla.value,
+                automation: node.isElement ? undefined : automation.value,
+                systems: node.isElement ? undefined : systems.value.split(',').map((s) => s.trim()).filter(Boolean),
                 planning: productMode ? (planningEnabled.checked ? {
                   ...planning,
                   type: planningType.value,
@@ -2171,7 +2092,7 @@ function renderDetail() {
                   risks: lineValues(risks.value),
                   dependsOn: dependsOn.value.split(',').map((value) => value.trim()).filter(Boolean),
                 } : null) : undefined,
-                relations: freeform && node.isElement
+                relations: node.isElement
                   ? relationValues(relations.value, HIERARCHY_RELATION_TYPES)
                   : productMode ? relationValues(relations.value) : undefined,
                 links: linkRows.map((row) => row.get()).filter((link) => link.url),
@@ -2200,14 +2121,9 @@ function renderDetail() {
 
   if (!editMode && !ro) {
     actionSection.append(h('div', { class: 'inspector-actions' },
-      freeform
-        ? h('button', { class: 'pa-btn primary-action', onClick: () => { editMode = true; renderDetail(); } },
-          node.isElement ? 'Edit shared element' : 'Edit group')
-        : node.planning
-          ? h('button', { class: 'pa-btn primary-action', onClick: () => { editMode = true; renderDetail(); } }, 'Edit requirement ', icon('arrow-right', 14))
-          : isWorkNode(node)
-            ? h('button', { class: 'pa-btn primary-action', onClick: () => beginAutomation(node) }, 'Design automation ', icon('arrow-right', 14))
-            : h('button', { class: 'pa-btn primary-action', onClick: () => { editMode = true; renderDetail(); } }, 'Edit details ', icon('arrow-right', 14))));
+      h('button', { class: 'pa-btn primary-action', onClick: () => { editMode = true; renderDetail(); } },
+        node.isElement ? 'Edit shared element' : node.planning ? 'Edit requirement ' : 'Edit details ',
+        node.isElement ? null : icon('arrow-right', 14))));
   }
   if (!editMode && state.model.dataExplorer?.objects.some(object => object.system === node.id)) {
     const actions = panel.querySelector('.panel-actions') ?? h('div', { class: 'panel-actions' });
@@ -2399,7 +2315,6 @@ function renderEdgeDetail(panel) {
   const from = state.model.byId.get(e.from), to = state.model.byId.get(e.to);
   const presentation = connectionPresentation(e);
 
-  const freeform = isFreeform();
   // The label commits on blur (Enter blurs) — no Save click, panel stays open.
   const label = h('textarea', {
     class: 'f-textarea compact-textarea', rows: 3, 'aria-label': 'Connection label',
@@ -2911,11 +2826,6 @@ export async function importDialog() {
 // canvas double-click), then open it for naming
 export function createNodeAt(type, world) {
   const position = { x: Math.round(world.x), y: Math.round(world.y) };
-  if (isFreeform()) {
-    if (state.scopeId == null) addNodeDialog(null, { type: 'item', position });
-    else addElementDialog(state.scopeId, { type, position });
-    return;
-  }
   const label = `New ${typeLabel(type)}`;
   const id = edit.uniqueId(state.model, edit.slugify(label));
   ctrl.commit(
@@ -2929,10 +2839,6 @@ export function createNodeAt(type, world) {
 }
 
 function createNodeInside(type, containerId) {
-  if (isFreeform()) {
-    addElementDialog(containerId, { type });
-    return;
-  }
   const label = `New ${typeLabel(type)}`;
   const id = edit.uniqueId(state.model, edit.slugify(label));
   const contLabel = state.model.byId.get(containerId)?.label ?? containerId;
@@ -3015,17 +2921,16 @@ export function toggleTemplates(force) {
 
 function renderTemplates() {
   const panel = document.getElementById('templates-panel');
-  const freeform = isFreeform();
-  const templates = state.templates.filter((template) => (template.mode ?? 'process') === (freeform ? 'freeform' : 'process'));
+  const templates = state.templates;
   const head = h('div', { class: 'panel-head' },
     h('div', { class: 'titles' },
       h('h2', {}, 'Template library'),
-      h('span', { class: 'node-id' }, freeform ? 'reusable map blocks. Insert, then customize' : 'reusable process blocks. Insert, then customize')),
+      h('span', { class: 'node-id' }, 'reusable map blocks. Insert, then customize')),
     h('button', { class: 'panel-close', 'aria-label': 'Close templates', onClick: () => toggleTemplates(false) }, icon('x', 16)));
   const list = h('div', { class: 'tpl-list' });
   if (!templates.length) {
     list.append(h('p', { class: 'hint', style: 'padding:8px 6px' },
-      freeform ? 'No freeform templates found.' : 'No process templates found.'));
+      'No templates found.'));
   }
   for (const t of templates) {
     list.append(h('div', { class: 'tpl-card' },
@@ -3219,9 +3124,9 @@ function renderCanvasMessage() {
     box.hidden = false;
     box.replaceChildren(h('div', { class: 'map-card' },
       h('h2', {}, state.scopeId == null ? 'This map is empty' : 'Nothing in here yet'),
-      h('p', {}, isFreeform() ? 'Add your first item, or start from a template.' : 'Add your first node, or start from a template block.'),
+      h('p', {}, 'Add your first card, or start from a template.'),
       state.standalone ? null : h('div', { class: 'empty-actions' },
-        h('button', { class: 'd-btn primary', onClick: () => addNodeDialog(state.scopeId) }, isFreeform() ? '+ Add an item' : '+ Add a node'),
+        h('button', { class: 'd-btn primary', onClick: () => addNodeDialog(state.scopeId) }, '+ Add a card'),
         h('button', { class: 'd-btn', onClick: () => openAnnotationEditor() }, '+ Note block'),
         h('button', { class: 'd-btn', onClick: () => toggleTemplates(true) }, 'Browse templates'))));
     return;
@@ -3313,7 +3218,7 @@ export function initUI() {
     clearScenarioPreview();
     renderBreadcrumbs();
     renderSwitcher();
-    renderMapMode();
+    renderMapChrome();
     renderCanvasMessage();
     renderEconomics();
     if (state.workspaceView !== 'map') hideDetail();
@@ -3352,7 +3257,7 @@ export function initUI() {
   bus.on('templates-loaded', () => {
     if (!document.getElementById('templates-panel').hidden) renderTemplates();
   });
-  bus.on('map-opened', () => { renderBreadcrumbs(); renderSwitcher(); renderMapMode(); renderCanvasMessage(); });
+  bus.on('map-opened', () => { renderBreadcrumbs(); renderSwitcher(); renderMapChrome(); renderCanvasMessage(); });
   bus.on('camera-changed', () => { positionContextActions(); positionScenarioPreview(); });
   bus.on('node-rename-request', openRenamePopover);
   bus.on('save-conflict', ({ mapId } = {}) => {
@@ -3367,7 +3272,6 @@ export function initUI() {
   });
 
   document.getElementById('map-switcher').addEventListener('click', (ev) => openMapMenu(ev.currentTarget));
-  document.getElementById('map-mode')?.addEventListener('click', (ev) => openModeMenu(ev.currentTarget));
 
   if (state.standalone) {
     for (const id of ['btn-templates', 'btn-projects']) document.getElementById(id)?.remove();

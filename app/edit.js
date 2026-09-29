@@ -118,6 +118,7 @@ function flowPositions(node) {
     for (const pair of node.items) {
       const key = typeof pair.key === 'string' ? pair.key : pair.key?.value;
       if (['position', 'size'].includes(key) && isMap(pair.value)) pair.value.flow = true;
+      else if (key === 'points' && isSeq(pair.value)) pair.value.flow = true;
       else flowPositions(pair.value);
     }
   } else if (isSeq(node)) {
@@ -189,22 +190,39 @@ export function addAnnotation(ownerId, fields) {
   if (!scope) throw new Error('Scope not found');
   const path = [...scope.nodesPath.slice(0, -1), 'annotations'];
   if (!state.doc.getIn(path, true)) state.doc.setIn(path, state.doc.createNode([]));
-  const id = uniqueId(state.model, fields.kind === 'text' ? 'text' : 'note');
-  const item = state.doc.createNode({ id, kind: fields.kind, markdown: fields.markdown,
-    position: fields.position, size: fields.size, font: fields.font ?? 'system', fontSize: fields.fontSize ?? 16 });
+  const id = uniqueId(state.model, fields.kind);
+  const item = state.doc.createNode(plainAnnotation(fields, id));
   flowPositions(item);
   const seq = useBlockSequence(state.doc, path);
   seq.add(item);
   return id;
 }
 
+// The fields an annotation keeps in YAML: text blocks keep their typography,
+// drawings keep their look (color, weight, fill, dashes, and points).
+function plainAnnotation(fields, id) {
+  const textKind = fields.kind === 'note' || fields.kind === 'text';
+  const plain = { id, kind: fields.kind };
+  if (textKind || fields.markdown?.trim()) plain.markdown = fields.markdown ?? '';
+  plain.position = fields.position;
+  plain.size = fields.size;
+  if (textKind) Object.assign(plain, { font: fields.font ?? 'system', fontSize: fields.fontSize ?? 16 });
+  else for (const key of ['shape', 'color', 'stroke', 'fill', 'dash', 'arrow']) if (fields[key] !== undefined) plain[key] = fields[key];
+  if (fields.points) plain.points = fields.points.map(Math.round);
+  return plain;
+}
+
 export function updateAnnotation(id, fields) {
   const path = annotationPath(id);
   const item = state.doc.getIn(path, true);
   const current = state.model.annotationById.get(id);
-  for (const key of ['kind', 'markdown', 'position', 'size', 'font', 'fontSize']) {
+  for (const key of ['kind', 'markdown', 'position', 'size', 'font', 'fontSize', 'shape', 'color', 'stroke', 'fill', 'dash', 'arrow', 'points']) {
     if (fields[key] === undefined || JSON.stringify(fields[key]) === JSON.stringify(current[key])) continue;
-    if (['position', 'size'].includes(key)) {
+    if (key === 'points') {
+      item.set('points', state.doc.createNode(fields.points.map(Math.round), { flow: true }));
+    } else if (key === 'markdown' && !fields.markdown && !['note', 'text'].includes(current.kind)) {
+      if (item.get('markdown', true)) item.delete('markdown'); // a drawing's label was cleared
+    } else if (['position', 'size'].includes(key)) {
       const previous = item.get(key, true);
       if (isMap(previous)) {
         for (const [part, value] of Object.entries(fields[key])) previous.set(part, value);
@@ -244,19 +262,6 @@ export function updateDocument(fields = {}) {
   }
 }
 
-export function setMapMode(mode) {
-  if (mode !== 'process' && mode !== 'freeform') throw new Error(`unknown map mode "${mode}"`);
-  if (state.model?.nodeCount) throw new Error('Create a new map to use a different mode');
-  if (mode === 'process') {
-    if (state.doc.getIn(['mode'], true)) state.doc.deleteIn(['mode']);
-    if (state.doc.getIn(['elements'], true)) state.doc.deleteIn(['elements']);
-  } else {
-    state.doc.setIn(['mode'], mode);
-    if (!state.doc.getIn(['elements'], true)) state.doc.setIn(['elements'], state.doc.createNode([]));
-  }
-  tidyTopOrder(state.doc);
-}
-
 // ── node object construction (key order = file convention) ──────────
 function nodeToPlain(fields) {
   const obj = { id: fields.id, type: fields.type, label: fields.label };
@@ -270,6 +275,7 @@ function nodeToPlain(fields) {
   if (fields.automation?.trim()) obj.automation = fields.automation.trim();
   if (fields.systems?.length) obj.systems = fields.systems.map((s) => String(s).trim()).filter(Boolean);
   if (fields.library?.trim()) obj.library = fields.library.trim();
+  if (Number.isFinite(fields.width)) obj.width = Math.round(fields.width);
   if (fields.planning) {
     const planning = planningToPlain(fields.planning);
     if (Object.keys(planning).length) obj.planning = planning;
@@ -419,9 +425,6 @@ export function addElement(fields) {
 
 export function addPlacement(ownerId, elementId, { note = '', position = null } = {}) {
   const doc = state.doc;
-  if (state.model?.mode === 'freeform' && ownerId == null) {
-    throw new Error('Choose a group before adding an item');
-  }
   const scope = ensureScope(doc, ownerId);
   if (!scope) throw new Error(`can't find group "${ownerId}" in the file`);
   if (findPlacementPath(doc, ownerId, elementId)) {
@@ -481,6 +484,10 @@ export function updateNode(nodeId, fields) {
   if (!p) throw new Error(`node "${nodeId}" not found in file`);
   if (fields.label != null) doc.setIn([...p, 'label'], fields.label);
   if (fields.type != null) doc.setIn([...p, 'type'], fields.type);
+  if (fields.width !== undefined) {
+    if (Number.isFinite(fields.width)) doc.setIn([...p, 'width'], Math.round(fields.width));
+    else if (doc.getIn([...p, 'width'], true)) doc.deleteIn([...p, 'width']);
+  }
   for (const key of ['owner', 'trigger', 'sla', 'automation', 'library']) {
     if (fields[key] === undefined) continue;
     if (String(fields[key] ?? '').trim()) doc.setIn([...p, key], String(fields[key]).trim());
@@ -538,7 +545,7 @@ export function updateNode(nodeId, fields) {
 // human-readable. Clearing it returns the node to automatic layout.
 export function setNodePosition(nodeId, { x, y }, ownerId = state.scopeId) {
   const doc = state.doc;
-  const p = state.model?.mode === 'freeform' && state.model.elementById?.has(nodeId)
+  const p = state.model?.elementById?.has(nodeId)
     ? findPlacementPath(doc, ownerId, nodeId)
     : findNodePath(doc, nodeId);
   if (!p) throw new Error(`node "${nodeId}" not found in this group`);
@@ -548,7 +555,7 @@ export function setNodePosition(nodeId, { x, y }, ownerId = state.scopeId) {
 
 export function clearNodePosition(nodeId, ownerId = state.scopeId) {
   const doc = state.doc;
-  const p = state.model?.mode === 'freeform' && state.model.elementById?.has(nodeId)
+  const p = state.model?.elementById?.has(nodeId)
     ? findPlacementPath(doc, ownerId, nodeId)
     : findNodePath(doc, nodeId);
   if (!p) throw new Error(`node "${nodeId}" not found in this group`);
@@ -612,7 +619,7 @@ export function alignNodes(ids, mode) {
 // Clearing it returns the node to automatic placement in the Flow view.
 export function setNodeFlowPosition(nodeId, { col, row }, ownerId = state.scopeId) {
   const doc = state.doc;
-  const p = state.model?.mode === 'freeform' && state.model.elementById?.has(nodeId)
+  const p = state.model?.elementById?.has(nodeId)
     ? findPlacementPath(doc, ownerId, nodeId)
     : findNodePath(doc, nodeId);
   if (!p) throw new Error(`node "${nodeId}" not found in this group`);
@@ -623,7 +630,7 @@ export function setNodeFlowPosition(nodeId, { col, row }, ownerId = state.scopeI
 
 export function clearNodeFlowPosition(nodeId, ownerId = state.scopeId) {
   const doc = state.doc;
-  const p = state.model?.mode === 'freeform' && state.model.elementById?.has(nodeId)
+  const p = state.model?.elementById?.has(nodeId)
     ? findPlacementPath(doc, ownerId, nodeId)
     : findNodePath(doc, nodeId);
   if (!p) throw new Error(`node "${nodeId}" not found in this group`);
@@ -766,7 +773,7 @@ export function setReviewResolved(nodeId, reviewId, resolved) {
 const KEY_ORDER = [
   'id', 'type', 'label', 'description', 'owner', 'owners', 'trigger', 'sla',
   'automation', 'systems', 'library', 'planning', 'links', 'relations', 'review',
-  'cost', 'note', 'position', 'flowPosition', 'children',
+  'cost', 'note', 'width', 'position', 'flowPosition', 'children',
 ];
 function tidyKeyOrder(doc, nodePath) {
   const map = doc.getIn(nodePath, true);
@@ -1046,8 +1053,10 @@ export function moveNode(nodeId, targetOwnerId) {
 
 // remove empty children containers so files stay tidy
 function cleanupScope(doc, ownerId) {
-  if (state.model?.mode === 'freeform') return;
   if (ownerId == null) return;
+  // A group (an item card) stays a group while empty; a step whose sub-map
+  // emptied goes back to being a plain step.
+  if (state.model?.byId.get(ownerId)?.type === 'item') return;
   const nodePath = findNodePath(doc, ownerId);
   if (!nodePath) return;
   const ch = doc.getIn([...nodePath, 'children'], true);
@@ -1238,9 +1247,7 @@ export function insertTemplate(ownerId, templateModel) {
   const taken = new Set();
   const rename = new Map();
   const allTemplateIds = [];
-  if (templateModel.mode === 'freeform') {
-    allTemplateIds.push(...templateModel.elements.map((element) => element.id));
-  }
+  allTemplateIds.push(...templateModel.elements.map((element) => element.id));
   (function collect(scope) {
     allTemplateIds.push(...(scope.annotations ?? []).map(annotation => annotation.id));
     for (const node of scope.nodes) {
@@ -1301,11 +1308,10 @@ export function insertTemplate(ownerId, templateModel) {
       }
       return plainEdge;
     }),
-    ...(scope.annotations?.length ? { annotations: scope.annotations.map(({ ownerId: _ownerId, ...annotation }) => ({ ...annotation, id: rid(annotation.id) })) } : {}),
+    ...(scope.annotations?.length ? { annotations: scope.annotations.map((annotation) => plainAnnotation(annotation, rid(annotation.id))) } : {}),
   });
   const plain = plainScope(templateModel.root);
-  if (templateModel.mode === 'freeform') {
-    if (model.mode !== 'freeform') throw new Error('Freeform templates can only be inserted into Freeform maps');
+  if (templateModel.elements.length) {
     if (!doc.getIn(['elements'], true)) doc.setIn(['elements'], doc.createNode([]));
     useBlockSequence(doc, ['elements']);
     for (const element of templateModel.elements) {

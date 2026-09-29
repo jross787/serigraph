@@ -27,8 +27,7 @@ export function writeHash({ push = false } = {}) {
     return;
   }
   const placed = state.selectedId
-    && state.model?.mode === 'freeform'
-    && state.model.elementById?.has(state.selectedId)
+    && state.model?.elementById?.has(state.selectedId)
     && state.scopeId != null;
   const hash = buildHash({
     mapId: state.mapId,
@@ -46,7 +45,7 @@ export function writeHash({ push = false } = {}) {
 function scopeForNode(nodeId, preferredScopeId = state.scopeId) {
   const model = state.model;
   if (!model) return null;
-  if (model.mode === 'freeform' && model.elementById?.has(nodeId)) {
+  if (model.elementById?.has(nodeId)) {
     if (preferredScopeId != null && placementInScope(model, preferredScopeId, nodeId)) return preferredScopeId;
     return placementsOf(model, nodeId)[0]?.ownerId ?? null;
   }
@@ -147,7 +146,7 @@ function entryLabel(entry) {
 
 export function nodeUrl(nodeId) {
   const ownerId = scopeForNode(nodeId);
-  const inScope = state.model?.mode === 'freeform' && state.model.elementById?.has(nodeId) && ownerId != null;
+  const inScope = state.model?.elementById?.has(nodeId) && ownerId != null;
   return `${location.origin}${location.pathname}` + buildHash({
     mapId: state.mapId,
     inId: inScope ? ownerId : null,

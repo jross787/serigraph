@@ -28,7 +28,6 @@ tags:                                      # optional badge label per map
 ```yaml
 name: Acme Lending                  # required, document title
 description: Direct lender.         # optional, short description
-mode: process                       # optional: process | freeform; default: process
 document:                           # optional — product-document metadata
   kind: prd                         # process | prd | roadmap; default: process
   version: "1.1"                    # optional text
@@ -46,9 +45,9 @@ document:                           # optional — product-document metadata
   successMetrics:
     - 80% of eligible cases complete without manual re-entry.
 
-elements:                           # Freeform only: shared element definitions
+elements:                           # optional shared cards placed with "use:"
   - ...
-nodes:                              # process nodes, or Freeform groups
+nodes:                              # cards, groups, and placements
   - ...
 edges:                              # optional arrows between top-level siblings
   - from: intake
@@ -56,28 +55,24 @@ edges:                              # optional arrows between top-level siblings
     label: qualified lead           # optional arrow label
 ```
 
-`mode` controls the map editor:
+Every map offers every feature: steps, decisions, owners, automation, cost,
+groups, and shared elements can sit side by side. Older files may carry
+`mode: process` or `mode: freeform`; the field is still accepted and no longer
+changes anything.
 
-| mode | Meaning |
-|---|---|
-| `process` | The operations editor with process node types, owner lanes, path tracing, automation, cost, and product views. |
-| `freeform` | A generic map for systems, databases, APIs, people, documents, and other items. |
+## Shared elements and placements
 
-Choose the mode when you create a map. A map with content cannot switch modes in the app because the two modes use different storage rules. Files without `mode` use Process mode.
-
-## Freeform shared elements and placements
-
-A Freeform map separates the facts about an element from the places where it appears:
+When the same thing appears in several places, such as one database used by
+several teams, define it once and place it wherever it appears:
 
 - `elements` holds each shared definition once.
-- Top-level `nodes` are groups that organize the canvas.
-- A `use` entry places one shared element inside a group.
+- A group is any card with `children`; it can hold cards and placements.
+- A `use` entry places one shared element in a group or at the top level.
 - `note` and `position` belong to that one placement.
 - A group's `edges` connect placements inside that group.
 
 ```yaml
 name: Data landscape
-mode: freeform
 
 elements:
   - id: data-team
@@ -128,20 +123,20 @@ edges:
 
 `looker` has one identity in this file. Both cards use its type, label, description, owners, links, and hierarchy relations. Editing those fields from either card changes the shared definition. Each card keeps its own note and position.
 
-Freeform rules:
+Rules:
 
 1. Every shared element needs a unique `id`, `type`, and `label` in `elements`.
-2. A top-level node is a group. It needs `children` even when the group is empty.
-3. A placement must be inside a group and must use `use: <element-id>`.
+2. A card with `children` is a group, even when the list is still empty.
+3. A placement uses `use: <element-id>`, in a group or at the top level.
 4. The same element can appear in many groups, but only once in each group.
 5. A placement can contain only `use`, `note`, and `position`. Edit shared facts in `elements`.
 6. An element cannot contain `children`, `note`, or `position`.
-7. A group edge can connect only placements in that group. A top-level edge can connect only groups.
+7. An edge connects two entries in the same scope: cards, groups, or placements side by side.
 8. Removing a placement leaves the shared element and its other placements intact.
 9. Deleting a shared element removes every placement and every connection that names it.
 10. Use a separate shared element when identity facts differ. Link a real variant with `variant-of`.
 
-`owners` links a shared element or a group to shared `role` elements:
+`owners` links any card to shared `role` elements (people or teams):
 
 ```yaml
 owners:
@@ -180,6 +175,7 @@ Freeform hierarchy uses `relations` on shared elements. The supported types are 
     - Salesforce
     - Plaid
   library: salesforce               # optional id of a shared system; see below
+  width: 280                        # optional card width, 160–720; height fits the text
   links:                            # optional outbound references
     - label: Underwriting SOP
       url: https://docs.example.com/uw-sop
@@ -348,13 +344,14 @@ The rules:
 - Remove `position` to return the card to automatic layout. In the app, click its pin badge or select **Release to auto-layout**.
 - Write the field as `position: { x: 340, y: 120 }`. Any other shape is a validation error.
 
-## Board notes and freeform text (optional)
+## Board notes, text, and drawings (optional)
 
-Both modes support an `annotations` list at the root or alongside `nodes` and
-`edges` in a group's `children` mapping. Annotations explain a board; they are
-not nodes, Freeform elements/placements, review comments, or connection endpoints.
-They do not affect node counts, process flow, costs, ownership, or auto-layout.
-A scope may contain only annotations (`nodes: []`).
+Any map can have an `annotations` list at the root, or next to `nodes` and
+`edges` in a group's `children` mapping. Annotations explain a board with words,
+shapes, boundaries, lines, arrows, and pen strokes. They are not cards,
+placements, review comments, or connection endpoints. They do not change card
+counts, process flow, costs, ownership, or automatic layout. A scope may contain
+only annotations (`nodes: []`).
 
 ```yaml
 name: Request board
@@ -380,18 +377,51 @@ annotations:
     size: { width: 700, height: 100 }
     font: serif
     fontSize: 30
+  - id: front-desk
+    kind: boundary
+    markdown: Front desk
+    position: { x: -40, y: 40 }
+    size: { width: 620, height: 240 }
+    dash: true
+  - id: callout
+    kind: shape
+    shape: ellipse
+    markdown: Needs review
+    position: { x: 700, y: -80 }
+    size: { width: 220, height: 110 }
+    color: red
+  - id: pointer
+    kind: line
+    arrow: end
+    position: { x: 300, y: -140 }
+    size: { width: 0, height: 120 }
+    points: [0, 0, 0, 120]
+    color: blue
+    stroke: medium
+  - id: sketch
+    kind: ink
+    position: { x: 680, y: 60 }
+    size: { width: 40, height: 20 }
+    points: [0, 20, 20, 0, 40, 20]
+    color: purple
 ```
+
+These rules apply to every annotation:
 
 - `id` is unique across all annotations, nodes and shared elements in the file;
   use letters, digits, hyphens or underscores, starting with a letter or digit.
-- `kind: note` is a framed block; `kind: text` has no visible background.
+- `kind` is `note`, `text`, `shape`, `boundary`, `line`, or `ink`.
+- `position` is the annotation's **top-left**, in its scope's coordinates (unlike
+  a node's center-based pin). Both numbers must be finite, within ±1,000,000.
+
+Text blocks use `kind: note` for a framed block and `kind: text` for words with
+no background:
+
 - `markdown` is required text, up to 40,000 characters. Supported formatting:
   ATX headings (`#`–`######`), paragraphs/line breaks, bullets, numbered lists,
   quotes, bold, italic, inline code and fenced code. This is a small Markdown
   subset, not full CommonMark. HTML, image/link syntax and unsupported constructs
   remain inert text. No remote fonts, images, or scripts are loaded.
-- `position` is the annotation's **top-left**, in its scope's coordinates (unlike
-  a node's center-based pin). Both numbers must be finite, within ±1,000,000.
 - `size` is required: width 80–2400 and height 40–3200, in canvas units. Text
   wraps to the width; an overflow hint appears when the block is too small.
   The complete Markdown remains available in the inspector and source.
@@ -399,15 +429,48 @@ annotations:
   local font stacks; the exact installed face can vary across machines.
 - Optional `fontSize`: 10–72, default 16. Headings scale relative to this size.
 
-Use **Add → Note block / Freeform text**. Double-click a block or choose **Edit
-text & font** to open the Markdown editor, formatting toolbar and live preview.
-**Fit text** grows/shrinks the height to the content, within the size limit.
-**Apply** saves one undoable change; **Cancel** keeps the saved map unchanged.
-Drag a block to move it; select it to reveal edge/corner resize handles. The
-editor's width/height fields provide a keyboard alternative. Duplicate, Delete
-and Undo/Redo also apply to annotations. Notes are positioned manually; move
-them clear of cards and connector labels. HTML/YAML include all scopes; SVG/PNG
-include visible-scope annotations; Markdown export includes their fenced source.
+Drawings use `kind: shape`, `boundary`, `line`, or `ink`. An `ink` drawing is a
+pen stroke:
+
+- `size` is required. Shapes and boundaries are 12–20,000 units in each
+  direction. Lines and pen strokes are 0–20,000, since a straight line can be
+  flat.
+- Optional `markdown` is a boundary's name or a shape's label. The board shows
+  its first line.
+- Optional `color`: `gray`, `blue`, `green`, `orange`, `red`, `purple`,
+  `yellow`, or `teal`. The app picks the exact shade for Light and Dark Mode.
+  The default is `gray`, or `blue` for a boundary.
+- Optional `stroke`: `thin`, `medium`, or `thick`. The default is `thin`, or
+  `medium` for a pen stroke.
+- Optional `dash: true` draws a dashed line. Optional `fill: true` adds a light
+  tint inside a shape; boundaries are tinted unless `fill: false`.
+- Shapes take an optional `shape`: `rect` (default) or `ellipse`.
+- Lines take an optional `arrow`: `none`, `end` (default), or `both`.
+- Lines and pen strokes need `points`: x, y pairs measured from `position`. A
+  line has exactly two points, `[x1, y1, x2, y2]`. A pen stroke has 2 to 8,000.
+- Shapes and boundaries are drawn behind cards. Text, lines, arrows, and pen
+  strokes are drawn on top.
+- A boundary is a drawing, not a group. When you move it in the app, the cards
+  whose centers are inside it move too, but the file does not record which
+  cards it surrounds.
+
+In the app, press **T**, click the board, and type; click away to finish or
+press Esc to cancel. Double-click any text, note, boundary name, or shape label
+to edit it in place. Press **D** for the pen, which stays on until Esc or V.
+Press **R**, **O**, **B**, **A**, or **L**, or open **Shapes**, to draw a
+rectangle, ellipse, boundary, arrow, or line. Hold Shift for squares, circles,
+and straight angles. Select a drawing to change its color, line, fill, dashes,
+arrowheads, or name; your last choices become the style of the next drawing.
+
+For longer notes, use **Add → Note block / Freeform text**, or choose **Edit
+text & font** on a selected text block, to open the Markdown editor, formatting
+toolbar and live preview. **Fit text** grows/shrinks the height to the content,
+within the size limit. **Apply** saves one undoable change; **Cancel** keeps the
+saved map unchanged. Drag an annotation to move it; select it to reveal its
+resize handles, or the two end handles of a line. Duplicate, Delete and
+Undo/Redo also apply to annotations. HTML/YAML include all scopes; SVG/PNG
+include visible-scope annotations. Markdown export includes each text block's
+fenced source, boundary names, and shape labels.
 
 ## Pinned edge routes (optional)
 
@@ -693,14 +756,14 @@ npm run validate
 
 Before saving generated YAML, check that:
 
-1. The file has a non-empty `name` and a valid `mode`.
-2. A Process node has a unique `id`, `type`, and `label`.
-3. A Freeform map stores shared definitions in `elements`. Its top-level `nodes` are groups, and each child placement uses `use`.
-4. A Freeform placement appears inside a group and contains only `use`, `note`, and `position`.
+1. The file has a non-empty `name`. A `mode`, if present, is `process` or `freeform`.
+2. A card has a unique `id`, `type`, and `label`; an optional `width` is 160 to 720.
+3. Shared definitions live in `elements`; each placement uses `use` and contains only `use`, `note`, and `position`.
+4. A group is a card with `children`; a placement may sit in a group or at the top level.
 5. Every enum uses an exact supported value.
-6. Every edge connects entries in one scope. A Freeform group edge names elements placed in that group.
-7. Every Process relation and planning dependency names an existing node.
-8. Every Freeform hierarchy relation names a shared element. Every owner link names a shared role element.
+6. Every edge connects entries in one scope.
+7. Every planning relation and planning dependency names an existing card.
+8. Every hierarchy relation names a shared element. Every owner link names a shared role element.
 9. RICE values are finite numbers. Confidence is 0 through 100 and effort is greater than zero.
 10. Product requirements include the known owner, acceptance checks, evidence, priority, status, schedule, and objective relation.
 11. Omit `position` unless a card needs a fixed spot. Use `position: { x: <number>, y: <number> }`.

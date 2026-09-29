@@ -4130,3 +4130,72 @@ g.node:focus-visible, g.node-body:focus-visible { outline: 2px solid var(--accen
 .update-auto { display: flex; gap: 8px; align-items: center; font-size: 12.5px; margin: 6px 0; }
 body:has(#update-notice:not([hidden])) #economics { bottom: 84px; }
 #update-notice .d-btn { white-space: nowrap; flex: none; }
+
+/* Cards show all their text; a selected card can be widened from its edge. */
+.node .node-summary { font: 450 12px var(--font); }
+.card-resize { fill: var(--sel); opacity: 0; pointer-events: none; cursor: ew-resize; transition: opacity .15s ease; }
+.node.selected:not(.dragging) .card-resize { opacity: .85; pointer-events: all; }
+#canvas.resizing-card, #canvas.resizing-card * { cursor: ew-resize !important; }
+
+/* Drawings: named colors that suit Light and Dark Mode. The wide invisible
+   edge makes a thin line easy to grab; a boundary's middle stays click-through
+   so the cards inside it are still easy to reach. */
+:root {
+  --draw-gray: #8e8e93; --draw-blue: #007aff; --draw-green: #34c759; --draw-orange: #ff9500;
+  --draw-red: #ff3b30; --draw-purple: #af52de; --draw-yellow: #ffcc00; --draw-teal: #30b0c7;
+}
+:root[data-theme="dark"] {
+  --draw-gray: #98989d; --draw-blue: #0a84ff; --draw-green: #30d158; --draw-orange: #ff9f0a;
+  --draw-red: #ff453a; --draw-purple: #bf5af2; --draw-yellow: #ffd60a; --draw-teal: #40c8e0;
+}
+.draw-color-gray { --draw: var(--draw-gray); } .draw-color-blue { --draw: var(--draw-blue); }
+.draw-color-green { --draw: var(--draw-green); } .draw-color-orange { --draw: var(--draw-orange); }
+.draw-color-red { --draw: var(--draw-red); } .draw-color-purple { --draw: var(--draw-purple); }
+.draw-color-yellow { --draw: var(--draw-yellow); } .draw-color-teal { --draw: var(--draw-teal); }
+.draw-shape { fill: none; stroke: var(--draw); pointer-events: none; }
+.draw-filled .draw-shape { fill: color-mix(in srgb, var(--draw) 12%, transparent); }
+.annotation-boundary .draw-shape { fill: color-mix(in srgb, var(--draw) 7%, transparent); }
+.annotation-boundary:not(.draw-filled) .draw-shape { fill: none; }
+.draw-stroke { fill: none; stroke: var(--draw); stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.draw-arrowhead { fill: var(--draw); stroke: var(--draw); stroke-width: 1; stroke-linejoin: round; pointer-events: none; }
+.draw-hit { fill: none; stroke: transparent; pointer-events: stroke; cursor: grab; }
+.annotation-shape.draw-filled .draw-hit { fill: transparent; pointer-events: all; }
+.draw-hit-area { fill: transparent; pointer-events: all; cursor: grab; }
+.boundary-label { fill: var(--draw); font: 650 15px var(--font); letter-spacing: -.01em; pointer-events: none; }
+.shape-label { fill: var(--ink); font: 600 14px var(--font); pointer-events: none; }
+.board-annotation .line-end { cursor: crosshair; }
+
+/* Drawing tools: a crosshair everywhere on the board, even over cards,
+   and an I-beam for the Text tool. */
+#canvas:is([data-tool="pen"], [data-tool="rect"], [data-tool="ellipse"], [data-tool="boundary"], [data-tool="arrow"], [data-tool="line"]),
+#canvas:is([data-tool="pen"], [data-tool="rect"], [data-tool="ellipse"], [data-tool="boundary"], [data-tool="arrow"], [data-tool="line"]) * { cursor: crosshair; }
+#canvas[data-tool="text"], #canvas[data-tool="text"] * { cursor: text; }
+.draw-draft { pointer-events: none; opacity: .9; }
+
+/* Typing on the board: the words appear where they will stay. */
+.inline-editor {
+  position: fixed; z-index: 12; margin: 0; box-sizing: border-box; border: 0; border-radius: 4px;
+  background: transparent; color: var(--ink); caret-color: var(--sel); resize: none; overflow: hidden;
+  outline: 1.5px solid var(--sel); outline-offset: 2px; white-space: pre; overflow-wrap: normal;
+}
+.inline-editor.inline-note { color: var(--node-ink); white-space: pre-wrap; overflow: auto; border-radius: 14px; outline-offset: 0; }
+.inline-editor.inline-boundary { color: var(--draw); padding: 2px 6px; white-space: nowrap; background: color-mix(in srgb, var(--surface) 80%, transparent); }
+.inline-editor.inline-shape { color: var(--ink); padding: 2px 6px; white-space: nowrap; background: color-mix(in srgb, var(--surface) 80%, transparent); }
+.inline-editing .annotation-content, .inline-editing .annotation-overflow,
+.inline-editing .boundary-label, .inline-editing .shape-label { opacity: 0; }
+
+/* The style panel for a selected drawing. */
+.draw-detail h3:first-of-type { margin-top: 4px; }
+.draw-swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 4px; }
+.draw-swatch {
+  width: 24px; height: 24px; padding: 0; border-radius: 50%; cursor: pointer;
+  background: var(--draw); border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--border-strong);
+}
+.draw-swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--sel); }
+.draw-choice { display: flex; gap: 2px; padding: 2px; margin: 6px 0; border-radius: 9px; background: var(--surface-2); }
+.draw-choice .d-btn { flex: 1; padding: 5px 8px; font-size: 12px; border: 0; background: transparent; box-shadow: none; }
+.draw-choice .d-btn[aria-pressed="true"] { background: var(--surface); box-shadow: var(--shadow-1); color: var(--ink); }
+.draw-detail h3 { margin: 16px 0 2px; font-size: 12px; font-weight: 650; color: var(--muted); letter-spacing: 0; }
+/* A selected line shows its two end handles and a soft glow along it, not a box. */
+.annotation-line .annotation-selection { display: none; }
+.annotation-line.selected .draw-hit, .annotation-line:focus-visible .draw-hit { stroke: color-mix(in srgb, var(--sel) 22%, transparent); }

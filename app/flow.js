@@ -1398,11 +1398,6 @@ export function renderFlow(panel) {
   stopLoop();
   const model = state.model;
   if (!model) return;
-  if (model.mode === 'freeform') {
-    panel.replaceChildren(h('div', { class: 'flow-root' },
-      emptyState('Flow animates Process maps', 'Freeform maps describe shared elements and groups, not a step-by-step flow. Open a Process map to watch its work move.')));
-    return;
-  }
   const scope = scopeOf(model, state.scopeId);
   if (!scope?.nodes?.length) {
     panel.replaceChildren(h('div', { class: 'flow-root' },

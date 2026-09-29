@@ -60,8 +60,9 @@ to 2× resolution, capped at 8192 pixels per side and roughly 16 megapixels to
 bound browser canvas memory. Larger maps downscale; choose SVG for maximum
 detail. Both include a background matching the current map theme.
 
-Board notes and freeform text use native SVG text, including their Markdown
-typography. Fonts use local fallback stacks, so exact faces may vary by machine.
+Board notes, text, and drawings use native SVG, including their Markdown
+typography and drawing colors. Fonts use local fallback stacks, so exact faces
+may vary by machine.
 Resize clipped notes (or use **Fit text**) before exporting; image exports show
 the authored block size. Resize/anchor handles are omitted from image exports.
 

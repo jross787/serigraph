@@ -33,6 +33,8 @@ function h(tag, props = {}, ...children) {
 const TOOL_ICONS = {
   select: 'cursor', hand: 'hand', unit: ICONS.process, connect: 'path',
   lane: 'rows', note: 'note-pencil', probe: 'crosshair', automate: 'robot',
+  text: 'text-t', pen: 'pencil-simple', shapes: 'square', rect: 'square', ellipse: 'circle',
+  boundary: 'selection', arrow: 'arrow-up-right', line: 'line-segment',
   duplicate: 'copy', delete: 'trash', undo: 'arrow-counter-clockwise', redo: 'arrow-clockwise',
   history: 'clock-counter-clockwise', import: 'download-simple', export: 'upload-simple',
   share: 'share-network', zoomOut: 'minus', zoomIn: 'plus', fit: 'corners-out',
@@ -63,43 +65,51 @@ const TOOL_GROUPS = [
     { id: 'connect', label: 'Connect', shortcut: 'C', description: 'Choose a connection meaning, then its endpoints.', flyout: true },
   ],
   [
-    { id: 'lane', label: 'Owner lanes', shortcut: 'L', description: 'Group the current map by accountable owner.' },
-    { id: 'note', label: 'Review note', shortcut: 'T', description: 'Leave a durable review note on a selected step.' },
+    { id: 'text', label: 'Text', shortcut: 'T', description: 'Click anywhere on the board and start typing.' },
+    { id: 'pen', label: 'Pen', shortcut: 'D', description: 'Draw freely: circle, underline, or sketch anything.' },
+    { id: 'shapes', label: 'Shapes', shortcut: 'R', description: 'Rectangles, ellipses, boundaries, arrows, and lines.', flyout: true },
+  ],
+  [
+    { id: 'lane', label: 'Owner lanes', shortcut: '', description: 'Group the current map by accountable owner.' },
+    { id: 'note', label: 'Review note', shortcut: 'M', description: 'Leave a durable review note on a selected card.' },
   ],
   [
     { id: 'probe', label: 'Path probe', shortcut: 'P', description: 'Trace a path and reveal handoffs, systems, and automation gaps.' },
-    { id: 'automate', label: 'Automation lens', shortcut: 'A', description: 'Assess the selected step as an automation opportunity.' },
+    { id: 'automate', label: 'Automation lens', shortcut: '', description: 'Assess the selected step as an automation opportunity.' },
   ],
 ];
 
-const MUTATING_TOOLS = new Set(['unit', 'connect']);
+// Drawing tools. Each draws or types one thing and returns to Select, except
+// the pen, which stays on until Esc or V.
+export const DRAW_TOOLS = {
+  rect: { label: 'Rectangle', key: 'R', hint: 'Drag to draw a rectangle. Hold Shift for a square.' },
+  ellipse: { label: 'Ellipse', key: 'O', hint: 'Drag to draw an ellipse. Hold Shift for a circle.' },
+  boundary: { label: 'Boundary', key: 'B', hint: 'Drag around cards to mark a named area. Moving it moves them too.' },
+  arrow: { label: 'Arrow', key: 'A', hint: 'Drag to draw an arrow. Hold Shift for straight angles.' },
+  line: { label: 'Line', key: 'L', hint: 'Drag to draw a line. Hold Shift for straight angles.' },
+  pen: { label: 'Pen', key: 'D', hint: 'Draw on the board. Esc or V when you are done.' },
+  text: { label: 'Text', key: 'T', hint: 'Click the board and type. Click away when you are done.' },
+};
+
+const MUTATING_TOOLS = new Set(['unit', 'connect', 'shapes', ...Object.keys(DRAW_TOOLS)]);
 
 // A standalone export is a portable, read-only inspection surface. Keep the
 // tools that help a reviewer navigate and understand the map, but never render
 // (or keyboard-activate) controls that imply the exported model can be edited.
 function visibleToolGroups() {
-  const freeform = state.model?.mode === 'freeform';
-  const hiddenInFreeform = new Set(['lane', 'probe', 'automate']);
   return TOOL_GROUPS
     .map((group) => group
-      .filter((tool) => !(freeform && hiddenInFreeform.has(tool.id)))
       .filter((tool) => !(state.standalone && MUTATING_TOOLS.has(tool.id)))
-      .map((tool) => {
-        if (state.standalone && tool.id === 'note') {
-          return { ...tool, label: 'Review trail', description: `Inspect review notes attached to the selected ${freeform ? 'item' : 'step'}.` };
-        }
-        if (!freeform) return tool;
-        if (tool.id === 'select') return { ...tool, description: 'Select an item or drag to pan the map.' };
-        if (tool.id === 'unit') return { ...tool, label: 'Item', description: 'Add an item, system, database, API, person, or document.' };
-        if (tool.id === 'connect') return { ...tool, description: 'Connect any two items.' };
-        if (tool.id === 'note') return { ...tool, description: 'Leave a review note on the selected item.' };
-        return tool;
-      }))
+      .map((tool) => state.standalone && tool.id === 'note'
+        ? { ...tool, label: 'Review trail', description: 'Inspect review notes attached to the selected card.' }
+        : tool))
     .filter((group) => group.length);
 }
 
 function toolIsVisible(id) {
-  return visibleToolGroups().some((group) => group.some((tool) => tool.id === id));
+  // The rectangle, ellipse, boundary, arrow, and line tools live in the Shapes menu.
+  const shown = ['rect', 'ellipse', 'boundary', 'arrow', 'line'].includes(id) ? 'shapes' : id;
+  return visibleToolGroups().some((group) => group.some((tool) => tool.id === shown));
 }
 
 function toolById(id) {
@@ -144,8 +154,7 @@ function alignSelection(mode, target) {
   closeToolbarMenu(target);
   const ids = effectiveSelectionIds();
   if (ids.length < 2) return;
-  const noun = state.model?.mode === 'freeform' ? 'items' : 'steps';
-  ctrl.commit(() => edit.alignNodes(ids, mode), { historyLabel: `align ${ids.length} ${noun}` });
+  ctrl.commit(() => edit.alignNodes(ids, mode), { historyLabel: `align ${ids.length} cards` });
 }
 
 function closeFlyout() {
@@ -165,7 +174,9 @@ function refreshRail() {
   const hasNode = canEdit && !!state.selectedId && !!state.model?.byId.get(state.selectedId);
   for (const button of rail.querySelectorAll('[data-tool]')) {
     const id = button.dataset.tool;
-    const pressed = id === 'lane' ? state.ownerLanes : state.activeTool === id;
+    const pressed = id === 'lane' ? state.ownerLanes
+      : id === 'shapes' ? ['rect', 'ellipse', 'boundary', 'arrow', 'line'].includes(state.activeTool)
+        : state.activeTool === id;
     button.classList.toggle('active', pressed);
     button.setAttribute('aria-pressed', String(pressed));
     button.disabled = !state.model || (MUTATING_TOOLS.has(id) && !canEdit);
@@ -281,16 +292,14 @@ function positionFlyout(anchor, host) {
 function showUnitFlyout(anchor) {
   const host = document.getElementById('tool-flyout');
   if (!host || !anchor) return;
-  const freeform = state.model?.mode === 'freeform';
   positionFlyout(anchor, host);
-  const addingGroup = freeform && state.scopeId == null;
-  const types = addingGroup ? [['item', 'Group']] : Object.entries(NODE_VISUALS).map(([key, value]) => [key, value.label]);
+  const types = Object.entries(NODE_VISUALS).map(([key, value]) => [key, value.label]);
   const items = types.map(([type, label]) => {
     const button = h('button', {
       class: `tool-flyout-item t-${type}`,
       title: `Drag onto the canvas to add a ${label.toLowerCase()}; click to open the form`,
-    }, svgIcon(addingGroup ? 'stack' : ICONS[type]), h('span', { class: 'tool-choice-copy' },
-      h('strong', {}, label), h('small', {}, addingGroup ? 'A map inside your map.' : NODE_VISUALS[type].hint)));
+    }, svgIcon(ICONS[type]), h('span', { class: 'tool-choice-copy' },
+      h('strong', {}, label), h('small', {}, NODE_VISUALS[type].hint)));
     ui.enableNodeTypeDrag(button, type, {
       onActivate: () => {
         closeFlyout();
@@ -304,17 +313,42 @@ function showUnitFlyout(anchor) {
     });
     return button;
   });
+  // Groups hold other cards; shared elements appear in several places.
+  const organize = [
+    h('button', { class: 'tool-flyout-item', onClick: () => { closeFlyout(); setTool('select'); ui.addNodeDialog(state.scopeId, { group: true }); } },
+      svgIcon('stack'), h('span', { class: 'tool-choice-copy' }, h('strong', {}, 'Group'), h('small', {}, 'A card that holds other cards. Open it to work inside.'))),
+    state.model?.elements?.length || state.systems?.length
+      ? h('button', { class: 'tool-flyout-item', onClick: () => { closeFlyout(); setTool('select'); ui.addSharedDialog(state.scopeId); } },
+        svgIcon('copy'), h('span', { class: 'tool-choice-copy' }, h('strong', {}, 'Something already on the map'), h('small', {}, 'Place a shared system, person, or item again. Edits show everywhere it appears.')))
+      : null,
+  ];
   host.replaceChildren(
-    h('div', { class: 'tool-flyout-title' }, addingGroup ? 'Organize this map' : 'What belongs on the map?'),
+    h('div', { class: 'tool-flyout-title' }, 'What belongs on the map?'),
     ...items,
+    h('div', { class: 'tool-flyout-title' }, 'Organize'),
+    ...organize,
     h('div', { class: 'tool-flyout-title' }, 'Explain the board'),
     ...[['note', 'Note block', 'A resizable page of Markdown notes.', 'note-pencil'],
       ['text', 'Freeform text', 'Headings, labels, and text without a box.', 'file-text']].map(([kind, title, hint, icon]) => h('button', {
         class: 'tool-flyout-item', onClick: () => { closeFlyout(); setTool('select'); openAnnotationEditor(null, kind); },
       }, svgIcon(icon), h('span', { class: 'tool-choice-copy' }, h('strong', {}, title), h('small', {}, hint)))),
-    h('p', { class: 'tool-flyout-note' }, addingGroup
-      ? 'Open a group to add steps, decisions, people, and resources inside it.'
-      : 'Click to name it, or drag it onto the map. Shape describes the kind of thing—not its status.'),
+    h('p', { class: 'tool-flyout-note' }, 'Click to name it, or drag it onto the map. Shape describes the kind of thing—not its status.'),
+  );
+  host.removeAttribute('hidden');
+}
+
+function showShapesFlyout(anchor) {
+  const host = document.getElementById('tool-flyout');
+  if (!host || !anchor || state.standalone) return;
+  positionFlyout(anchor, host);
+  host.replaceChildren(
+    h('div', { class: 'tool-flyout-title' }, 'Draw on the board'),
+    ...['rect', 'ellipse', 'boundary', 'arrow', 'line'].map((id) => h('button', {
+      class: `tool-flyout-item${state.activeTool === id ? ' active' : ''}`,
+      onClick: () => { closeFlyout(); activateTool(id, anchor); },
+    }, svgIcon(TOOL_ICONS[id]), h('span', { class: 'tool-choice-copy' },
+      h('strong', {}, DRAW_TOOLS[id].label, h('kbd', {}, DRAW_TOOLS[id].key)), h('small', {}, DRAW_TOOLS[id].hint)))),
+    h('p', { class: 'tool-flyout-note' }, 'Shapes and boundaries sit behind cards; arrows, lines, and pen strokes sit on top. Choose colors in the panel after you draw.'),
   );
   host.removeAttribute('hidden');
 }
@@ -349,7 +383,18 @@ function activateTool(id, anchor) {
     showConnectFlyout(anchor);
     return true;
   }
+  if (id === 'shapes') {
+    showShapesFlyout(anchor);
+    return true;
+  }
   closeFlyout();
+  if (DRAW_TOOLS[id]) {
+    if (state.standalone || !state.model) return false;
+    ctrl.clearSelection();
+    setTool(id);
+    ui.toast(DRAW_TOOLS[id].hint);
+    return true;
+  }
   if (id === 'lane') {
     state.ownerLanes = !state.ownerLanes;
     canvas.setOwnerLanes(state.ownerLanes);
@@ -361,7 +406,7 @@ function activateTool(id, anchor) {
     setTool('note');
     if (state.selectedId) openReview(state.selectedId);
     else {
-      const selection = state.model?.mode === 'freeform' ? 'an item' : 'a step';
+      const selection = 'a card';
       ui.toast(state.standalone ? `Select ${selection} to inspect its review trail` : `Select ${selection} before leaving a review note`);
     }
     return true;
@@ -482,7 +527,7 @@ function closeReview() {
 
 export function openReview(nodeId = state.selectedId) {
   const node = nodeId ? state.model?.byId.get(nodeId) : null;
-  const selection = state.model?.mode === 'freeform' ? 'an item' : 'a step';
+  const selection = 'a card';
   if (!node) {
     ui.toast(state.standalone ? `Select ${selection} to inspect its review trail` : `Select ${selection} before leaving a review note`);
     return;
@@ -491,7 +536,7 @@ export function openReview(nodeId = state.selectedId) {
   if (!tray) return;
   const notes = [...(node.review ?? [])].sort((a, b) => Number(a.resolved) - Number(b.resolved));
   const openCount = notes.filter((note) => !note.resolved).length;
-  const textarea = h('textarea', { placeholder: state.model?.mode === 'freeform' ? 'What should the owner review?' : 'What should the process owner review?', 'aria-label': 'Review note' });
+  const textarea = h('textarea', { placeholder: 'What should the owner review?', 'aria-label': 'Review note' });
   const list = h('div', { class: 'review-list' }, notes.length ? notes.map((note) =>
     h('article', { class: `review-note${note.resolved ? ' resolved' : ''}` },
       h('div', { class: 'review-note-meta' }, h('strong', {}, note.author), h('span', {}, formatReviewDate(note.createdAt))),
@@ -543,7 +588,7 @@ async function copyText(text) {
 export function openShareDialog() {
   const nodeId = state.selectedId;
   const link = nodeId ? ctrl.nodeUrl(nodeId) : `${location.origin}${location.pathname}${buildHash({ mapId: state.mapId })}`;
-  const item = state.model?.mode === 'freeform' ? 'item' : 'step';
+  const item = 'card';
   const body = h('div', { class: 'share-stack' });
   makeDialog('Share & sync', body);
 
@@ -957,6 +1002,8 @@ export function completeConnect() {
   if (state.activeTool === 'connect') setTool('select');
 }
 
+bus.on('drawing-done', () => { if (state.activeTool !== 'pen' && DRAW_TOOLS[state.activeTool]) setTool('select'); });
+
 // Escape should always return the canvas to its neutral, unsurprising state.
 // This is intentionally exported rather than duplicating state resets in the
 // keyboard handler so pointer and keyboard flows cannot get out of sync.
@@ -978,8 +1025,7 @@ function runToolbarAction(action, target) {
     case 'delete': {
       const ids = effectiveSelectionIds();
       if (ids.length > 1) {
-        const noun = state.model?.mode === 'freeform' ? 'items' : 'steps';
-        ctrl.commit(() => edit.bulkRemoveNodes(ids), { historyLabel: `delete ${ids.length} ${noun}` });
+        ctrl.commit(() => edit.bulkRemoveNodes(ids), { historyLabel: `delete ${ids.length} cards` });
       } else {
         ui.requestDelete();
       }
@@ -1012,18 +1058,15 @@ function runToolbarAction(action, target) {
 }
 
 function toolbarToolButton(tool, { labeled = false, className = '' } = {}) {
-  const freeform = state.model?.mode === 'freeform';
-  const label = tool.id === 'unit'
-    ? freeform && state.scopeId == null ? 'Add group' : 'Add'
-    : tool.label;
+  const label = tool.id === 'unit' ? 'Add' : tool.label;
   return h('button', {
     class: `tool-button toolbar-tool ${labeled ? 'labeled' : ''} ${className}`.trim(),
     'data-tool': tool.id,
-    'aria-label': `${label} (${tool.shortcut})`,
-    title: `${label} · ${tool.shortcut}\n${tool.description}`,
+    'aria-label': tool.shortcut ? `${label} (${tool.shortcut})` : label,
+    title: `${label}${tool.shortcut ? ` · ${tool.shortcut}` : ''}\n${tool.description}`,
     onClick: (event) => activateTool(tool.id, event.currentTarget),
   },
-  svgIcon(tool.id === 'unit' && freeform ? ICONS.item : TOOL_ICONS[tool.id]),
+  svgIcon(TOOL_ICONS[tool.id]),
   labeled ? h('span', { class: 'toolbar-button-label' }, label) : null,
   tool.flyout ? svgIcon('caret-down', 12) : null);
 }
@@ -1071,20 +1114,21 @@ function toolbarMenuTool(tool) {
   return h('button', {
     class: 'toolbar-menu-item',
     'data-tool': tool.id,
-    title: `${tool.label} · ${tool.shortcut}\n${tool.description}`,
+    title: `${tool.label}${tool.shortcut ? ` · ${tool.shortcut}` : ''}\n${tool.description}`,
     onClick: (event) => {
       closeToolbarMenu(event.currentTarget);
       activateTool(tool.id, event.currentTarget);
     },
-  }, svgIcon(TOOL_ICONS[tool.id]), h('span', {}, tool.label), h('kbd', {}, tool.shortcut));
+  }, svgIcon(TOOL_ICONS[tool.id]), h('span', {}, tool.label), tool.shortcut ? h('kbd', {}, tool.shortcut) : null);
 }
 
 function renderRail() {
   if (!rail) return;
   if (!toolIsVisible(state.activeTool)) state.activeTool = 'select';
-  const primaryTools = ['select', 'hand', 'unit', 'connect'].map(toolById).filter(Boolean);
+  const primaryIds = ['select', 'hand', 'unit', 'connect', 'text', 'pen', 'shapes'];
+  const primaryTools = primaryIds.map(toolById).filter(Boolean);
   const secondaryTools = visibleToolGroups().flat()
-    .filter((tool) => !['select', 'hand', 'unit', 'connect'].includes(tool.id));
+    .filter((tool) => !primaryIds.includes(tool.id));
 
   const fileMenu = toolbarMenu('File', 'file', [
     toolbarMenuAction('save', 'Save', 'save', '⌘S'),
@@ -1129,7 +1173,7 @@ function renderRail() {
     fileMenu,
     h('div', { class: 'tool-separator' }),
     ...primaryTools.map((tool) => toolbarToolButton(tool, {
-      labeled: ['unit', 'connect'].includes(tool.id),
+      labeled: ['unit', 'connect', 'shapes'].includes(tool.id),
       className: ['select', 'hand'].includes(tool.id) ? 'toolbar-optional' : '',
     })),
     h('div', { class: 'tool-separator' }),
@@ -1182,6 +1226,10 @@ export function initWorkbench() {
 
 export function shortcutTool(key) {
   const normalized = String(key || '').toLowerCase();
+  const drawTool = Object.entries(DRAW_TOOLS).find(([, tool]) => tool.key.toLowerCase() === normalized)?.[0];
+  if (drawTool && !['text', 'pen'].includes(drawTool)) {
+    return state.standalone ? false : activateTool(drawTool, rail?.querySelector('[data-tool="shapes"]'));
+  }
   const tool = visibleToolGroups().flat().find((item) => item.shortcut.toLowerCase() === normalized);
   if (!tool) return false;
   const button = rail?.querySelector(`[data-tool="${tool.id}"]`);
