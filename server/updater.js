@@ -54,7 +54,9 @@ export function createUpdater({ root, branch = 'main', remote, protectedPaths = 
     const [ahead, behind] = (await git(['rev-list', '--left-right', '--count', `${info.current}...${target}`])).split(/\s+/).map(Number);
     if (!Number.isInteger(ahead) || !Number.isInteger(behind)) throw new UpdateError('Could not compare Serigraph versions.');
     if (ahead) throw new UpdateError('The local branch has commits not on the update branch. Update stopped to protect that work.');
-    return { ...info, target, behind, checkedAt: Date.now(), status: behind ? 'available' : 'current' };
+    // What's new: the newest change titles, for the update notice.
+    const subjects = behind ? (await git(['log', '--no-merges', '--format=%s', '-n', '8', `${info.current}..${target}`])).split('\n').filter(Boolean) : [];
+    return { ...info, target, behind, subjects, checkedAt: Date.now(), status: behind ? 'available' : 'current' };
   }
   async function apply(plan) {
     if (!plan || !/^[a-f0-9]{40,64}$/.test(plan.target) || Date.now() - plan.checkedAt > 60 * 60 * 1000) {

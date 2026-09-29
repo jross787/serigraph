@@ -40,6 +40,20 @@ export const api = {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Serigraph-Links-Token': token },
     body: JSON.stringify(payload),
   }),
+  async revealMap(id) {
+    const status = await jfetch('/api/local-links');
+    if (!status.enabled) throw new Error('Show in Finder works only in the app on this computer.');
+    return jfetch(`/api/maps/${encodeURIComponent(id)}/reveal`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Serigraph-Links-Token': status.token }, body: '{}',
+    });
+  },
+  presence(id, { editing = false, leave = false } = {}, keepalive = false) {
+    if (state.standalone) return Promise.resolve({ people: [] });
+    return jfetch('/api/presence', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive,
+      body: JSON.stringify(leave ? { id, leave: true } : { id, editing }),
+    });
+  },
   async listSystems() {
     if (state.standalone) return { items: [] };
     return jfetch('/api/systems');
@@ -158,7 +172,7 @@ export const api = {
     if (data?.etag) etags.set(id, data.etag);
     return data;
   },
-  async saveMap(id, source) {
+  async saveMap(id, source, base = null) {
     if (state.standalone) throw new Error('This is a read-only export — edits are disabled.');
     const headers = { 'Content-Type': 'application/json' };
     const etag = etags.get(id);
@@ -168,7 +182,7 @@ export const api = {
       result = await jfetch(`/api/maps/${encodeURIComponent(id)}`, {
         method: 'PUT',
         headers,
-        body: JSON.stringify({ source }),
+        body: JSON.stringify(base == null ? { source } : { source, base }),
       });
     } catch (error) {
       if (error.status === 409) {
@@ -188,7 +202,7 @@ export const api = {
       throw error;
     }
     if (result?.etag) etags.set(id, result.etag);
-    bus.emit('map-saved', { id, source });
+    bus.emit('map-saved', { id, source: result?.merged ? result.source : source });
     return result;
   },
   async inspectWorkbench(url) {

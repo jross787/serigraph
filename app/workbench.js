@@ -560,6 +560,25 @@ export function openShareDialog() {
       h('p', { class: 'hint' }, 'Downloads include the applied map, not unapplied form drafts. HTML and YAML include all nested details and source comments. Review private content before sharing; downloading does not publish it.'));
   };
 
+  // Working together goes through a shared cloud folder: Google Drive does
+  // the sharing and syncing; Serigraph combines edits and shows who is here.
+  const togetherSection = () => {
+    const shared = state.mapShared;
+    return h('section', { class: 'share-section together-section' },
+      h('div', { class: 'share-section-head' }, h('h3', {}, 'Work on it together'),
+        h('span', { class: 'access-badge' }, shared ? 'In a cloud folder' : 'Not shared yet')),
+      shared
+        ? h('p', { class: 'hint' }, 'This map is in a cloud folder. Share that folder in Google Drive, and anyone with Serigraph can open the map with File → Open. Edits to different parts combine automatically, and people with the map open appear as initials beside its name.')
+        : h('ol', { class: 'together-steps' },
+          h('li', {}, 'Keep the map, or its project folder, in a Google Drive folder.'),
+          h('li', {}, 'In Finder, Control-click that folder and choose Share, then Share with Google Drive.'),
+          h('li', {}, 'The other person adds the folder to their Drive with Add shortcut to Drive, installs Serigraph, and chooses File → Open.')),
+      h('div', { class: 'share-actions' },
+        h('button', { class: 'd-btn', onClick: async () => {
+          try { await api.revealMap(state.mapId); } catch (error) { ui.toast(error.message, true); }
+        } }, 'Show in Finder')));
+  };
+
   const renderShareResult = (container, share) => {
     const input = h('input', { class: 'f-input', value: share.url, readonly: '' });
     container.replaceChildren(
@@ -658,7 +677,7 @@ export function openShareDialog() {
   };
 
   function render(pending = null) {
-    body.replaceChildren(localSection(), ...(state.standalone ? [] : [state.workbench
+    body.replaceChildren(...(state.standalone ? [] : [togetherSection()]), localSection(), ...(state.standalone ? [] : [state.workbench
       ? connectedSection(state.workbench)
       : unlinkedSection(pending, pending?.url || '')]));
   }

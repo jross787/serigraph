@@ -8,6 +8,7 @@
 // Dock icon. Everything else is the same web app.
 import Cocoa
 import UniformTypeIdentifiers
+import UserNotifications
 import WebKit
 
 let supportDirectory = FileManager.default.homeDirectoryForCurrentUser
@@ -64,7 +65,7 @@ final class MapWebView: WKWebView {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate,
-  WKUIDelegate, WKScriptMessageHandler, WKDownloadDelegate {
+  WKUIDelegate, WKScriptMessageHandler, WKDownloadDelegate, UNUserNotificationCenterDelegate {
   let documents: DocumentController
   let base = URL(string: "http://127.0.0.1:\(configuredPort())/")!
   var window: NSWindow!
@@ -75,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
   var pendingPaths: [String] = []
   var attempts = 0
   var startedServer = false
+  var relaunchOffered = false
   let barHeight: CGFloat = 56
 
   init(documents: DocumentController) {
@@ -86,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
   // MARK: Application
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    UNUserNotificationCenter.current().delegate = self
     NSApp.mainMenu = makeMainMenu()
     makeWindow()
     waitForServer()
@@ -281,8 +284,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         guard let x = rect["x"], let y = rect["y"], let width = rect["width"], let height = rect["height"] else { return nil }
         return CGRect(x: x, y: y, width: width, height: height)
       }
+    case "update-available":
+      NSApp.dockTile.badgeLabel = "1"
+      if let target = body["target"] as? String,
+         target != UserDefaults.standard.string(forKey: "notifiedUpdateTarget") {
+        UserDefaults.standard.set(target, forKey: "notifiedUpdateTarget")
+        notify(title: body["title"] as? String ?? "Serigraph update available", text: body["body"] as? String ?? "")
+      }
+    case "update-cleared":
+      NSApp.dockTile.badgeLabel = nil
+    case "app-version":
+      let running = Bundle.main.object(forInfoDictionaryKey: "SerigraphSourceHash") as? String
+      if let installed = body["hash"] as? String, let running, installed != running, !relaunchOffered {
+        relaunchOffered = true
+        offerRelaunch()
+      }
     default:
       break
+    }
+  }
+
+  // MARK: Updates
+
+  // A Mac notification when Serigraph is in the background; a Dock bounce
+  // if notifications are off. The in-app notice covers the rest.
+  func notify(title: String, text: String) {
+    if NSApp.isActive { return }
+    let center = UNUserNotificationCenter.current()
+    center.requestAuthorization(options: [.alert]) { granted, _ in
+      guard granted else {
+        DispatchQueue.main.async { _ = NSApp.requestUserAttention(.informationalRequest) }
+        return
+      }
+      let content = UNMutableNotificationContent()
+      content.title = title
+      content.body = text
+      center.add(UNNotificationRequest(identifier: "serigraph-update", content: content, trigger: nil))
+    }
+  }
+
+  func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                              withCompletionHandler completionHandler: @escaping () -> Void) {
+    DispatchQueue.main.async {
+      self.window.makeKeyAndOrderFront(nil)
+      NSApp.activate(ignoringOtherApps: true)
+      self.checkForUpdates(nil)
+    }
+    completionHandler()
+  }
+
+  // An update rebuilt the app on disk; this running copy is the old one.
+  func offerRelaunch() {
+    let alert = NSAlert()
+    alert.messageText = "Serigraph was updated"
+    alert.informativeText = "Restart Serigraph to use the new version of the app. Your maps are already saved."
+    alert.addButton(withTitle: "Restart Now")
+    alert.addButton(withTitle: "Later")
+    alert.beginSheetModal(for: window) { response in
+      guard response == .alertFirstButtonReturn else { return }
+      let configuration = NSWorkspace.OpenConfiguration()
+      configuration.createsNewApplicationInstance = true
+      NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, _ in
+        DispatchQueue.main.async { NSApp.terminate(nil) }
+      }
     }
   }
 

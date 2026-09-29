@@ -40,6 +40,7 @@ test('checks are non-applying; apply pins the displayed commit and rejects stale
   const checked = await f.updater.check();
   assert.equal(checked.status, 'available');
   assert.equal(checked.behind, 1);
+  assert.deepEqual(checked.subjects, ['next synthetic revision'], 'the notice can say what changed');
   assert.equal(readFileSync(path.join(f.clone, 'version.txt'), 'utf8'), 'one');
   f.next('version.txt', 'three');
   await f.updater.apply(checked);

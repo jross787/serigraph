@@ -40,6 +40,7 @@ const MODULE_FILES = [
   'app/bug-report.js',
   'app/library-location.js',
   'app/library-links.js',
+  'app/presence.js',
   'app/main.js',
 ];
 
