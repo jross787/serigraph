@@ -6,13 +6,13 @@
 // hourly update check, and the Serigraph app. The library of maps lives in one
 // shared folder (for example in Google Drive), so every Mac sees the same files.
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { promises as fs, existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { createUpdater } from '../server/updater.js';
+import { MAC_APP as APP, buildApp as buildMacApp } from '../server/mac-app.js';
 
 const exec = promisify(execFile);
 const HERE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -22,7 +22,6 @@ const ENGINE = path.join(SUPPORT, 'engine');
 const CONFIG = path.join(SUPPORT, 'config.json');
 const LOGS = path.join(SUPPORT, 'logs');
 const AGENTS = path.join(HOME, 'Library', 'LaunchAgents');
-const APP = path.join(HOME, 'Applications', 'Serigraph.app');
 const SERVER = 'app.serigraph.server';
 const UPDATE = 'app.serigraph.update';
 const DEFAULT_PORT = 4747;
@@ -34,13 +33,14 @@ function usage() {
   console.log(`Usage:
   serigraph install --google-drive <account email>   Set up this Mac with a library in Google Drive
   serigraph install --library <folder>               Set up this Mac with a library in any folder
-  serigraph update [--check] [--restart]             Update the engine from GitHub (main)
+  serigraph update [--check]                         Update the engine from GitHub (main)
   serigraph status                                   Show this Mac's setup
 
 Install options:
   --port <number>          Local port for the background server (default ${DEFAULT_PORT})
   --allowed-host <name>    Also answer a reverse proxy on this Mac under this name
   --env-from <file>        Copy AI provider settings from an existing .env file once
+  --auto-updates           Install updates without asking (for a server-only Mac)
   --no-app                 Skip building Serigraph.app (for a server-only Mac)
 
 Run install again at any time; it keeps your library and settings.`);
@@ -116,22 +116,14 @@ async function computerName() {
   try { return (await exec('scutil', ['--get', 'ComputerName'])).stdout.trim(); } catch { return os.hostname(); }
 }
 
-// The same inputs tools/build-mac-app.sh hashes into the app's Info.plist.
-async function appSourceHash(root) {
-  const parts = await Promise.all(['mac/Serigraph.swift', 'mac/make-icon.swift', 'tools/build-mac-app.sh']
-    .map(file => fs.readFile(path.join(root, file))));
-  return createHash('sha256').update(Buffer.concat(parts)).digest('hex').slice(0, 16);
-}
-
-async function installedAppHash() {
-  try {
-    return (await exec('plutil', ['-extract', 'SerigraphSourceHash', 'raw', path.join(APP, 'Contents', 'Info.plist')])).stdout.trim();
-  } catch { return null; }
+// The person's name, as collaborators on a shared map see it.
+async function fullName() {
+  try { return (await exec('id', ['-F'])).stdout.trim() || os.userInfo().username; } catch { return os.userInfo().username; }
 }
 
 async function buildApp(root) {
   console.log('Building Serigraph.app…');
-  await exec(path.join(root, 'tools', 'build-mac-app.sh'), [APP], { timeout: 600_000 });
+  await buildMacApp(root);
 }
 
 async function answering(port) {
@@ -164,7 +156,9 @@ async function install(args) {
   const allowedHost = option(args, '--allowed-host');
   const allowedHosts = allowedHost ? [allowedHost.toLowerCase()] : previous?.allowedHosts ?? [];
   const envFrom = option(args, '--env-from');
+  const updates = args.includes('--auto-updates') ? 'auto' : previous?.updates === 'auto' ? 'auto' : 'ask';
   const machineName = await computerName();
+  const userName = await fullName();
 
   await fs.mkdir(LOGS, { recursive: true, mode: 0o700 });
   await fs.chmod(SUPPORT, 0o700);
@@ -193,7 +187,7 @@ async function install(args) {
     if (envFrom) console.log(`Copied AI provider settings from ${envFrom}.`);
   }
 
-  const config = { version: 1, library, port, allowedHosts, machineName };
+  const config = { version: 1, library, port, allowedHosts, machineName, userName, updates };
   await fs.writeFile(CONFIG, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
 
   // Build the app before the hourly updater starts, so the two never build at once.
@@ -211,6 +205,8 @@ async function install(args) {
       OPSMAP_ENV_FILE: envFile,
       SERIGRAPH_PREFERENCES_FILE: path.join(SUPPORT, 'preferences.json'),
       SERIGRAPH_MACHINE_NAME: machineName,
+      SERIGRAPH_USER_NAME: userName,
+      SERIGRAPH_CONFIG_FILE: CONFIG,
       SERIGRAPH_ALLOWED_HOSTS: allowedHosts.length ? allowedHosts.join(',') : undefined,
       OPSMAP_NO_OPEN: '1',
       SERIGRAPH_MANAGED: '1',
@@ -224,7 +220,7 @@ async function install(args) {
   }));
   await loadAgent(UPDATE, plist({
     Label: UPDATE,
-    ProgramArguments: [node, path.join(ENGINE, 'tools', 'serigraph.mjs'), 'update', '--restart'],
+    ProgramArguments: [node, path.join(ENGINE, 'tools', 'serigraph.mjs'), 'update', '--background'],
     EnvironmentVariables: { PATH: PATH_ENV, SERIGRAPH_ROOT: ENGINE },
     StartInterval: 3600,
     RunAtLoad: true,
@@ -242,7 +238,7 @@ Serigraph is set up on ${machineName}.
   Address:  http://127.0.0.1:${port}/${allowedHosts.length ? `, and https://${allowedHosts[0]}/ through your proxy` : ''}
   App:      ${args.includes('--no-app') ? 'not built (--no-app)' : APP}
   Server:   ${running ? 'running' : `not answering yet. See ${path.join(LOGS, 'server.log')}`}
-Updates install automatically every hour from GitHub main.`);
+${updates === 'auto' ? 'Updates install automatically from GitHub main.' : 'Serigraph checks GitHub every hour and offers each update with an Update Now button.'}`);
 }
 
 async function update(args) {
@@ -252,30 +248,26 @@ async function update(args) {
     branch: process.env.SERIGRAPH_UPDATE_BRANCH?.trim() || 'main',
     remote: process.env.SERIGRAPH_UPDATE_REMOTE?.trim(),
   });
+  // The hourly background run installs only on a Mac set to update
+  // automatically; everywhere else the app offers the update instead.
+  const background = args.includes('--background');
+  if (background && (await readConfig())?.updates !== 'auto') return;
   const plan = await updater.check();
   const count = plan.behind;
+  const stamp = background ? `${new Date().toISOString()} ` : '';
   if (args.includes('--check')) {
     console.log(count ? `${count} update commit${count === 1 ? '' : 's'} available. Run "serigraph update" to apply.` : 'Serigraph is already up to date.');
     return;
   }
-  const stamp = args.includes('--restart') ? `${new Date().toISOString()} ` : '';
-  if (count) {
-    await updater.apply(plan);
-    console.log(`${stamp}Serigraph updated by ${count} commit${count === 1 ? '' : 's'}.`);
-  } else if (!args.includes('--restart')) {
-    console.log('Serigraph is already up to date.');
-  }
-  if (!args.includes('--restart')) {
-    if (count) console.log('Restart the local server to use it.');
+  if (!count) {
+    if (!background) console.log('Serigraph is already up to date.');
     return;
   }
-  // The background updater: restart the server on new code, and rebuild the
-  // app only when its own source changed.
-  if (count) await exec('launchctl', ['kickstart', '-k', `${domain()}/${SERVER}`]).catch(() => {});
-  if (existsSync(APP) && await installedAppHash() !== await appSourceHash(root)) {
-    await buildApp(root);
-    console.log(`${stamp}Rebuilt Serigraph.app.`);
-  }
+  await updater.apply(plan);
+  console.log(`${stamp}Serigraph updated by ${count} commit${count === 1 ? '' : 's'}.`);
+  // The restarted server rebuilds Serigraph.app itself if the update changed it.
+  if (background) await exec('launchctl', ['kickstart', '-k', `${domain()}/${SERVER}`]).catch(() => {});
+  else console.log('Restart the local server to use it.');
 }
 
 async function status() {
@@ -294,7 +286,7 @@ const [command, ...args] = process.argv.slice(2);
 try {
   if (!command || command === '--help' || command === '-h' || args.includes('--help')) usage();
   else if (command === 'install') await install(args);
-  else if (command === 'update' && args.every(arg => ['--check', '--restart'].includes(arg))) await update(args);
+  else if (command === 'update' && args.every(arg => ['--check', '--background'].includes(arg))) await update(args);
   else if (command === 'status') await status();
   else { console.error('Unknown command or option.'); usage(); process.exitCode = 1; }
 } catch (error) {

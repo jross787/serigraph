@@ -19,6 +19,7 @@ export const PLAN_PRIORITIES = ['must', 'should', 'could', 'wont'];
 export const HIERARCHY_RELATION_TYPES = ['part-of', 'member-of', 'variant-of'];
 export const RELATION_TYPES = ['informed-by', 'supports', 'satisfies', 'depends-on', 'validated-by', 'measured-by', 'mitigates', 'blocks', 'delivers'];
 export const OWNER_ROLES = ['owner', 'business', 'technical', 'data-steward'];
+export const LIBRARY_ID_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 
 const TYPE_HINTS = {
   step: 'process', stage: 'process', task: 'process', activity: 'process',
@@ -180,18 +181,15 @@ export function parseMap(source) {
         return;
       }
 
-      if (mode === 'freeform' && !elementMode && Object.hasOwn(raw, 'use')) {
-        if (ownerId == null) {
-          err(npath, 'Freeform placements must be inside a group.');
-          return;
-        }
+      // A shared element can be placed in any group, or at the top level.
+      if (!elementMode && Object.hasOwn(raw, 'use')) {
         const elementId = typeof raw.use === 'string' ? raw.use.trim() : '';
         if (!elementId) {
           err([...npath, 'use'], 'A placement needs a "use:" element id.');
           return;
         }
         if (usedElementIds.has(elementId)) {
-          err([...npath, 'use'], `Element "${elementId}" is already placed in this group.`);
+          err([...npath, 'use'], `Element "${elementId}" is already placed ${ownerId == null ? 'at the top level' : 'in this group'}.`);
           return;
         }
         const element = elementById.get(elementId);
@@ -273,6 +271,21 @@ export function parseMap(source) {
         }
       }
 
+      // A shared system from the library this map belongs to, by its id.
+      // The map keeps its own label and details, so it still works alone.
+      let library = '';
+      if (raw.library != null) {
+        if (typeof raw.library === 'string' && LIBRARY_ID_RE.test(raw.library.trim())) library = raw.library.trim();
+        else err([...npath, 'library'], `Node "${id}": "library:" must be the id of a shared system, such as snowflake.`);
+      }
+
+      // A card someone widened keeps that width; its height follows its words.
+      let width = null;
+      if (raw.width != null) {
+        if (Number.isFinite(raw.width) && raw.width >= 160 && raw.width <= 720) width = Math.round(raw.width);
+        else err([...npath, 'width'], `Node "${id}": "width:" must be a number from 160 to 720.`);
+      }
+
       const links = [];
       if (raw.links != null) {
         if (!Array.isArray(raw.links)) {
@@ -289,12 +302,6 @@ export function parseMap(source) {
         }
       }
       const owners = normalizeOwners(raw.owners, [...npath, 'owners'], id);
-      if (mode === 'freeform' && raw.owner != null) {
-        err([...npath, 'owner'], `Node "${id}": use "owners:" with shared role elements instead of free-text "owner:".`);
-      }
-      if (mode !== 'freeform' && raw.owners != null) {
-        err([...npath, 'owners'], `Node "${id}": "owners:" is available only in Freeform maps.`);
-      }
 
       // Position and notes belong to placements or ordinary process nodes.
       if (elementMode && raw.position != null) {
@@ -452,6 +459,8 @@ export function parseMap(source) {
         sla: typeof raw.sla === 'string' ? raw.sla.trim() : '',
         automation,
         systems,
+        library,
+        width,
         links,
         position,
         flowPosition,
@@ -490,16 +499,14 @@ export function parseMap(source) {
           err(cpath, `Node "${id}": "children:" must contain "nodes:" and optionally "edges:".`);
           childNodes = []; childEdges = [];
         }
-        if (childNodes.length || childEdges.length || raw.children.annotations != null || mode === 'freeform') {
+        // Declared children make a group, even while it is still empty.
+        {
           node.children = normalizeScope(childNodes, childEdges, id, [...npath, 'children'], depth + 1, false, raw.children.annotations);
           node.stats.childCount = node.children.nodes.length;
           node.stats.descendantCount = node.children.nodes.reduce(
             (sum, child) => sum + 1 + child.stats.descendantCount, 0);
           node.stats.maxDepth = 1 + Math.max(0, ...node.children.nodes.map((child) => child.stats.maxDepth));
         }
-      }
-      if (mode === 'freeform' && !elementMode && !node.children) {
-        err(npath, `Freeform node "${id}" must be a group with "children:". Put reusable items in "elements:" and place them with "use: ${id}".`);
       }
 
       byId.set(id, node);
@@ -582,15 +589,12 @@ export function parseMap(source) {
     return { ownerId, nodes, edges, annotations };
   }
 
+  // Shared elements: one definition, placed wherever it is used.
   let elements = [];
-  if (mode === 'freeform') {
-    if (!Array.isArray(data.elements)) {
-      err(['elements'], 'Freeform maps need a top-level "elements:" list.');
-    }
-    elements = normalizeScope(Array.isArray(data.elements) ? data.elements : [], [], null, [], 0, true).nodes;
-  } else if (data.elements != null) {
-    err(['elements'], '"elements:" is available only in Freeform maps.');
+  if (data.elements != null && !Array.isArray(data.elements)) {
+    err(['elements'], '"elements:" must be a list of shared element definitions.');
   }
+  elements = normalizeScope(Array.isArray(data.elements) ? data.elements : [], [], null, [], 0, true).nodes;
   const root = normalizeScope(data.nodes, data.edges, null, [], 0, false, data.annotations);
   for (const id of annotationById.keys()) {
     if (byId.has(id)) err(['annotations'], `Annotation id "${id}" is already used by a node or element.`);
@@ -599,7 +603,6 @@ export function parseMap(source) {
   // Catalog metadata is durable design data, not observed runtime state.
   // Validate its references so canvas edits cannot silently orphan bindings.
   if (data.dataExplorer != null) {
-    if (mode !== 'freeform') err(['dataExplorer'], '"dataExplorer" requires a Freeform map.');
     validateCatalogReferences(data.dataExplorer, elementById, err);
   }
 

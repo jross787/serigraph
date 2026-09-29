@@ -64,32 +64,81 @@ export function wrapText(text, maxWidth, font = `600 ${FONT}`, maxLines = 3) {
 // ── node sizing ──────────────────────────────────────────────────────
 // Match the full-size .node .label typography; overview labels are smaller.
 export const CARD_FONT = '650 14.25px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
+export const SUMMARY_FONT = '450 12px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
+export const CARD_LINE = 17;
+export const SUMMARY_LINE = 16;
+export const CARD_WIDTH = { min: 160, standard: 200, max: 720 };
+
+// Wrap every word of every paragraph; a word longer than a line, such as a
+// link or an id, breaks into pieces instead of being cut off.
+export function wrapAll(text, maxWidth, font = CARD_FONT) {
+  const lines = [];
+  for (const paragraph of String(text ?? '').replace(/\r\n?/g, '\n').split('\n')) {
+    const words = paragraph.split(/\s+/).filter(Boolean);
+    if (!words.length) { if (lines.length) lines.push(''); continue; }
+    let line = '';
+    for (let word of words) {
+      while (word.length > 1 && measure(word, font) > maxWidth) {
+        if (line) { lines.push(line); line = ''; }
+        let cut = Math.max(1, Math.floor(word.length * maxWidth / measure(word, font)));
+        while (cut > 1 && measure(word.slice(0, cut), font) > maxWidth) cut--;
+        lines.push(word.slice(0, cut));
+        word = word.slice(cut);
+      }
+      const trial = line ? `${line} ${word}` : word;
+      if (!line || measure(trial, font) <= maxWidth) line = trial;
+      else { lines.push(line); line = word; }
+    }
+    if (line) lines.push(line);
+  }
+  while (lines.length && !lines[lines.length - 1]) lines.pop();
+  return lines;
+}
+
+const hasLaunchLink = (node) => (node.links ?? []).some((link) => {
+  try {
+    const url = new URL(link.url);
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password;
+  } catch { return false; }
+});
+const ACTOR_STATES = new Set(['manual', 'assisted', 'automated', 'at-risk']);
+
+// A card is as tall as its words: the whole name, then the whole
+// description. Its width is the standard one unless the person resized it.
+export function cardLayout(node, width = node.width) {
+  const w = Math.round(Math.min(CARD_WIDTH.max, Math.max(CARD_WIDTH.min, Number(width) || CARD_WIDTH.standard)));
+  const labelWidth = w - (hasLaunchLink(node) ? 84 : 68);
+  const lines = wrapAll(node.label, labelWidth, CARD_FONT);
+  const desc = String(node.description ?? '').trim()
+    ? wrapAll(node.description, w - 44 - (ACTOR_STATES.has(node.automation) ? 30 : 16), SUMMARY_FONT)
+    : [];
+  const content = lines.length * CARD_LINE + (desc.length ? 4 + desc.length * SUMMARY_LINE : 0);
+  return { w, h: Math.max(64, Math.ceil(content + 28)), lines, desc };
+}
 
 export function sizeNode(node, model) {
   const isContainer = !!node.children;
   if (isContainer) {
-    const lines = wrapText(node.label, 168, CARD_FONT, 2).map(line => fitText(line, 168, CARD_FONT));
+    const lines = wrapAll(node.label, 168, CARD_FONT);
     const lw = Math.max(...lines.map((l) => measure(l, CARD_FONT)), 60);
     const w = Math.min(236, Math.max(184, lw + 82));
+    const desc = String(node.description ?? '').trim() ? wrapAll(node.description, w - 28, SUMMARY_FONT) : [];
     // height finished in layoutScope once the child layout (aspect) is known
-    return { w, h: 0, lines };
+    return { w, h: 0, lines, desc };
   }
   if (node.type === 'decision') {
-    // Text must fit the diamond's inscribed area, not its bounding box.
-    // Use exactly the rendered font and a stable footprint at every zoom.
-    const lines = wrapText(node.label, 96, CARD_FONT, 3).map(line => fitText(line, 96));
-    return { w: 176, h: 120, lines };
+    // Text must fit the diamond's inscribed area, not its bounding box: a
+    // longer question grows the diamond instead of being cut off.
+    const lines = wrapAll(node.label, 96, CARD_FONT);
+    const h = Math.max(120, lines.length * CARD_LINE * 2 + 18);
+    return { w: Math.max(176, Math.round(h * 1.47)), h, lines };
   }
   if (node.type === 'event') {
-    const lines = wrapText(node.label, 86, CARD_FONT, 3).map((line) => fitText(line, 86));
-    return { w: 112, h: 112, lines };
+    const lines = wrapAll(node.label, 86, CARD_FONT);
+    const d = Math.max(112, lines.length * CARD_LINE + 58);
+    return { w: d, h: d, lines };
   }
-  // Peer cards share a footprint; reserve room for the icon and corner badges.
-  const labelWidth = 132;
-  // Also cap unbroken names that exceed wrapText's word-based limit.
-  const lines = wrapText(node.label, labelWidth, CARD_FONT, 2)
-    .map((line) => fitText(line, labelWidth));
-  return { w: 200, h: 64, lines };
+  return cardLayout(node);
 }
 
 // ── connected components + dagre + shelf packing ────────────────────
@@ -137,7 +186,7 @@ function layoutComponent(comp, sized) {
     const s = sized.get(n.id);
     const x = p.x - s.w / 2, y = p.y - s.h / 2;
     maxX = Math.max(maxX, x + s.w); maxY = Math.max(maxY, y + s.h);
-    return { id: n.id, node: n, x, y, w: s.w, h: s.h, lines: s.lines, mini: s.mini };
+    return { id: n.id, node: n, x, y, w: s.w, h: s.h, lines: s.lines, desc: s.desc, mini: s.mini };
   });
   const edges = comp.edges.map((e, i) => {
     const ge = g.edge(e.from, e.to, 'e' + i);
@@ -673,7 +722,7 @@ export function layoutScope(model, ownerId) {
       const graph = child.graphBounds;
       const aspect = graph.w > 0 ? graph.h / graph.w : 0.55;
       const frameH = Math.max(42, Math.min(64, frameW * aspect));
-      const headerH = 12 + (s.lines?.length ?? 1) * 19 + 8;
+      const headerH = 12 + (s.lines?.length ?? 1) * 19 + 8 + (s.desc?.length ? s.desc.length * SUMMARY_LINE + 8 : 0);
       s.h = Math.max(116, headerH + frameH + 12);
       const scale = child.w > 0
         ? Math.min(frameW / child.w, frameH / child.h, 0.24)

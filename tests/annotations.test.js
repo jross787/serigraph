@@ -163,6 +163,68 @@ test('resize clamps dimensions and keeps the opposite corner fixed', () => {
   assert.deepEqual(expanded.position, annotation.position);
 });
 
+const drawings = [
+  { id: 'area', kind: 'boundary', markdown: 'Billing team', position: { x: 0, y: 0 }, size: { width: 400, height: 260 } },
+  { id: 'ring', kind: 'shape', shape: 'ellipse', color: 'red', stroke: 'thick', fill: true, dash: true, position: { x: 10, y: 10 }, size: { width: 120, height: 80 } },
+  { id: 'pointer', kind: 'line', arrow: 'both', points: [0, 40, 120, 0], position: { x: 5, y: 5 }, size: { width: 120, height: 40 } },
+  { id: 'sketch', kind: 'ink', points: [0, 0, 10, 4, 20, 0], position: { x: 1, y: 1 }, size: { width: 20, height: 4 } },
+];
+
+test('drawings are board annotations with a named look and checked points, and need no text', () => {
+  const model = load(source({ annotations: drawings }));
+  assert.equal(model.nodeCount, 0);
+  const pick = (id, keys) => Object.fromEntries(keys.map((key) => [key, model.annotationById.get(id)[key]]));
+  assert.deepEqual(pick('area', ['markdown', 'color', 'stroke', 'fill', 'dash']), { markdown: 'Billing team', color: 'blue', stroke: 'thin', fill: true, dash: false });
+  assert.deepEqual(pick('ring', ['shape', 'color', 'stroke', 'fill', 'dash']), { shape: 'ellipse', color: 'red', stroke: 'thick', fill: true, dash: true });
+  assert.deepEqual(pick('pointer', ['arrow', 'points', 'color']), { arrow: 'both', points: [0, 40, 120, 0], color: 'gray' });
+  assert.deepEqual(pick('sketch', ['markdown', 'stroke', 'fill', 'points']), { markdown: '', stroke: 'medium', fill: false, points: [0, 0, 10, 4, 20, 0] });
+  const base = { id: 'drawn', position: { x: 0, y: 0 }, size: { width: 100, height: 100 } };
+  for (const bad of [{ kind: 'shape', shape: 'star' }, { kind: 'shape', color: '#ff0000' }, { kind: 'shape', stroke: 'huge' },
+    { kind: 'shape', fill: 'yes' }, { kind: 'shape', size: { width: 4, height: 80 } }, { kind: 'boundary', markdown: 12 },
+    { kind: 'line', points: [0, 0, 1] }, { kind: 'line', points: [0, 0, 1, 1, 2, 2] }, { kind: 'line', points: [0, 0, 1, 1], arrow: 'left' },
+    { kind: 'ink' }, { kind: 'ink', points: [0, 0] }, { kind: 'ink', points: [0, 0, 'a', 1] }, { kind: 'ink', points: [0, 0, 1e9, 1] }]) {
+    assert.ok(parseMap(source({ annotations: [{ ...base, ...bad }] })).errors.length, JSON.stringify(bad));
+  }
+});
+
+test('drawings save their look and compact points; clearing a label removes it; pen strokes stretch with their box', () => {
+  load('name: Drawings # keep this\nnodes: []\n');
+  const id = edit.addAnnotation(null, { kind: 'ink', color: 'purple', stroke: 'thick', fill: false, dash: false, markdown: '',
+    position: { x: 10, y: 20 }, size: { width: 30, height: 12 }, points: [0, 0, 15.2, 12, 30, 0] });
+  const area = edit.addAnnotation(null, { kind: 'boundary', markdown: 'Team', color: 'blue', stroke: 'thin', fill: true, dash: true,
+    position: { x: 0, y: 0 }, size: { width: 300, height: 200 } });
+  let { text, model } = save();
+  assert.deepEqual([id, area], ['ink', 'boundary']);
+  assert.match(text, /# keep this/);
+  assert.match(text, /points: \[\s*0, 0, 15, 12, 30, 0\s*\]/, 'points stay on one line');
+  assert.doesNotMatch(text, /font/, 'drawings carry no typography');
+  assert.equal(model.annotationById.get('ink').color, 'purple');
+  edit.updateAnnotation(area, { markdown: '' });
+  ({ text, model } = save());
+  assert.equal(model.annotationById.get(area).markdown, '');
+  assert.doesNotMatch(text, /Team|markdown/);
+  const stretched = resizeAnnotation(model.annotationById.get('ink'), 'se', 30, 12);
+  assert.deepEqual(stretched.points, [0, 0, 30, 24, 60, 0]);
+  assert.deepEqual(resizeAnnotation(model.annotationById.get(area), 'se', -9999, -9999).size, { width: 12, height: 12 });
+  edit.updateAnnotation('ink', stretched);
+  ({ text, model } = save());
+  assert.deepEqual(model.annotationById.get('ink').points, [0, 0, 30, 24, 60, 0]);
+  assert.match(text, /points: \[\s*0, 0, 30, 24, 60, 0\s*\]/);
+});
+
+test('templates copy drawings without text settings, and Markdown exports only drawing names', () => {
+  const template = parseMap(source({ annotations: drawings })).model;
+  load(); edit.insertTemplate(null, template);
+  const { model } = save();
+  const copied = state.doc.toJS().annotations.filter((item) => item.kind !== 'note');
+  assert.equal(copied.length, 4);
+  for (const item of copied) assert.ok(!('font' in item) && !('fontSize' in item), item.id);
+  assert.deepEqual(model.annotationById.get('pointer').points, [0, 40, 120, 0]);
+  const markdown = mapMarkdown(model);
+  assert.match(markdown, /#### Boundary: Billing team/);
+  assert.doesNotMatch(markdown, /sketch|pointer|ring/);
+});
+
 test('layout fits annotation-only boards and adding text never rearranges process cards', () => {
   const context = {}; vm.runInNewContext(readFileSync(new URL('../vendor/dagre.min.js', import.meta.url), 'utf8'), context);
   globalThis.dagre = context.dagre;

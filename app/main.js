@@ -17,13 +17,32 @@ import { initUpdates, maintenanceBlocker, serverReconnected } from './updates.js
 import { bugReportDialog } from './bug-report.js';
 import { libraryLocationDialog } from './library-location.js';
 import { initNativeBridge, isNativeMac, openFile } from './library-links.js';
+import { initPresence } from './presence.js';
 import { initBoardGestures } from './board.js';
 
 // ── theme ────────────────────────────────────────────────────────────
+// Automatic follows the Mac's Light or Dark appearance, live. The page itself
+// only ever renders the light or dark palette.
 function initTheme() {
-  let saved = null;
-  try { saved = localStorage.getItem('opsmap-theme'); } catch { /* file/sandbox viewers may deny storage */ }
-  document.documentElement.dataset.theme = ['frost', 'light', 'dark', 'glass'].includes(saved) ? saved : 'frost';
+  const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+  const apply = () => {
+    let saved = document.documentElement.dataset.appearance;
+    try { saved = localStorage.getItem('opsmap-theme') ?? saved; } catch { /* file/sandbox viewers may deny storage */ }
+    const choice = ['light', 'dark'].includes(saved) ? saved : 'system';
+    document.documentElement.dataset.appearance = choice;
+    document.documentElement.dataset.theme = choice === 'system' ? (media?.matches ? 'dark' : 'light') : choice;
+  };
+  apply();
+  media?.addEventListener('change', apply);
+  window.addEventListener('serigraph-appearance', apply);
+}
+
+// Connections between steps default to a flow arrow; links that involve a
+// system, person, or other thing default to a plain relationship.
+const WORK_TYPES = new Set(['process', 'decision', 'event']);
+function defaultMeaning(fromId, toId) {
+  const types = [fromId, toId].map((id) => state.model?.byId.get(id)?.type);
+  return types.every((type) => WORK_TYPES.has(type)) ? 'flow' : null;
 }
 
 // ── canvas event wiring ──────────────────────────────────────────────
@@ -40,7 +59,7 @@ function wireCanvasEvents() {
     if (state.connectFrom) {
       const from = state.connectFrom;
       const label = state.pendingEdgeLabel ?? null;
-      const meaning = state.pendingEdgeMeaning ?? (state.model.mode === 'process' ? 'flow' : null);
+      const meaning = state.pendingEdgeMeaning ?? defaultMeaning(from, id);
       state.connectFrom = null;
       state.pendingEdgeLabel = null;
       state.pendingEdgeMeaning = null;
@@ -105,6 +124,25 @@ function wireCanvasEvents() {
       .then((ok) => { if (!ok) canvas.refreshScope(state.model); });
   });
 
+  // A widened or narrowed card stays where it is: its left edge holds still.
+  bus.on('node-resized', (id, { width, x, y }) => {
+    if (state.presenting || state.standalone) return;
+    ctrl.commit(() => {
+      edit.updateNode(id, { width });
+      edit.setNodePosition(id, { x, y });
+    }, { historyLabel: `resize “${state.model?.byId.get(id)?.label ?? id}”` })
+      .then((ok) => { if (!ok) canvas.refreshScope(state.model); });
+  });
+
+  bus.on('nodes-moved', (positions) => {
+    if (state.presenting || state.standalone) return;
+    ctrl.commit(
+      () => { for (const { id, x, y } of positions) edit.setNodePosition(id, { x, y }); },
+      { historyLabel: `move ${positions.length} items` },
+    )
+      .then((ok) => { if (!ok) canvas.refreshScope(state.model); });
+  });
+
   bus.on('unpin-request', (id) => {
     if (state.presenting || state.standalone) return;
     ctrl.commit(
@@ -144,7 +182,7 @@ function wireCanvasEvents() {
     if (state.presenting || state.standalone) return;
     const nodeLabel = state.model?.byId.get(id)?.label ?? id;
     const contLabel = state.model?.byId.get(containerId)?.label ?? containerId;
-    const isPlacement = state.model?.mode === 'freeform' && state.model.elementById?.has(id);
+    const isPlacement = !!state.model?.elementById?.has(id);
     const fromOwnerId = state.scopeId;
     let res;
     ctrl.commit(() => {
@@ -168,12 +206,7 @@ function wireCanvasEvents() {
     const targetLabel = targetOwnerId
       ? state.model.byId.get(targetOwnerId)?.label ?? targetOwnerId
       : state.model.name;
-    const isPlacement = state.model.mode === 'freeform' && state.model.elementById?.has(id);
-    if (isPlacement && targetOwnerId == null) {
-      ui.toast('Items must stay inside a group');
-      canvas.refreshScope(state.model);
-      return;
-    }
+    const isPlacement = !!state.model.elementById?.has(id);
     const fromOwnerId = state.scopeId;
     let res;
     ctrl.commit(() => {
@@ -196,7 +229,7 @@ function wireCanvasEvents() {
   bus.on('connect-drag', (from, to) => {
     if (state.presenting || state.standalone) return;
     const label = state.pendingEdgeLabel ?? null;
-    const meaning = state.pendingEdgeMeaning ?? (state.model.mode === 'process' ? 'flow' : null);
+    const meaning = state.pendingEdgeMeaning ?? defaultMeaning(from, to);
     state.pendingEdgeLabel = null;
     state.pendingEdgeMeaning = null;
     ctrl.commit(
@@ -209,15 +242,15 @@ function wireCanvasEvents() {
         ctrl.selectEdge(scope.edges.length - 1);
         ui.toast(label
           ? `“${label}” branch added — drag the line to route it`
-          : `${state.model.mode === 'freeform' ? 'Connection' : 'Edge'} added. Set its label in the panel.`);
+          : 'Connection added. Set its label in the panel.');
       });
   });
 
-  // double-click on empty canvas creates the default node for this map mode
+  // double-click on empty canvas creates a step right there
   bus.on('bg-dblclick', (world) => {
     cancelPendingContainerClick();
     if (state.presenting || state.standalone || !state.model) return;
-    ui.createNodeAt(state.model.mode === 'freeform' ? 'item' : 'process', world);
+    ui.createNodeAt('process', world);
   });
 
   bus.on('edge-click', (index) => {
@@ -429,6 +462,14 @@ function wireToolbar() {
   for (const button of document.querySelectorAll('.utility-popover button')) {
     button.addEventListener('click', () => { const menu = button.closest('details'); if (menu) menu.open = false; });
   }
+  // Like any Mac menu: a click elsewhere or Escape closes an open one.
+  document.addEventListener('pointerdown', (ev) => {
+    for (const menu of document.querySelectorAll('details.utility-menu[open], details.view-menu[open]')) if (!menu.contains(ev.target)) menu.open = false;
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    for (const menu of document.querySelectorAll('details.utility-menu[open], details.view-menu[open]')) { menu.open = false; menu.querySelector('summary')?.focus(); }
+  });
   document.querySelector('.logo')?.addEventListener('click', (ev) => {
     ev.preventDefault();
     if (state.presenting) exitPresent();
@@ -446,6 +487,7 @@ function wireToolbar() {
 }
 
 // ── boot ─────────────────────────────────────────────────────────────
+let systemsRefresh = 0;
 async function boot() {
   // Keep a pristine copy before rendering or wiring controls. Serializing the
   // live UI later would include transient dialogs and duplicate rendered nodes.
@@ -473,8 +515,9 @@ async function boot() {
     ui.toast('Could not reach the Serigraph server: ' + e.message, true);
     return;
   }
-  await Promise.all([ctrl.loadProjects(), ctrl.loadTrash(), ctrl.loadRecents()]);
+  await Promise.all([ctrl.loadProjects(), ctrl.loadTrash(), ctrl.loadRecents(), ctrl.loadSystems()]);
   initNativeBridge();
+  initPresence();
 
   const route = ctrl.readHash();
   let mapId = route.mapId && state.maps.some((m) => m.id === route.mapId) ? route.mapId : null;
@@ -502,6 +545,12 @@ async function boot() {
       if (event.type === 'maps-changed') await ctrl.handleRemoteChange(event.ids ?? []);
       if (event.type === 'templates-changed') await ctrl.loadTemplates();
       if (event.type === 'recents-changed') await ctrl.loadRecents();
+      if (event.type === 'app-updated') bus.emit('app-updated', event);
+      // Shared systems, and which maps use them, follow edits anywhere.
+      if (event.type === 'systems-changed' || event.type === 'maps-changed' || event.type === 'library-changed') {
+        clearTimeout(systemsRefresh);
+        systemsRefresh = setTimeout(() => ctrl.loadSystems(), 250);
+      }
       if (event.type === 'agents-changed') await refreshAgents();
       if (event.type === 'library-changed') {
         const openId = state.mapId;

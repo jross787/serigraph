@@ -619,6 +619,8 @@ test('local links save originals, reject stale edits, refresh externally, and re
   assert.equal((await api('POST', '/api/local-links/preview', {path: file})).status, 403);
   assert.equal((await action('preview', {path: file}, {Origin: 'https://untrusted.example'})).status, 403);
   assert.equal((await action('preview', {path: file}, {'X-Serigraph-Library': 'stale'})).status, 412);
+  assert.equal((await api('POST', '/api/local-links/browse', {path: originals})).status, 403, 'folder listings need the local token too');
+  assert.deepEqual(JSON.parse((await action('browse', {path: originals})).body).files.map(item => item.name), ['Original flow.yaml']);
   const preview = JSON.parse((await action('preview', {path: file})).body);
   assert.equal(preview.mapCount, 1);
   assert.equal((await action('add', {nonce: preview.nonce, editOriginals: false})).status, 409);
@@ -756,4 +758,46 @@ test('a listed proxy host is served as shared access without local-only actions'
     child?.kill();
     rmSync(temp, {recursive: true, force: true});
   }
+});
+
+test('shared systems live in the library file and report which maps use them', async () => {
+  assert.deepEqual(JSON.parse((await raw({p: '/api/systems'})).body).items, []);
+  const saved = JSON.parse((await api('PUT', '/api/systems', {label: 'Snowflake', type: 'database', description: 'Warehouse'})).body);
+  assert.equal(saved.id, 'snowflake');
+  const second = JSON.parse((await api('PUT', '/api/systems', {label: 'Snowflake', type: 'database'})).body);
+  assert.equal(second.id, 'snowflake-2', 'a new entry with a taken name gets its own id');
+  assert.equal((await api('PUT', '/api/systems', {id: 'snowflake', label: 'Snowflake', type: 'database', description: 'Cloud warehouse'})).status, 200);
+  mkdirSync(path.join(work, 'maps'), {recursive: true});
+  writeFileSync(path.join(work, 'maps', 'uses-snowflake.yaml'), 'name: Uses Snowflake\nnodes:\n  - id: wh\n    type: database\n    label: Snowflake\n    library: snowflake\n');
+  const listed = JSON.parse((await raw({p: '/api/systems'})).body).items;
+  const snowflake = listed.find((system) => system.id === 'snowflake');
+  assert.equal(snowflake.description, 'Cloud warehouse');
+  assert.deepEqual(snowflake.uses.map((use) => [use.mapId, use.nodeId, use.mapName]), [['uses-snowflake', 'wh', 'Uses Snowflake']]);
+  assert.match(readFileSync(path.join(work, 'systems.yaml'), 'utf8'), /^# Systems and tools shared/);
+  assert.equal((await api('DELETE', '/api/systems/snowflake-2')).status, 200);
+  assert.deepEqual(JSON.parse((await raw({p: '/api/systems'})).body).items.map((system) => system.id), ['snowflake']);
+  assert.equal((await api('PUT', '/api/systems', {label: '  '})).status, 400);
+  assert.equal((await api('DELETE', '/api/systems/missing')).status, 400);
+});
+
+test('a save based on an older version combines with a newer one when they touch different lines', async () => {
+  const base = 'name: Merge Synthetic\nnodes:\n  - id: a\n    type: process\n    label: Alpha\n  - id: b\n    type: process\n    label: Beta\n';
+  mkdirSync(path.join(work, 'maps'), {recursive: true});
+  writeFileSync(path.join(work, 'maps', 'merge-synthetic.yaml'), base);
+  const opened = JSON.parse((await raw({p: '/api/maps/merge-synthetic'})).body);
+  // Someone else's newer version arrives through the shared folder.
+  const theirs = base.replace('label: Beta', 'label: Beta from a colleague');
+  writeFileSync(path.join(work, 'maps', 'merge-synthetic.yaml'), theirs);
+  const mine = base.replace('label: Alpha', 'label: Alpha from me');
+  const combined = await api('PUT', '/api/maps/merge-synthetic', {source: mine, base}, {'If-Match': opened.etag});
+  assert.equal(combined.status, 200, combined.body);
+  const result = JSON.parse(combined.body);
+  assert.equal(result.merged, true);
+  assert.match(result.source, /Alpha from me/);
+  assert.match(result.source, /Beta from a colleague/);
+  assert.equal(readFileSync(path.join(work, 'maps', 'merge-synthetic.yaml'), 'utf8'), result.source);
+  // The same line changed on both sides, or no starting version: a person chooses.
+  const clash = await api('PUT', '/api/maps/merge-synthetic', {source: mine.replace('label: Beta', 'label: Beta from me'), base: mine}, {'If-Match': opened.etag});
+  assert.equal(clash.status, 409);
+  assert.equal((await api('PUT', '/api/maps/merge-synthetic', {source: mine}, {'If-Match': opened.etag})).status, 409);
 });

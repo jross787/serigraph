@@ -10,7 +10,7 @@ import { nodeCost, compactMoney } from '../shared/cost.js';
 import { icon, TYPE_ICONS } from './icons.js';
 import { nodeObservation } from './github.js';
 import { buildAnnotation } from './annotation-view.js';
-import { layoutScope, siblingContextLayout, miniTransform, edgePath, smoothEdgePath, routeDirect, routeEdge, routeDragged, routeAutomaticEdges, routeParallelEdges, placeEdgeLabels, edgeLabelBubble, invalidateLayouts, wrapText, fitText, CARD_FONT } from './layout.js';
+import { layoutScope, siblingContextLayout, miniTransform, edgePath, smoothEdgePath, routeDirect, routeEdge, routeDragged, routeAutomaticEdges, routeParallelEdges, placeEdgeLabels, edgeLabelBubble, invalidateLayouts, wrapText, fitText, CARD_FONT, CARD_LINE, SUMMARY_LINE, cardLayout } from './layout.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const el = (tag, attrs = {}, cls = '') => {
@@ -79,22 +79,19 @@ function scheduleCameraSave() {
   }, 300);
 }
 
-// Motion is deliberately a little springy rather than merely slow. The map
-// should feel connected to the pointer — like a taut string — without making
-// a process diagram feel like a toy. These values settle in well under a
-// second and only allow a small, controlled overshoot.
+// Motion follows the Mac: the map moves exactly with the pointer or the
+// trackpad while you touch it, and only a quick flick keeps it gliding,
+// slowing the way a scroll view does. Camera moves settle like a critically
+// damped spring: quick to start, soft to land, and never past the target.
 let panFrame = 0;
-let panTarget = null;
-let panVelocity = { x: 0, y: 0 };
-let panLastTime = 0;
+let panSamples = [];
 
 const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
-const rubberEase = (t) => {
+const SPRING = 8.6;
+const springEase = (t) => {
   if (t <= 0) return 0;
   if (t >= 1) return 1;
-  const overshoot = 1.18;
-  const u = t - 1;
-  return 1 + (overshoot + 1) * u * u * u + overshoot * u * u;
+  return (1 - (1 + SPRING * t) * Math.exp(-SPRING * t)) / (1 - (1 + SPRING) * Math.exp(-SPRING));
 };
 const prefersReducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
@@ -258,17 +255,13 @@ function scopeEntryCamera(model, ownerId, layout) {
   const target = fitCamera(bounds);
   const width = vw || window.innerWidth || 1200;
   const height = vh || window.innerHeight || 800;
-  const prioritizeReadability = model.mode !== 'freeform' || ownerId != null;
+  // A top level made only of groups opens as an overview; anything else
+  // opens at a readable size, starting from the left.
+  const overview = ownerId == null && model.root.nodes.length > 0 && model.root.nodes.every((node) => node.children);
   const minK = width <= 700 ? 0.62 : 0.70;
-  if (!prioritizeReadability || target.k >= minK) return target;
+  if (overview || target.k >= minK) return target;
   const k = minK;
-  return {
-    k,
-    x: width <= 700 || model.mode !== 'freeform'
-      ? 34 - bounds.x * k
-      : (width - bounds.w * k) / 2 - bounds.x * k,
-    y: (height - bounds.h * k) / 2 - bounds.y * k,
-  };
+  return { k, x: 34 - bounds.x * k, y: (height - bounds.h * k) / 2 - bounds.y * k };
 }
 
 function usableViewport() {
@@ -305,21 +298,26 @@ function animate(ms, step, curve = ease) {
   });
 }
 
-export function animateCamera(target, ms = 420) {
+// Zoom changes geometrically, so every frame feels like the same amount of
+// zoom. An anchor (the point under the cursor) stays put; otherwise the view's
+// center travels in a straight line.
+export function animateCamera(target, ms = 420, anchor = null) {
   stopPanMotion();
   if (!ms || prefersReducedMotion()) {
     setCamera(target);
     return Promise.resolve(true);
   }
   const from = { ...camera };
+  const pivot = anchor ?? { x: vw / 2, y: vh / 2 };
+  const startWorld = { x: (pivot.x - from.x) / from.k, y: (pivot.y - from.y) / from.k };
+  const endWorld = anchor ? startWorld : { x: (pivot.x - target.x) / target.k, y: (pivot.y - target.y) / target.k };
   return animate(ms, (e) => {
-    camera = {
-      x: from.x + (target.x - from.x) * e,
-      y: from.y + (target.y - from.y) * e,
-      k: from.k + (target.k - from.k) * e,
-    };
+    const k = Math.exp(Math.log(from.k) + (Math.log(target.k) - Math.log(from.k)) * e);
+    const wx = startWorld.x + (endWorld.x - startWorld.x) * e;
+    const wy = startWorld.y + (endWorld.y - startWorld.y) * e;
+    camera = e >= 1 ? { ...target } : { k, x: pivot.x - wx * k, y: pivot.y - wy * k };
     applyCamera();
-  }, rubberEase);
+  }, springEase);
 }
 
 function visibleInstances(nodeId) {
@@ -336,7 +334,7 @@ function boundsAround(nodes) {
 }
 
 export function focusOn(nodeId, ms = 380) {
-  const instances = state.model?.mode === 'freeform' ? visibleInstances(nodeId) : [];
+  const instances = state.model?.elementById?.has(nodeId) ? visibleInstances(nodeId) : [];
   if (instances.length > 1) {
     const usable = usableViewport();
     const target = fitCamera(boundsAround(instances), usable.width <= 700 ? 120 : 80, 1.05, usable);
@@ -380,14 +378,21 @@ export function zoomTo(k, ms = 240) {
 export function zoomBy(factor, cx = vw / 2, cy = vh / 2) {
   const k = Math.min(3, Math.max(0.04, camera.k * factor));
   const wp = screenToWorld(cx, cy);
-  return animateCamera({ k, x: cx - wp.x * k, y: cy - wp.y * k }, 240);
+  return animateCamera({ k, x: cx - wp.x * k, y: cy - wp.y * k }, 260, { x: cx, y: cy });
+}
+
+// Pinch and ⌘-scroll: follow the gesture frame by frame, no animation.
+function zoomAt(factor, cx, cy) {
+  const k = Math.min(3, Math.max(0.04, camera.k * factor));
+  const wp = screenToWorld(cx, cy);
+  setCamera({ k, x: cx - wp.x * k, y: cy - wp.y * k });
 }
 
 // The canvas's CSS, inlined for export: every custom property on :root in its
 // current theme, plus every stylesheet rule that targets canvas marks. Rules
 // with pseudo-classes (hover/focus state) and app-chrome id selectors are
 // skipped — they neither apply nor belong in a standalone file.
-const EXPORT_SELECTORS = ['.node', '.edge', '.board-annotation', '.annotation-', '.grid-dots', '.bundle', '.scope', '.peer', '.identity', '.icon', '.type-chip', '.count-chip', '.sel-ring', '.stack', '.shape', '.marquee', '#griddots'];
+const EXPORT_SELECTORS = ['.node', '.edge', '.board-annotation', '.annotation-', '.draw-', '.boundary-label', '.shape-label', '.grid-dots', '.bundle', '.scope', '.peer', '.identity', '.icon', '.type-chip', '.count-chip', '.sel-ring', '.stack', '.shape', '.marquee', '#griddots'];
 function exportStylesheet() {
   const cs = getComputedStyle(document.documentElement);
   const vars = [];
@@ -485,63 +490,41 @@ export function getCanvasSvgString() {
   return new XMLSerializer().serializeToString(clone);
 }
 
-function stopPanMotion({ snap = false } = {}) {
+function stopPanMotion() {
   if (panFrame) cancelAnimationFrame(panFrame);
   panFrame = 0;
-  if (snap && panTarget) {
-    camera = { ...panTarget };
-    applyCamera();
-  }
-  panTarget = null;
-  panVelocity = { x: 0, y: 0 };
 }
 
-function springPanTo(target) {
-  if (prefersReducedMotion()) {
-    camera = { ...target };
-    applyCamera();
-    return;
-  }
-  if (panTarget) {
-    // Give a fresh pointer delta a little momentum. This keeps the canvas
-    // connected to the user's hand instead of lagging behind it.
-    panVelocity.x += (target.x - panTarget.x) * 18;
-    panVelocity.y += (target.y - panTarget.y) * 18;
-  }
-  panTarget = { ...target };
-  if (panFrame) return;
-  panLastTime = performance.now();
+// Remember the last moments of a drag to measure how fast it was released.
+function samplePan(time, x, y) {
+  panSamples.push({ time, x, y });
+  while (panSamples.length > 2 && time - panSamples[0].time > 80) panSamples.shift();
+}
 
+// After a flick, glide on and slow smoothly, like a scroll view. A drag that
+// paused before release, or moved slowly, simply stops where it is.
+function glideAfterRelease() {
+  const samples = panSamples;
+  panSamples = [];
+  if (samples.length < 2 || prefersReducedMotion()) return;
+  const first = samples[0], last = samples[samples.length - 1];
+  // Measure over at least one frame, and cap the speed, so a single jump of
+  // the pointer glides about a screen instead of flinging the map away.
+  const span = Math.max(16, last.time - first.time);
+  if (performance.now() - last.time > 60) return;
+  let vx = (last.x - first.x) / span, vy = (last.y - first.y) / span; // px per ms
+  const speed = Math.hypot(vx, vy);
+  if (speed < 0.35) return;
+  if (speed > 4) { vx *= 4 / speed; vy *= 4 / speed; }
+  let previous = performance.now();
   const step = (now) => {
-    if (!panTarget) { panFrame = 0; return; }
-    const dt = Math.min(0.034, Math.max(0.001, (now - panLastTime) / 1000));
-    panLastTime = now;
-    const dx = panTarget.x - camera.x;
-    const dy = panTarget.y - camera.y;
-    // Near-critical damping with a touch of give. The tiny overshoot on a
-    // release is the tactile "rubber band" finish, not a cartoon bounce.
-    const stiffness = 210;
-    const damping = 24;
-    panVelocity.x = (panVelocity.x + dx * stiffness * dt) * Math.exp(-damping * dt);
-    panVelocity.y = (panVelocity.y + dy * stiffness * dt) * Math.exp(-damping * dt);
-    camera = {
-      k: panTarget.k,
-      x: camera.x + panVelocity.x * dt,
-      y: camera.y + panVelocity.y * dt,
-    };
+    const elapsed = Math.min(34, now - previous);
+    previous = now;
+    const decay = Math.exp(-elapsed / 325);
+    vx *= decay; vy *= decay;
+    camera = { ...camera, x: camera.x + vx * elapsed, y: camera.y + vy * elapsed };
     applyCamera();
-
-    const distance = Math.hypot(panTarget.x - camera.x, panTarget.y - camera.y);
-    const speed = Math.hypot(panVelocity.x, panVelocity.y);
-    if (distance < 0.12 && speed < 0.12) {
-      camera = { ...panTarget };
-      applyCamera();
-      panTarget = null;
-      panVelocity = { x: 0, y: 0 };
-      panFrame = 0;
-      return;
-    }
-    panFrame = requestAnimationFrame(step);
+    panFrame = Math.hypot(vx, vy) > 0.02 ? requestAnimationFrame(step) : 0;
   };
   panFrame = requestAnimationFrame(step);
 }
@@ -553,7 +536,7 @@ function nodeShape(n) {
   if (n.node.children) return el('rect', { width: w, height: h, rx: 8 }, 'shape');
   if (t === 'decision') return el('polygon', { points: `${w / 2},0 ${w},${h / 2} ${w / 2},${h} 0,${h / 2}` }, 'shape');
   if (t === 'event') return el('circle', { cx: w / 2, cy: h / 2, r: w / 2 }, 'shape');
-  if (t === 'role') return el('rect', { width: w, height: h, rx: h / 2 }, 'shape');
+  if (t === 'role') return el('rect', { width: w, height: h, rx: Math.min(h / 2, 32) }, 'shape');
   if (t === 'artifact') {
     const f = 13;
     return el('path', { d: `M0,0 h${w - f} l${f},${f} v${h - f} h${-w} z` }, 'shape');
@@ -642,18 +625,15 @@ const ACTOR_TAGS = {
   };
 
 
-function cardText(n, details, launch) {
-  const observed = !!nodeObservation(n.id);
-  const labelWidth = launch ? n.w - 84 : 132;
-  const lines = (launch || observed) ? wrapText(n.node.label, labelWidth, CARD_FONT, observed ? 1 : 2).map(line => fitText(line, labelWidth)) : n.lines;
-  const totalH = lines.length * 17 + (details.description ? 16 : 0);
-  const startY = (n.h - totalH) / 2 + 13 + (observed && details.description ? 4 : 0);
-  const text = [textLines(lines, 44, startY, 'label')];
-  if (details.description) {
-    const width = n.w - 44 - (ACTOR_TAGS[n.node.automation] ? 40 : 14);
-    const font = '500 10.5px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
-    text.push(textLines([fitText(details.description, width, font)], 44, startY + lines.length * 17, 'node-summary'));
-  }
+// The whole name, then the whole description: centered in a standard card,
+// from the top in a card that grew to fit its words.
+function cardText(n) {
+  const lines = n.lines ?? [];
+  const desc = n.desc ?? [];
+  const content = lines.length * CARD_LINE + (desc.length ? 4 + desc.length * SUMMARY_LINE : 0);
+  const top = Math.max(14, (n.h - content) / 2);
+  const text = [textLines(lines, 44, top + 13, 'label', 'start', CARD_LINE)];
+  if (desc.length) text.push(textLines(desc, 44, top + lines.length * CARD_LINE + 4 + 12, 'node-summary', 'start', SUMMARY_LINE));
   return text;
 }
 
@@ -673,7 +653,7 @@ function buildNode(n) {
   // selection ring
   const ringPad = 5;
   g.appendChild(el('rect', { x: -ringPad, y: -ringPad, width: n.w + ringPad * 2, height: n.h + ringPad * 2, rx: 11 }, 'sel-ring'));
-  if (state.model?.mode === 'freeform' && node.isPlacement) {
+  if (node.isPlacement && node.ownerId != null) {
     const ownerLabel = state.model.byId.get(node.ownerId)?.label ?? node.ownerId;
     const visibleOwner = truncateLabel(ownerLabel, 26);
     const visibleElement = truncateLabel(node.label, 22);
@@ -702,22 +682,19 @@ function buildNode(n) {
     g.appendChild(el('rect', { x: 5, y: 5, width: n.w, height: n.h, rx: 8 }, 'stack'));
     g.appendChild(nodeShape(n));
     g.appendChild(iconChip(node.type, 13, 10));
-    const lines = launch ? wrapText(node.label, n.w - 87, CARD_FONT, 2).map(line => fitText(line, n.w - 87)) : n.lines;
+    const lines = n.lines ?? [];
     g.appendChild(textLines(lines, 45, 26, 'label', 'start', 19));
-    const desc = wrapText(node.description, n.w - 28, '500 10.5px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif', 2)
-      .map(line => fitText(line, n.w - 28, '500 10.5px ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif'));
-    if (desc.length) g.appendChild(textLines(desc, 14, 58, 'node-summary', 'start', 15));
+    const desc = n.desc ?? [];
+    if (desc.length) g.appendChild(textLines(desc, 14, 12 + lines.length * 19 + 8 + 12, 'node-summary', 'start', SUMMARY_LINE));
     const meta = el('text', { x: 14, y: n.h - 15 }, 'node-meta');
     const ownerLabels = (node.owners ?? [])
       .map((owner) => state.model?.elementById?.get(owner.to)?.label ?? owner.to)
       .join(', ');
-    const metaText = state.model?.mode === 'freeform'
-      ? node.children ? `${node.stats.childCount} items` : ownerLabels || node.type
-      : node.owner || `${node.stats.childCount} steps`;
+    const metaText = node.owner || ownerLabels || `${node.stats.childCount} inside`;
     const metaChars = Math.max(10, Math.floor((n.w - chipW - 58) / 6.2));
     meta.textContent = truncateLabel(metaText, metaChars);
     g.appendChild(meta);
-    if (state.model?.mode !== 'freeform' && !ACTOR_TAGS[node.automation]) {
+    if (!node.isPlacement && node.type === 'process' && !ACTOR_TAGS[node.automation]) {
       // the actor badge already shows assessed nodes; keep the dot for unassessed ones
       g.appendChild(el('circle', { cx: n.w - 15, cy: n.h - 17, r: 4 }, 'automation-dot a-not-assessed'));
     }
@@ -736,9 +713,7 @@ function buildNode(n) {
     zi.classList.add('count-chip-icon');
     chip.appendChild(zi);
     const title = el('title');
-    title.textContent = state.model?.mode === 'freeform'
-      ? `Open group with ${node.stats.descendantCount} item${node.stats.descendantCount === 1 ? '' : 's'} inside`
-      : `Open sub-map with ${node.stats.descendantCount} node${node.stats.descendantCount === 1 ? '' : 's'} inside`;
+    title.textContent = `Open to see the ${node.stats.descendantCount} card${node.stats.descendantCount === 1 ? '' : 's'} inside`;
     chip.appendChild(title);
     g.appendChild(chip);
   } else if (node.type === 'decision') {
@@ -761,8 +736,12 @@ function buildNode(n) {
       g.appendChild(el('path', { d: `M1,11 H${n.w - 1}` }, 'shape-detail'));
       for (const x of [10, 16, 22]) g.appendChild(el('circle', { cx: x, cy: 6, r: 1.2 }, 'window-dot'));
     }
-    g.appendChild(iconChip(node.type, 11, (n.h - 24) / 2));
-    g.append(...cardText(n, details, launch));
+    g.appendChild(iconChip(node.type, 11, n.h <= 64 ? (n.h - 24) / 2 : 14));
+    g.append(...cardText(n));
+    if (!state.standalone && !state.presenting) {
+      // Drag the right edge of a selected card to make it wider or narrower.
+      g.appendChild(el('rect', { x: n.w - 4, y: 10, width: 8, height: Math.max(12, n.h - 20), rx: 4 }, 'card-resize'));
+    }
   }
 
   // provenance badge — this element was inferred from a transcript, not
@@ -808,7 +787,7 @@ function buildNode(n) {
 
   // Freeform placement notes are local to one group. Mark the card so that
   // the reader knows to open the detail panel for group-specific context.
-  if (state.model?.mode === 'freeform' && node.note) {
+  if (node.isPlacement && node.note) {
     const x = n.w - (node.position ? 29 : 7);
     const nb = el('g', { transform: `translate(${x},${-2})` }, 'local-note-badge');
     nb.appendChild(el('circle', { r: 9 }, 'local-note-bg'));
@@ -820,7 +799,7 @@ function buildNode(n) {
   }
 
   // cost chip for process maps
-  if (node.cost && state.model?.mode !== 'freeform') {
+  if (node.cost) {
     const cur = state.model?.costModel?.currency ?? 'USD';
     const rc = nodeCost(node, state.model?.costModel ?? {});
     const txt = rc.complete
@@ -1087,10 +1066,16 @@ function renderScopeContent(model, ownerId) {
     edgesG.appendChild(item.bundle ? buildBundle(item.bundle, layout) : buildEdge(item.single));
   }
   for (const n of layout.nodes) nodesG.appendChild(buildNode(n));
+  // Shapes and boundaries sit behind the cards they surround; text, lines,
+  // arrows, and pen strokes sit on top.
+  const behindG = el('g', {}, 'annotations annotations-behind');
   const annotationsG = el('g', {}, 'annotations');
-  for (const item of layout.annotations ?? []) annotationsG.append(buildAnnotation(item.annotation,
-    { interactive: true }));
+  for (const item of layout.annotations ?? []) {
+    const behind = item.annotation.kind === 'shape' || item.annotation.kind === 'boundary';
+    (behind ? behindG : annotationsG).append(buildAnnotation(item.annotation, { interactive: true }));
+  }
   layer.appendChild(lanesG);
+  layer.appendChild(behindG);
   layer.appendChild(edgesG);
   layer.appendChild(nodesG);
   layer.appendChild(annotationsG);
@@ -1173,7 +1158,7 @@ function routeScopeLink(from, to, allFrames, shift) {
 }
 
 function renderSiblingContext(model, ownerId) {
-  if (model.mode !== 'freeform' || ownerId == null) return null;
+  if (ownerId == null) return null;
   const current = model.byId.get(ownerId);
   if (!current) return null;
   const parentScope = current.ownerId == null
@@ -1313,7 +1298,7 @@ function renderScope(model, ownerId) {
 
 // ── scope management + transitions ───────────────────────────────────
 export function showScope(model, ownerId, { transition = null, focusId = null } = {}) {
-  stopPanMotion({ snap: true });
+  stopPanMotion();
   if (transitioning) { animToken++; finishTransition(); }
   if (transition === 'dive' && currentLayout) return diveTo(model, ownerId, focusId);
   if (transition === 'rise' && currentLayout) return riseTo(model, ownerId);
@@ -1355,7 +1340,7 @@ function setScopeContextVisible(layer, visible) {
 }
 
 async function diveTo(model, containerId, focusId) {
-  stopPanMotion({ snap: true });
+  stopPanMotion();
   const parentLayout = currentLayout;
   const ln = parentLayout.nodes.find((n) => n.id === containerId);
   if (!ln || !ln.mini) return showScope(model, containerId, { focusId });
@@ -1390,7 +1375,7 @@ async function diveTo(model, containerId, focusId) {
   pendingFinish = myFinish;
 
   await animate(500, (e, t) => {
-    const cameraEase = rubberEase(t);
+    const cameraEase = springEase(t);
     camera = {
       x: from.x + (camTarget.x - from.x) * cameraEase,
       y: from.y + (camTarget.y - from.y) * cameraEase,
@@ -1411,7 +1396,7 @@ async function diveTo(model, containerId, focusId) {
 }
 
 async function riseTo(model, parentOwnerId) {
-  stopPanMotion({ snap: true });
+  stopPanMotion();
   const childOwnerId = currentLayout.ownerId;
   const { layer: parentLayer, layout: parentLayout } = renderScope(model, parentOwnerId);
   const ln = parentLayout.nodes.find((n) => n.id === childOwnerId);
@@ -1447,7 +1432,7 @@ async function riseTo(model, parentOwnerId) {
   pendingFinish = myFinish;
 
   await animate(500, (e, t) => {
-    const cameraEase = rubberEase(t);
+    const cameraEase = springEase(t);
     camera = {
       x: from.x + (camTarget.x - from.x) * cameraEase,
       y: from.y + (camTarget.y - from.y) * cameraEase,
@@ -1498,12 +1483,43 @@ export const getLayout = () => currentLayout;
 
 // Gesture previews only replace SVG marks; the authoritative model and cached
 // layout remain unchanged until one undoable edit is applied on pointerup.
-export function previewAnnotation(annotation) {
+export function previewAnnotation(annotation, { selected = true } = {}) {
   const previous = currentLayer?.querySelector(`.board-annotation[data-annotation-id="${CSS.escape(annotation.id)}"]`);
   if (!previous || previous.closest('[data-peer-scope]')) return;
   const fresh = buildAnnotation(annotation);
-  fresh.classList.add('selected');
+  if (selected) fresh.classList.add('selected');
   previous.replaceWith(fresh);
+}
+
+// A drawing in progress, shown in place without touching the map file.
+export function showDraft(annotation) {
+  if (!currentLayer) return;
+  const behind = annotation.kind === 'shape' || annotation.kind === 'boundary';
+  const content = currentLayer.querySelector('.active-scope') ?? currentLayer;
+  const host = content.querySelector(behind ? ':scope > .annotations-behind' : ':scope > .annotations:not(.annotations-behind)');
+  const fresh = buildAnnotation(annotation, { interactive: false });
+  fresh.classList.add('draw-draft');
+  const previous = currentLayer.querySelector('.draw-draft');
+  if (previous) previous.replaceWith(fresh);
+  else host?.appendChild(fresh);
+}
+export function clearDraft() { currentLayer?.querySelector('.draw-draft')?.remove(); }
+
+// Cards riding along with a moving boundary. The layout is rebuilt when the
+// move is saved or cancelled, so these offsets never outlive the gesture.
+export function previewNodeOffsets(ids, dx, dy) {
+  const moved = [];
+  for (const id of ids) {
+    const ln = currentLayout?.nodes.find((node) => node.id === id);
+    const nodeEl = currentLayer?.querySelector(`.active-scope > .nodes > .node[data-id="${CSS.escape(id)}"]`);
+    if (!ln || !nodeEl) continue;
+    ln.boundaryOrigin ??= { x: ln.x, y: ln.y };
+    ln.x = ln.boundaryOrigin.x + dx;
+    ln.y = ln.boundaryOrigin.y + dy;
+    nodeEl.setAttribute('transform', `translate(${ln.x},${ln.y})`);
+    moved.push(ln);
+  }
+  if (moved.length) updateEdgesFor(moved);
 }
 
 export function previewEdgeAnchor(index, endpoint, anchor) {
@@ -1628,12 +1644,95 @@ export function dimExcept(nodeId) {
 
 // Keep connected labels and arrival ports aligned while dragging. The
 // definitive layout is recomputed on commit; custom routes always win.
-function updateEdgesFor(ln) {
+// ── dragging cards: selection groups, alignment snapping, guides ─────
+// Pressing a card that is part of a multi-selection moves the whole
+// selection. While dragging, the moving box snaps its edges or center to
+// nearby cards within a few screen pixels, and thin guides show what it
+// lines up with. Hold ⌘ to place a card freely.
+const SNAP_PX = 6;
+
+function beginNodeDrag(drag) {
+  const selected = state.selectionIds?.size > 1 && state.selectionIds.has(drag.ln.id) ? state.selectionIds : null;
+  const members = selected ? currentLayout.nodes.filter((node) => selected.has(node.id)) : [drag.ln];
+  drag.group = members.map((ln) => {
+    const el = ln === drag.ln ? drag.el : currentLayer?.querySelector(`.node[data-id="${CSS.escape(ln.id)}"]`);
+    return el ? { ln, el, ox: ln.x, oy: ln.y } : null;
+  }).filter(Boolean);
+  const moving = new Set(drag.group.map((member) => member.ln.id));
+  drag.others = currentLayout.nodes.filter((node) => !moving.has(node.id));
+  const xs = drag.group.map((m) => m.ox), ys = drag.group.map((m) => m.oy);
+  const x2 = drag.group.map((m) => m.ox + m.ln.w), y2 = drag.group.map((m) => m.oy + m.ln.h);
+  drag.box = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...x2) - Math.min(...xs), h: Math.max(...y2) - Math.min(...ys) };
+  for (const member of drag.group) {
+    member.el.classList.add('dragging', 'lifted'); // pointer-events off → hit-test sees beneath
+    member.el.parentNode?.appendChild(member.el); // dragged cards on top
+  }
+}
+
+function snapLines(box, others, dx, dy, threshold) {
+  const x = box.x + dx, y = box.y + dy;
+  const mine = { x: [x, x + box.w / 2, x + box.w], y: [y, y + box.h / 2, y + box.h] };
+  let bestX = null, bestY = null;
+  for (const other of others) {
+    const theirs = { x: [other.x, other.x + other.w / 2, other.x + other.w], y: [other.y, other.y + other.h / 2, other.y + other.h] };
+    for (const a of mine.x) for (const b of theirs.x) {
+      const d = b - a;
+      if (Math.abs(d) <= threshold && (!bestX || Math.abs(d) < Math.abs(bestX.d))) bestX = { d, at: b };
+    }
+    for (const a of mine.y) for (const b of theirs.y) {
+      const d = b - a;
+      if (Math.abs(d) <= threshold && (!bestY || Math.abs(d) < Math.abs(bestY.d))) bestY = { d, at: b };
+    }
+  }
+  return { bestX, bestY };
+}
+
+function drawSnapGuides(drag, box, bestX, bestY) {
+  let guides = currentLayer?.querySelector(':scope > .snap-guides');
+  if (!bestX && !bestY) { guides?.remove(); return; }
+  if (!guides) { guides = el('g', {}, 'snap-guides'); currentLayer.appendChild(guides); }
+  guides.replaceChildren();
+  const near = (value, target) => Math.abs(value - target) < 0.5;
+  if (bestX) {
+    const aligned = drag.others.filter((o) => [o.x, o.x + o.w / 2, o.x + o.w].some((v) => near(v, bestX.at)));
+    const top = Math.min(box.y, ...aligned.map((o) => o.y)) - 12;
+    const bottom = Math.max(box.y + box.h, ...aligned.map((o) => o.y + o.h)) + 12;
+    guides.appendChild(el('line', { x1: bestX.at, y1: top, x2: bestX.at, y2: bottom }, 'snap-guide'));
+  }
+  if (bestY) {
+    const aligned = drag.others.filter((o) => [o.y, o.y + o.h / 2, o.y + o.h].some((v) => near(v, bestY.at)));
+    const left = Math.min(box.x, ...aligned.map((o) => o.x)) - 12;
+    const right = Math.max(box.x + box.w, ...aligned.map((o) => o.x + o.w)) + 12;
+    guides.appendChild(el('line', { x1: left, y1: bestY.at, x2: right, y2: bestY.at }, 'snap-guide'));
+  }
+}
+
+function moveNodeDrag(drag, dx, dy, snap) {
+  let { bestX, bestY } = snap ? snapLines(drag.box, drag.others, dx, dy, SNAP_PX / camera.k) : {};
+  if (bestX) dx += bestX.d;
+  if (bestY) dy += bestY.d;
+  for (const member of drag.group) {
+    member.ln.x = member.ox + dx;
+    member.ln.y = member.oy + dy;
+    member.el.setAttribute('transform', `translate(${member.ln.x},${member.ln.y})`);
+  }
+  updateEdgesFor(drag.group.map((member) => member.ln));
+  drawSnapGuides(drag, { ...drag.box, x: drag.box.x + dx, y: drag.box.y + dy }, bestX, bestY);
+}
+
+function endNodeDrag(drag) {
+  for (const member of drag.group ?? []) member.el.classList.remove('dragging', 'lifted');
+  currentLayer?.querySelector(':scope > .snap-guides')?.remove();
+}
+
+// Re-route the connectors touching one moved card, or every card in a group.
+function updateEdgesFor(moved) {
   if (!currentLayout || !currentLayer) return;
+  const ids = new Set((Array.isArray(moved) ? moved : [moved]).map((n) => n.id));
   const byId = new Map(currentLayout.nodes.map((n) => [n.id, n]));
   const changed = new Set();
   for (const e of currentLayout.edges) {
-    if (e.edge.from !== ln.id && e.edge.to !== ln.id) continue;
+    if (!ids.has(e.edge.from) && !ids.has(e.edge.to)) continue;
     changed.add(e);
     delete e.autoFallback;
     e.labelAnchor = null;
@@ -1672,6 +1771,7 @@ function wirePointer() {
   let nodeDrag = null; // { ln, el, ox, oy, active, dropInto, moveOut } while a node is grabbed
   let connectDrag = null; // { fromId, fromLn, ghost, targetId, active } while dragging from a port
   let edgeDrag = null; // { le, el, active, via } while an edge is being re-routed
+  let widthDrag = null; // { ln, el, startW, active } while a card's edge is dragged
   let marquee = null; // { x0, y0, x1, y1, rect } in world coords during shift+drag
   const activePointers = new Map(); // pointerId -> client {x, y}; two or more = pinch
   let pinch = null; // { dist, midWorld, k } anchors for the two-pointer gesture
@@ -1736,6 +1836,7 @@ function wirePointer() {
   // an interrupted drag mutated the cached layout — rebuild it from the model
   const revertNodeDrag = () => {
     const wasActive = nodeDrag?.active;
+    if (nodeDrag?.group) endNodeDrag(nodeDrag);
     nodeDrag?.el?.classList.remove('dragging');
     nodeDrag = null;
     if (wasActive && state.model) {
@@ -1746,7 +1847,8 @@ function wirePointer() {
 
   svg.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0) return;
-    stopPanMotion({ snap: true });
+    stopPanMotion();
+    panSamples = [];
     activePointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
     if (activePointers.size >= 2) {
       // a second finger turns the gesture into a pinch: drop any
@@ -1785,6 +1887,12 @@ function wirePointer() {
           return;
         }
       }
+      const resizeEl = ev.target.closest?.('.card-resize');
+      if (resizeEl && currentLayer?.contains(resizeEl)) {
+        const cardEl = resizeEl.closest('.node');
+        const ln = currentLayout?.nodes.find((x) => x.id === cardEl.dataset.id);
+        if (ln) { widthDrag = { ln, el: cardEl, startW: ln.w, active: false }; return; }
+      }
       const nodeEl = ev.target.closest?.('.node');
       if (nodeEl && currentLayer?.contains(nodeEl)) {
         const ln = currentLayout?.nodes.find((x) => x.id === nodeEl.dataset.id);
@@ -1817,6 +1925,10 @@ function wirePointer() {
     hideMoveOutBar();
     connectDrag?.ghost?.remove();
     connectDrag = null;
+    const revertWidth = widthDrag?.active;
+    widthDrag = null;
+    svg.classList.remove('resizing-card');
+    if (revertWidth && state.model) { invalidateLayouts(); refreshScope(state.model); }
     // an interrupted edge drag only mutated DOM, not the cached layout —
     // a straight re-render restores the original route
     const revertEdgeDrag = edgeDrag?.active;
@@ -1866,12 +1978,14 @@ function wirePointer() {
         connectDrag.ghost.appendChild(el('path', {}, 'cg-line'));
         connectDrag.ghost.appendChild(el('polygon', { points: '0,-4 8,0 0,4' }, 'cg-arrow'));
         currentLayer?.appendChild(connectDrag.ghost);
+      } else if (widthDrag) {
+        widthDrag.active = true;
+        svg.classList.add('resizing-card');
       } else if (nodeDrag) {
         nodeDrag.active = true;
         svg.classList.add('dragging-node');
-        nodeDrag.el.classList.add('dragging'); // pointer-events off → hit-test sees beneath
-        nodeDrag.el.parentNode?.appendChild(nodeDrag.el); // dragged node on top
-        if (state.scopeId != null) showMoveOutBar();
+        beginNodeDrag(nodeDrag);
+        if (state.scopeId != null && nodeDrag.group.length === 1) showMoveOutBar();
       } else if (edgeDrag) {
         edgeDrag.active = true;
         svg.classList.add('edge-dragging');
@@ -1905,11 +2019,19 @@ function wirePointer() {
       } else if (edgeDrag?.active) {
         const w = worldAt(ev.clientX, ev.clientY);
         previewEdgeRoute(edgeDrag, { x: w.x + edgeDrag.offset.x, y: w.y + edgeDrag.offset.y });
+      } else if (widthDrag?.active) {
+        // The text re-wraps live as the card widens or narrows.
+        const next = cardLayout(widthDrag.ln.node, widthDrag.startW + dx / camera.k);
+        Object.assign(widthDrag.ln, { w: next.w, h: next.h, lines: next.lines, desc: next.desc });
+        const fresh = buildNode(widthDrag.ln);
+        fresh.classList.add('selected');
+        widthDrag.el.replaceWith(fresh);
+        widthDrag.el = fresh;
+        updateEdgesFor(widthDrag.ln);
       } else if (nodeDrag?.active) {
-        nodeDrag.ln.x = nodeDrag.ox + dx / camera.k;
-        nodeDrag.ln.y = nodeDrag.oy + dy / camera.k;
-        nodeDrag.el.setAttribute('transform', `translate(${nodeDrag.ln.x},${nodeDrag.ln.y})`);
-        updateEdgesFor(nodeDrag.ln);
+        moveNodeDrag(nodeDrag, dx / camera.k, dy / camera.k, !ev.metaKey);
+        // A group moves as one; only a single card can drop into a container.
+        if (nodeDrag.group.length > 1) return;
         // re-nest targeting: hovering a container (not our own subtree) arms a drop
         const under = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('.node');
         let tid = null;
@@ -1936,7 +2058,9 @@ function wirePointer() {
         marquee.rect.setAttribute('width', Math.abs(w.x - marquee.x0));
         marquee.rect.setAttribute('height', Math.abs(w.y - marquee.y0));
       } else {
-        springPanTo({ ...camera, x: down.cam.x + dx, y: down.cam.y + dy });
+        const next = { ...camera, x: down.cam.x + dx, y: down.cam.y + dy };
+        samplePan(ev.timeStamp, next.x, next.y);
+        setCamera(next);
       }
     }
   });
@@ -1967,6 +2091,9 @@ function wirePointer() {
     const finishedNodeDrag = nodeDrag?.active ? nodeDrag : null;
     const finishedConnect = connectDrag?.active ? connectDrag : null;
     const finishedEdgeDrag = edgeDrag?.active ? edgeDrag : null;
+    const finishedWidth = widthDrag?.active ? widthDrag : null;
+    widthDrag = null;
+    svg.classList.remove('resizing-card');
     nodeDrag = null; // consumed — clearDrag/revert must not undo a completed drop
     connectDrag = null;
     edgeDrag = null;
@@ -1977,6 +2104,11 @@ function wirePointer() {
     if (wasDrag || !target) {
       if (marquee) {
         finishMarquee(true);
+        return;
+      }
+      if (finishedWidth) {
+        const ln = finishedWidth.ln;
+        bus.emit('node-resized', ln.id, { width: ln.w, x: Math.round(ln.x + ln.w / 2), y: Math.round(ln.y + ln.h / 2) });
         return;
       }
       if (finishedEdgeDrag) {
@@ -1996,7 +2128,7 @@ function wirePointer() {
         return;
       }
       if (finishedNodeDrag) {
-        finishedNodeDrag.el.classList.remove('dragging');
+        endNodeDrag(finishedNodeDrag);
         setDropHighlight(null);
         hideMoveOutBar();
         const ln = finishedNodeDrag.ln;
@@ -2008,11 +2140,14 @@ function wirePointer() {
           bus.emit('node-drop-into', ln.id, finishedNodeDrag.dropInto);
           return;
         }
-        bus.emit('node-moved', ln.id, {
-          x: Math.round(ln.x + ln.w / 2),
-          y: Math.round(ln.y + ln.h / 2),
-        });
+        const positions = finishedNodeDrag.group.map(({ ln: moved }) => ({
+          id: moved.id, x: Math.round(moved.x + moved.w / 2), y: Math.round(moved.y + moved.h / 2),
+        }));
+        if (positions.length > 1) bus.emit('nodes-moved', positions);
+        else bus.emit('node-moved', ln.id, { x: positions[0].x, y: positions[0].y });
+        return;
       }
+      glideAfterRelease();
       return;
     }
 
@@ -2118,17 +2253,30 @@ function wirePointer() {
     }
   });
 
+  // Trackpad scrolling pans exactly; the Mac already adds momentum. A pinch
+  // arrives as ctrl+wheel in Chrome and as gesture events in Safari and the
+  // Mac app, so both zoom around the fingers.
+  let pinchGesture = null;
   svg.addEventListener('wheel', (ev) => {
     ev.preventDefault();
     const rect = svg.getBoundingClientRect();
     const cx = ev.clientX - rect.left, cy = ev.clientY - rect.top;
     if (ev.ctrlKey || ev.metaKey) {
-      zoomBy(Math.exp(-ev.deltaY * 0.012), cx, cy);
+      if (!pinchGesture) zoomAt(Math.exp(-ev.deltaY * 0.012), cx, cy);
     } else {
-      const base = panTarget ?? camera;
-      springPanTo({ ...base, x: base.x - ev.deltaX, y: base.y - ev.deltaY });
+      const unit = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? vh : 1;
+      setCamera({ ...camera, x: camera.x - ev.deltaX * unit, y: camera.y - ev.deltaY * unit });
     }
   }, { passive: false });
+  svg.addEventListener('gesturestart', (ev) => { ev.preventDefault(); stopPanMotion(); pinchGesture = { k: camera.k }; });
+  svg.addEventListener('gesturechange', (ev) => {
+    ev.preventDefault();
+    if (!pinchGesture) return;
+    const rect = svg.getBoundingClientRect();
+    const k = Math.min(3, Math.max(0.04, pinchGesture.k * ev.scale));
+    zoomAt(k / camera.k, ev.clientX - rect.left, ev.clientY - rect.top);
+  });
+  svg.addEventListener('gestureend', (ev) => { ev.preventDefault(); pinchGesture = null; });
 }
 
 // ── keyboard access ──────────────────────────────────────────────────
@@ -2189,7 +2337,7 @@ function wireMinimap() {
     const r = mmSvg.getBoundingClientRect();
     const wx = (ev.clientX - r.left - mmOff.x) / mmScale;
     const wy = (ev.clientY - r.top - mmOff.y) / mmScale;
-    springPanTo({ ...camera, x: vw / 2 - wx * camera.k, y: vh / 2 - wy * camera.k });
+    setCamera({ ...camera, x: vw / 2 - wx * camera.k, y: vh / 2 - wy * camera.k });
   };
   mmSvg.addEventListener('pointerdown', (ev) => { dragging = true; mmSvg.setPointerCapture(ev.pointerId); moveTo(ev); });
   mmSvg.addEventListener('pointermove', (ev) => { if (dragging) moveTo(ev); });

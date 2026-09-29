@@ -8,6 +8,9 @@ export const state = {
   templates: [],       // [{id, name, description, nodeCount, source}]
   trash: [],           // [{id, kind, name, originalId|originalSlug, deletedAt, mapCount}]
   recents: [],         // [{id, openedAt, machine}] newest first, merged across machines
+  systems: [],         // library-wide shared systems [{id, label, type, description, uses}]
+  collaborators: [],   // other people with the open map, in a shared cloud folder [{person, machine, editing}]
+  mapShared: false,    // the open map lives in a cloud-synced folder
   machine: null,       // this server's machine name, to label recents opened here
 
   mapId: null,

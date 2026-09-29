@@ -38,8 +38,8 @@ That sets up five things:
 1. **Its own copy of the engine** in `~/Library/Application Support/Serigraph/engine`,
    always on `main`. A development clone is never the app you use.
 2. **A background server** at `http://127.0.0.1:4747` that starts at login and restarts if it stops.
-3. **Automatic updates** from GitHub every hour. Open windows reload onto the new version,
-   unless you are in the middle of an edit.
+3. **Update notices** from GitHub, with an Update Now button, or automatic updates if
+   you choose them. Open windows reload onto the new version.
 4. **Serigraph.app** in `~/Applications`, with standard Mac menus, File → Open, Open Recent,
    and Finder's Open With. It is a small native window, not a browser tab.
 5. **One library folder**, `Serigraph` in that Google Drive account's My Drive. Every Mac
@@ -49,6 +49,23 @@ AI provider keys stay in `~/Library/Application Support/Serigraph/.env` on each 
 never enter the shared library; `--env-from <file>` copies an existing `.env` once. Run
 `node tools/serigraph.mjs status` to see a Mac's setup, and run install again at any time;
 it keeps the library and settings.
+
+**Updates.** Each Mac checks GitHub every hour and when you come back to the app. When
+a new version is out, a card at the bottom of the window says what changed, with
+**Update Now** and **Later**, and the Mac app badges its Dock icon and posts one Mac
+notification. Update Now installs the version and reloads the window; if the update changed
+the Mac app itself, Serigraph offers to restart. In **More actions → App updates**, turn on
+**Install updates automatically** to skip the question on a Mac; install a server-only Mac
+with `--auto-updates`.
+
+**Working with someone.** Keep a map, or its project folder, in a Google Drive folder and share
+that folder in Google Drive. The other person adds it to their Drive with **Add shortcut to
+Drive**, installs Serigraph, and opens it with **File → Open…**. When you both edit, Serigraph
+combines changes to different parts of the map; only edits to the same lines ask which version
+to keep. People with the map open appear as initials beside its name, with a blue ring while
+they edit. Their small "I'm here" records live in a hidden `.serigraph-presence` folder next to
+the map, only for maps in cloud folders. **Share → Work on it together** repeats these steps and
+shows the file in Finder.
 
 To reach the library from other devices through a reverse proxy such as Caddy on one Mac,
 add `--allowed-host <name>` and point the proxy at `127.0.0.1:4747`. That name is shared
@@ -111,26 +128,36 @@ configuration you approve. A missing saved folder stops startup instead of
 silently opening another library. Launcher environment overrides take precedence
 and disable the button; see [Private workspaces](docs/PRIVATE-WORKSPACES.md).
 
-## Board notes, text, and precise anchors
+## Text, drawings, and precise anchors
 
-Use **Add → Note block** for resizable explainers, or **Freeform text** for
-unframed headings and labels. Double-click to edit Markdown with font/size
-controls, bold/italic, lists, and a live preview. Drag to move; select to resize;
-**Fit text** sizes the block to its content. Applied edits, duplication and
-deletion support Undo/Redo. Notes stay separate from process nodes and costs.
+Press **T**, click the board, and type. Double-click any text to edit it in
+place. Press **D** to draw freely with the pen, or open **Shapes** for
+rectangles, ellipses, boundaries, arrows, and lines. Draw a boundary around
+cards to name an area of the map; moving the boundary moves the cards inside
+it. Select a drawing to change its color, line weight, fill, dashes, or
+arrowheads. For longer explanations, **Add → Note block** opens a Markdown
+editor with font and size controls and a live preview. Every change supports
+Undo and Redo. Text and drawings stay separate from process cards and costs.
 
 Select a connector to reveal its two endpoint handles. Drag either around its
 card, or set **Attach to card → From/To side + Position (%)**. Anchors follow
 the card when it moves; Side **Auto** releases them. See the
-[format guide](docs/FORMAT.md#board-notes-and-freeform-text-optional) for YAML,
+[format guide](docs/FORMAT.md#board-notes-text-and-drawings-optional) for YAML,
 supported Markdown, local font stacks, bounds, and export behavior.
 
 ## Appearance and connection focus
 
-**More actions → Appearance → Glass** opts into a pearl-glass surface with
-translucent controls, soft lighting, and readable cards. Frost remains the default;
-Paper and Night remain available. All themes have a clean, dot-free canvas. Pins,
-connection handles, and route controls appear on hover or keyboard focus.
+Serigraph follows your Mac's Light or Dark appearance: white cards on a soft gray
+canvas, or dark gray surfaces, with one blue accent for selection and actions. Choose
+**More actions → Appearance → Light** or **Dark** to fix one. Cards carry their type
+color only on their icon. Pins, connection handles, and route controls appear on hover
+or keyboard focus.
+
+Dragging feels like a Mac app. The map moves exactly with your pointer or trackpad and
+glides briefly after a quick flick; pinch to zoom around your fingers. A dragged card
+snaps its edges or center to nearby cards, with thin blue guides; hold ⌘ to place it
+freely. Pressing a card in a multi-selection moves the whole selection. **Map** stays
+in the top bar; Flow, Brief, Roadmap, Audit, and Agents are under **More views**.
 
 Decision text fits inside the diamond's slopes. Connector labels use measured,
 bounded two-line bubbles; paired return paths take separate shape-anchored lanes.
@@ -159,14 +186,15 @@ upload photos, store a GitHub token, or publish an issue automatically. This use
 GitHub's [prefilled issue workflow](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-an-issue)
 and [native attachments](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/attaching-files).
 
-## Process maps and Freeform maps
+## One kind of map
 
-Choose a mode when you create a map:
-
-- **Process** maps work from step to step. They include decisions, owner lanes, path tracing, automation, cost, Flow, Brief, Roadmap, and Audit.
-- **Freeform** maps systems, databases, APIs, people, documents, and other items. One shared element can appear in several groups without copying its facts.
-
-Files without a `mode` field use Process mode. A populated map cannot switch modes because Process and Freeform files store their contents differently. Use the **Systems of Record** template to start a Freeform map.
+Every map offers every feature. Steps, decisions, owners, automation, and cost
+sit next to systems, databases, APIs, people, and documents. **Add → Group** makes a
+card that holds other cards; open it to work inside. **Add → Something already on the
+map** places a shared element again, so one system can appear in several groups without
+copying its facts. Cards show their whole name and description and grow to fit; drag
+the right edge of a selected card to widen it. Older files marked `mode: freeform` open
+the same way.
 
 ## Use the mapping skill in another repo
 

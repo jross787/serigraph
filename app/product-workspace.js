@@ -462,6 +462,15 @@ export function setWorkspaceView(view) {
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
   }
+  // Mapping is the everyday view; the others wait in one menu that names
+  // the open one while it is showing.
+  const viewMenu = document.querySelector('#workspace-switcher .view-menu');
+  if (viewMenu) {
+    viewMenu.open = false;
+    viewMenu.classList.toggle('active', view !== 'map');
+    const label = viewMenu.querySelector('[data-view-label]');
+    if (label) label.textContent = view === 'map' ? 'More views' : viewMenu.querySelector(`[data-view="${view}"]`)?.firstChild?.textContent.trim() ?? 'More views';
+  }
   if (agentView) {
     document.getElementById('detail')?.setAttribute('hidden', '');
     renderAgents(agentStage);

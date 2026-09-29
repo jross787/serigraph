@@ -38,6 +38,10 @@ import { createUpdater } from './updater.js';
 import { inspectLibraryDirectory, saveLibraryPreference } from './library-location.js';
 import { createLocalLinks, isLocalLink } from './local-links.js';
 import { createRecents } from './recents.js';
+import { createSystemsLibrary, libraryUses, SYSTEMS_FILE } from './systems.js';
+import { mergeText } from './merge.js';
+import { createPresence, inSharedFolder } from './presence.js';
+import { appNeedsRebuild, buildApp, installedAppHash } from './mac-app.js';
 
 const github = process.env.SERIGRAPH_GITHUB_PILOT === '1' ? createGitHubReader() : null;
 
@@ -80,6 +84,11 @@ const META_DIR = libraryInEngine
 const localLinks = createLocalLinks({ engineRoot: ENGINE_ROOT, enabled: !SHARED, registryDir: path.join(META_DIR, 'links') });
 const recents = createRecents({ dir: path.join(META_DIR, 'recents'), validId: id => safeId(id) || isLocalLink(id) });
 let localLinkPlan = null;
+const systemsLibrary = createSystemsLibrary({ root: LIBRARY_ROOT });
+// A shared address serves many browsers under one computer's name, so it
+// reads who is here but never claims to be someone.
+const presence = createPresence({ writable: !SHARED });
+const usesCache = new Map(); // map file path -> { stamp, uses }
 const updater = createUpdater({
   root: ENGINE_ROOT,
   branch: process.env.SERIGRAPH_UPDATE_BRANCH?.trim() || 'main',
@@ -96,6 +105,12 @@ let checkingUpdate = false;
 let applyingUpdate = false;
 let activeOperations = 0;
 const libraryToken = randomUUID();
+// A Mac set up with `serigraph install` keeps its update choice and the
+// installed app's version here, for the update notice.
+const MANAGED = process.env.SERIGRAPH_MANAGED === '1';
+const CONFIG_FILE = process.env.SERIGRAPH_CONFIG_FILE ? path.resolve(process.env.SERIGRAPH_CONFIG_FILE) : null;
+let installMode = null; // 'ask' | 'auto' when managed
+const installedApp = { hash: null, rebuilding: false };
 const librarySettingsEnabled = !SHARED && ROOT === ENGINE_ROOT && !!process.send && !LIBRARY_LOCKED && process.env.SERIGRAPH_DISABLE_LIBRARY_SETTINGS !== '1';
 let libraryPlan = null;
 let switchingLibrary = false;
@@ -150,7 +165,8 @@ async function handleLibrary(req, res, url) {
 function updateStatus() {
   return {
     ...updateState, enabled: updatesEnabled, checking: checkingUpdate, applying: applyingUpdate,
-    running: runningRevision, instance: updateInstance, managed: process.env.SERIGRAPH_MANAGED === '1',
+    running: runningRevision, instance: updateInstance, managed: MANAGED, mode: installMode,
+    appHash: installedApp.hash, appRebuilding: installedApp.rebuilding,
     token: updatesEnabled ? updateToken : null,
     ...(!updatesEnabled ? { status: 'disabled', message: 'In-app updates need a local, unshared Git installation launched with npm start or node server/main.js. Update managed/shared installations on their host.' } : {}),
   };
@@ -163,8 +179,20 @@ async function handleUpdates(req, res, url) {
   if (!updatesEnabled || !localAction(req, 'x-serigraph-update-token', updateToken)) {
     return json(res, 403, { error: 'Updates must be requested from this local Serigraph app.' });
   }
-  if (req.method !== 'POST' || !['/api/updates/check', '/api/updates/apply'].includes(url.pathname) || url.search) {
+  if (req.method !== 'POST' || !['/api/updates/check', '/api/updates/apply', '/api/updates/mode'].includes(url.pathname) || url.search) {
     return json(res, 405, { error: 'Unknown update action.' });
+  }
+  if (url.pathname.endsWith('/mode')) {
+    let body;
+    try { body = JSON.parse(await readBody(req, 256)); } catch { return json(res, 400, { error: 'Invalid update request.' }); }
+    if (!MANAGED || !CONFIG_FILE || !['ask', 'auto'].includes(body?.mode)) return json(res, 400, { error: 'Automatic updates are a setting of Macs set up with serigraph install.' });
+    try {
+      const config = JSON.parse(await fs.readFile(CONFIG_FILE, 'utf8'));
+      config.updates = body.mode;
+      await writeFileAtomic(CONFIG_FILE, JSON.stringify(config, null, 2) + '\n');
+      installMode = body.mode;
+    } catch { return json(res, 500, { error: 'Could not save the update setting.' }); }
+    return json(res, 200, updateStatus());
   }
   if (checkingUpdate || applyingUpdate || switchingLibrary) return json(res, 409, { error: 'A maintenance operation is already in progress.' });
   if (url.pathname.endsWith('/check')) {
@@ -820,6 +848,47 @@ function idForPath(p) {
   return path.basename(p).replace(/\.ya?ml$/, '');
 }
 
+// After an update that changed the Mac app itself, rebuild it in the
+// background; open windows then offer to restart into the new version.
+async function prepareInstalledApp() {
+  try { installMode = JSON.parse(await fs.readFile(CONFIG_FILE, 'utf8')).updates === 'auto' ? 'auto' : 'ask'; } catch { installMode = 'ask'; }
+  installedApp.hash = await installedAppHash();
+  if (!(await appNeedsRebuild(ENGINE_ROOT))) return;
+  installedApp.rebuilding = true;
+  try {
+    await buildApp(ENGINE_ROOT);
+    installedApp.hash = await installedAppHash();
+    broadcast({ type: 'app-updated', appHash: installedApp.hash });
+  } catch (error) {
+    console.warn(`[serigraph] could not rebuild Serigraph.app: ${error.message}`);
+  } finally { installedApp.rebuilding = false; }
+}
+
+// Which maps use each shared system. Parsing is cached per file until the
+// file changes, so the Projects home stays quick with many maps.
+async function allLibraryUses() {
+  const projects = await projectIndex(true);
+  const nested = await Promise.all(projects.map((p) => p.linked ? p.maps : mapSummaries(path.join(PROJECTS_DIR, p.slug), { slug: p.slug, name: p.name })));
+  const maps = [...await mapSummaries(MAPS_DIR), ...nested.flat()].filter((map) => !map.invalid);
+  const uses = [];
+  for (const map of maps) {
+    const file = await resolveMapPath(map.id);
+    if (!file) continue;
+    try {
+      const stat = await fs.stat(file);
+      const stamp = `${stat.mtimeMs}:${stat.size}`;
+      let cached = usesCache.get(file);
+      if (cached?.stamp !== stamp) {
+        const { model } = parseMap(await fs.readFile(file, 'utf8'));
+        cached = { stamp, uses: model ? libraryUses(model) : [] };
+        usesCache.set(file, cached);
+      }
+      for (const use of cached.uses) uses.push({ ...use, mapId: map.id, mapName: map.name });
+    } catch { /* a map that cannot be read simply contributes no uses */ }
+  }
+  return uses;
+}
+
 // ---------------------------------------------------------------- routes
 async function handleApi(req, res, url) {
   res.setHeader('X-Serigraph-Library', LIBRARY_ID);
@@ -846,6 +915,7 @@ async function handleApi(req, res, url) {
     let body;
     try { body = JSON.parse(await readBody(req, 8192)); } catch { return json(res, 400, { error: 'Invalid local-library request.' }); }
     try {
+      if (parts[2] === 'browse') return json(res, 200, await localLinks.browse(body?.path));
       if (parts[2] === 'preview') {
         localLinkPlan = null;
         const preview = await localLinks.preview(body?.path);
@@ -879,6 +949,16 @@ async function handleApi(req, res, url) {
       }
       return json(res, 400, { error: 'Unknown local-library action.' });
     } catch (error) { return json(res, 400, { error: error.message }); }
+  }
+  if (parts[1] === 'presence' && parts.length === 2 && !url.search) {
+    if (req.method !== 'POST') return json(res, 405, { error: 'Use POST.' });
+    let body;
+    try { body = JSON.parse(await readBody(req, 1024)); } catch { return json(res, 400, { error: 'Invalid presence request.' }); }
+    const id = body?.id;
+    const file = (safeId(id) || isLocalLink(id)) ? await resolveMapPath(id) : null;
+    if (!file) return json(res, 200, { shared: false, people: [] });
+    if (body.leave === true) { await presence.leave(file); return json(res, 200, { shared: inSharedFolder(file), people: [] }); }
+    return json(res, 200, { shared: inSharedFolder(file), people: await presence.beat(file, { editing: body.editing === true }) });
   }
   if (parts[1] === 'recents' && parts.length === 2 && !url.search) {
     if (req.method === 'GET') return json(res, 200, { machine: recents.machine, machineLabel: recents.label, items: await recents.list() });
@@ -974,6 +1054,28 @@ async function handleApi(req, res, url) {
   }
 
 
+  if (parts[1] === 'systems' && !url.search) {
+    try {
+      if (req.method === 'GET' && parts.length === 2) {
+        const [systems, uses] = await Promise.all([systemsLibrary.list(), allLibraryUses()]);
+        return json(res, 200, { items: systems.map((system) => ({ ...system, uses: uses.filter((use) => use.library === system.id) })) });
+      }
+      if (req.method === 'PUT' && parts.length === 2) {
+        let body;
+        try { body = JSON.parse(await readBody(req, 16_384)); } catch { return json(res, 400, { error: 'Invalid shared-system request.' }); }
+        const saved = await systemsLibrary.save(body ?? {});
+        broadcast({ type: 'systems-changed' });
+        return json(res, 200, saved);
+      }
+      if (req.method === 'DELETE' && parts.length === 3) {
+        await systemsLibrary.remove(decodeURIComponent(parts[2]));
+        broadcast({ type: 'systems-changed' });
+        return json(res, 200, { removed: true });
+      }
+      return json(res, 405, { error: 'Unknown shared-system action.' });
+    } catch (error) { return json(res, 400, { error: error.message }); }
+  }
+
   if (parts[1] === 'maps' && parts.length === 2) {
     if (req.method === 'GET') {
       const projects = await projectIndex(true);
@@ -1014,7 +1116,8 @@ async function handleApi(req, res, url) {
   // segments), and POST …/move moves a map between the root and a project
   if (parts[1] === 'maps' && parts.length >= 3) {
     const isMove = req.method === 'POST' && parts.length >= 4 && parts[parts.length - 1] === 'move';
-    const idParts = isMove ? parts.slice(2, -1) : parts.slice(2);
+    const isReveal = req.method === 'POST' && parts.length >= 4 && parts[parts.length - 1] === 'reveal';
+    const idParts = isMove || isReveal ? parts.slice(2, -1) : parts.slice(2);
     if (idParts.length > 2) return json(res, 400, { error: 'invalid map id' });
     const id = idParts.map((p) => decodeURIComponent(p)).join('/');
     if (!safeId(id)) return json(res, 400, { error: 'invalid map id' });
@@ -1022,6 +1125,15 @@ async function handleApi(req, res, url) {
     const file = await resolveMapPath(id);
     if (isLocalLink(id) && (isMove || req.method === 'DELETE')) return json(res, 409, { error: 'Linked originals cannot be moved or trashed here. Remove the location from the library instead; its files will stay untouched.' });
     if (isLocalLink(id) && !file) return json(res, 404, { error: 'This linked map is unavailable or its link was removed. No replacement was created.' });
+
+    // Show the map's file in Finder, for sharing its folder or finding it.
+    if (isReveal) {
+      if (!localLinks.enabled || !localAction(req, 'x-serigraph-links-token', libraryToken)) return json(res, 403, { error: 'Show in Finder works only in the app on this computer.' });
+      if (!file) return json(res, 404, { error: 'That map file is not on this computer.' });
+      if (process.platform !== 'darwin') return json(res, 409, { error: `The file is at ${file}` });
+      spawn('open', ['-R', file], { stdio: 'ignore' }).on('error', () => {});
+      return json(res, 200, { revealed: true });
+    }
 
     if (isMove) {
       let body;
@@ -1084,19 +1196,31 @@ async function handleApi(req, res, url) {
       // holding the same etag cannot both pass (first wins, rest get 409).
       const target = file ?? mapPathFor(id);
       const saveResult = await withSaveLock(target, async () => {
+        let source = body.source, merged = false;
         if (file) {
           const ifMatch = req.headers['if-match'];
           if (!ifMatch) return json(res, 428, { error: 'If-Match required', code: 'precondition' });
           if (ifMatch !== await etagFor(file)) {
-            return json(res, 409, { error: 'Map changed on disk', code: 'conflict' });
+            // Someone else saved first: a collaborator through a shared
+            // folder, another computer, or another tab. When the edit says
+            // which version it started from and the two changes touch
+            // different lines, save both. Otherwise a person chooses.
+            const combined = typeof body.base === 'string'
+              ? await mergeText({ base: body.base, mine: body.source, theirs: await fs.readFile(file, 'utf8') })
+              : null;
+            if (combined == null || parseMap(combined).errors.length) {
+              return json(res, 409, { error: 'Map changed on disk', code: 'conflict' });
+            }
+            source = combined;
+            merged = true;
           }
         }
         if (isLocalLink(id)) {
           if (await localLinks.resolve(id) !== target) return json(res, 409, { error: 'The local link changed. Reload before saving.' });
         } else if (id.includes('/')) await ensureProject(id.slice(0, id.indexOf('/')));
         else { await fs.mkdir(MAPS_DIR, { recursive: true }); watchMapsDir(); }
-        await writeFileAtomic(target, body.source);
-        return json(res, 200, { ok: true, etag: await etagFor(target) });
+        await writeFileAtomic(target, source);
+        return json(res, 200, { ok: true, etag: await etagFor(target), ...(merged ? { merged: true, source } : {}) });
       });
       // fileHashes deliberately NOT updated by the write: the watcher must
       // detect the change and broadcast to OTHER tabs; the writing tab
@@ -1428,6 +1552,8 @@ async function start(port, attempt = 0) {
       }, isRecord);
       watchDir(path.join(META_DIR, 'recents'), () => broadcast({ type: 'recents-changed' }), isRecord);
     }
+    watchDir(LIBRARY_ROOT, () => broadcast({ type: 'systems-changed' }), (filename) => String(filename) === SYSTEMS_FILE);
+    if (MANAGED) prepareInstalledApp();
     process.send?.({ type: 'ready', port });
     const urlStr = `http://localhost:${port}/`;
     console.log('');
