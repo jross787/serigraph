@@ -34,6 +34,13 @@ const mapSlug = file => {
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(base) && !base.includes('..') ? base : `file-${digest(file).slice(0, 20)}`;
 };
 
+const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+const CLOUD_NAMES = { GoogleDrive: 'Google Drive', OneDrive: 'OneDrive', Dropbox: 'Dropbox', Box: 'Box' };
+
+async function isFolder(target) {
+  try { return (await fs.stat(target)).isDirectory(); } catch { return false; }
+}
+
 async function boundedSource(file) {
   const handle = await fs.open(file, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
   try {
@@ -56,7 +63,8 @@ export function createLocalLinks({ engineRoot, registryDir, enabled = true, home
   const serial = action => { const next = writes.then(action, action); writes = next.catch(() => {}); return next; };
   async function checkedPath(target, kind) {
     if (!enabled) throw new Error('Local links are available only in the local app, not LAN mode.');
-    if (typeof target === 'string' && target.startsWith('~/')) target = expandPath(target, home);
+    if (target === '~') target = home;
+    else if (typeof target === 'string' && target.startsWith('~/')) target = expandPath(target, home);
     if (typeof target !== 'string' || !path.isAbsolute(target) || /[\0\r\n]/.test(target)) throw new Error('Enter an absolute path to a YAML file or map folder.');
     let resolved, stat;
     try { resolved = await fs.realpath(target); stat = await fs.lstat(resolved); }
@@ -138,9 +146,64 @@ export function createLocalLinks({ engineRoot, registryDir, enabled = true, home
       indexErrors: index.errors?.length || 0, maps: maps.map(map => ({ ...map, project })),
       fingerprint: digest(JSON.stringify([link.path, link.kind, hashes])) };
   }
+  // The Open dialog's sidebar: the usual home folders, then every cloud drive
+  // this Mac is signed in to. Only folders that exist are listed.
+  const where = target => target === home ? '~' : portablePath(target, home);
+  async function places() {
+    const found = [];
+    for (const [name, target, icon] of [['Home', home, 'home'], ['Desktop', path.join(home, 'Desktop'), 'desktop'],
+      ['Documents', path.join(home, 'Documents'), 'folder'], ['Downloads', path.join(home, 'Downloads'), 'downloads'],
+      ['Code', path.join(home, 'Code'), 'code'], ['iCloud Drive', path.join(home, 'Library', 'Mobile Documents', 'com~apple~CloudDocs'), 'cloud']]) {
+      if (await isFolder(target)) found.push({ name, path: where(target), icon });
+    }
+    const cloud = path.join(home, 'Library', 'CloudStorage');
+    for (const entry of (await fs.readdir(cloud, { withFileTypes: true }).catch(() => [])).sort(byName)) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      const [provider, ...account] = entry.name.split('-');
+      found.push({ name: account.length ? `${CLOUD_NAMES[provider] ?? provider} · ${account.join('-')}` : entry.name,
+        path: where(path.join(cloud, entry.name)), icon: 'cloud' });
+    }
+    return found;
+  }
+
   return {
     enabled,
     entries: readRegistry,
+    // One folder at a time for the Open dialog, like a small Finder window:
+    // visible subfolders and YAML files only. A listing grants nothing;
+    // opening still goes through preview and open.
+    async browse(target) {
+      if (!enabled) throw new Error('Local links are available only in the local app, not LAN mode.');
+      const wanted = target == null || target === '' || target === '~' ? home : expandPath(target, home);
+      if (!wanted || /[\0\r\n]/.test(wanted)) throw new Error('Choose a folder on this Mac.');
+      let folder, listing;
+      try {
+        folder = await fs.realpath(wanted);
+        listing = await fs.readdir(folder, { withFileTypes: true });
+      } catch (error) {
+        throw new Error(['EPERM', 'EACCES'].includes(error.code)
+          ? 'macOS has not allowed Serigraph to read this folder. Allow it in System Settings → Privacy & Security → Files & Folders.'
+          : 'This folder is unavailable. Reconnect the drive or check the path.');
+      }
+      const folders = [], files = [];
+      for (const entry of listing.slice(0, 5000)) {
+        if (entry.name.startsWith('.') || (folder === home && entry.name === 'Library')) continue;
+        const full = path.join(folder, entry.name);
+        let kind = entry.isDirectory() ? 'folder' : entry.isFile() ? 'file' : null;
+        if (entry.isSymbolicLink()) kind = await isFolder(full) ? 'folder' : 'file';
+        const item = { name: entry.name, path: where(full) };
+        if (kind === 'folder') folders.push(item);
+        else if (kind === 'file' && /\.ya?ml$/i.test(entry.name) && !/^projects\.ya?ml$/i.test(entry.name)) files.push(item);
+      }
+      const parent = path.dirname(folder);
+      return {
+        path: where(folder), name: folder === home ? 'Home' : path.basename(folder) || folder,
+        parent: parent === folder ? null : where(parent),
+        folders: folders.sort(byName).slice(0, 500), files: files.sort(byName).slice(0, 500),
+        more: listing.length > 5000 || folders.length > 500 || files.length > 500,
+        places: await places(),
+      };
+    },
     async preview(target) {
       const link = { ...await checkedPath(target), id: 'preview' };
       const preview = await describe(link);

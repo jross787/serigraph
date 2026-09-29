@@ -130,3 +130,29 @@ test('a damaged or half-synced link record is skipped without hiding the others'
   const projects = await links.projects();
   assert.deepEqual(projects.map(project => project.slug), [id]);
 });
+
+test('the Open dialog lists one folder: visible subfolders and YAML maps, never hidden files or the project index', async t => {
+  const options = await workspace(t);
+  const home = path.join(options.dir, 'Users', 'joe'), repo = path.join(home, 'Code', 'repo');
+  await fs.mkdir(path.join(repo, 'docs'), {recursive: true});
+  await fs.mkdir(path.join(repo, '.git'));
+  await fs.mkdir(path.join(home, 'Library', 'CloudStorage', 'GoogleDrive-someone@example.com'), {recursive: true});
+  for (const name of ['process.yaml', 'b10.yml', 'b9.yaml', 'projects.yaml', 'notes.txt', '.hidden.yaml']) await fs.writeFile(path.join(repo, name), source);
+  await fs.symlink(path.join(repo, 'docs'), path.join(repo, 'linked-docs'));
+  const links = createLocalLinks({...options, home});
+  const listing = await links.browse('~/Code/repo');
+  assert.equal(listing.path, '~/Code/repo');
+  assert.equal(listing.parent, '~/Code');
+  assert.deepEqual(listing.folders.map(folder => folder.name), ['docs', 'linked-docs']);
+  assert.deepEqual(listing.files.map(file => file.name), ['b9.yaml', 'b10.yml', 'process.yaml']);
+  assert.equal(listing.files[2].path, '~/Code/repo/process.yaml');
+  const top = await links.browse('~');
+  assert.deepEqual([top.name, top.path, top.parent], ['Home', '~', path.join(options.dir, 'Users')]);
+  assert.deepEqual(top.folders.map(folder => folder.name), ['Code'], 'the home Library stays hidden, as in Finder');
+  assert.deepEqual(top.places.map(place => place.name), ['Home', 'Code', 'Google Drive · someone@example.com']);
+  await assert.rejects(links.browse('relative/folder'), /Choose a folder/);
+  await assert.rejects(links.browse('~/missing'), /unavailable/);
+  await assert.rejects(createLocalLinks({...options, home, enabled: false}).browse('~'), /only in the local app/);
+  assert.equal((await links.open('~/Code/repo/process.yaml')).kind, 'file', 'a listed path opens as it is shown');
+});
+

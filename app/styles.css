@@ -4037,6 +4037,8 @@ g.node:focus-visible, g.node-body:focus-visible { outline: 2px solid var(--accen
 .d-btn:hover { background: var(--surface-2); }
 .d-btn.primary { background: var(--accent); border-color: transparent; color: var(--accent-ink); box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 35%, transparent); }
 .d-btn.primary:hover { filter: brightness(1.06); background: var(--accent); }
+/* A button that can't act right now looks dimmed, as on the Mac. */
+.d-btn:disabled, .d-btn:disabled:hover { opacity: .45; filter: none; cursor: default; }
 .f-input:focus, .f-textarea:focus, .f-select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent); outline: none; }
 
 /* Projects home: cards on the gray page, tiles on the white card. */
@@ -4199,3 +4201,39 @@ body:has(#update-notice:not([hidden])) #economics { bottom: 84px; }
 /* A selected line shows its two end handles and a soft glow along it, not a box. */
 .annotation-line .annotation-selection { display: none; }
 .annotation-line.selected .draw-hit, .annotation-line:focus-visible .draw-hit { stroke: color-mix(in srgb, var(--sel) 22%, transparent); }
+
+/* Open a map file: a small Finder-like browser. Places on the left, the
+   folder's subfolders and YAML maps on the right. */
+.local-links-dialog:has(.file-browser:not([hidden])) { width: min(760px, calc(100vw - 32px)); }
+.file-browser {
+  display: grid; grid-template-columns: 196px minmax(0, 1fr); height: 320px; margin: 14px 0 12px;
+  border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface);
+}
+.file-browser[hidden] { display: none; }
+.fb-places {
+  display: flex; flex-direction: column; gap: 1px; padding: 6px; overflow-y: auto;
+  background: var(--surface-2); border-right: 1px solid var(--border);
+}
+.fb-main { display: flex; flex-direction: column; min-width: 0; }
+.fb-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 6px; border-bottom: 1px solid var(--border); }
+.fb-bar .fb-up { padding: 4px 6px; min-width: 0; line-height: 0; }
+.fb-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.fb-list { flex: 1; overflow-y: auto; padding: 4px; }
+.fb-place, .fb-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border: 0; border-radius: 6px;
+  background: none; color: var(--ink); font: 450 13px/1.3 var(--font); text-align: left; cursor: default;
+}
+.fb-place span, .fb-item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-place .ui-icon, .fb-item .ui-icon { flex: none; color: var(--muted); }
+.fb-folder .ui-icon { color: var(--accent); }
+.fb-folder::after { content: '›'; margin-left: auto; padding-left: 8px; color: var(--muted); }
+.fb-place:hover, .fb-item:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.fb-place[aria-current="true"] { background: color-mix(in srgb, var(--ink) 10%, transparent); font-weight: 600; }
+.fb-item[aria-selected="true"] { background: var(--sel); color: #fff; }
+.fb-item[aria-selected="true"] .ui-icon { color: #fff; }
+.fb-note { margin: 8px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+@media (max-width: 620px) {
+  .file-browser { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: 380px; }
+  .fb-places { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+  .fb-place { width: auto; flex: none; }
+}

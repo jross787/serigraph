@@ -26,7 +26,10 @@ async function jfetch(url, opts) {
     const detail = data?.errors?.length
       ? data.errors.map((e) => (e.line ? `line ${e.line}: ` : '') + e.message).join('\n')
       : data?.error || res.statusText;
-    const err = new Error(detail);
+    // A route this page knows but the server does not: the files were
+    // updated while an older server kept running.
+    const stale = res.status === 404 && /^unknown API route /.test(data?.error ?? '');
+    const err = new Error(stale ? 'The Serigraph server running now is older than this page. Restart the server to finish updating.' : detail);
     err.status = res.status;
     err.data = data;
     throw err;

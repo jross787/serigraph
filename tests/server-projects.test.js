@@ -619,6 +619,8 @@ test('local links save originals, reject stale edits, refresh externally, and re
   assert.equal((await api('POST', '/api/local-links/preview', {path: file})).status, 403);
   assert.equal((await action('preview', {path: file}, {Origin: 'https://untrusted.example'})).status, 403);
   assert.equal((await action('preview', {path: file}, {'X-Serigraph-Library': 'stale'})).status, 412);
+  assert.equal((await api('POST', '/api/local-links/browse', {path: originals})).status, 403, 'folder listings need the local token too');
+  assert.deepEqual(JSON.parse((await action('browse', {path: originals})).body).files.map(item => item.name), ['Original flow.yaml']);
   const preview = JSON.parse((await action('preview', {path: file})).body);
   assert.equal(preview.mapCount, 1);
   assert.equal((await action('add', {nonce: preview.nonce, editOriginals: false})).status, 409);

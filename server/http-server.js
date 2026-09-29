@@ -915,6 +915,7 @@ async function handleApi(req, res, url) {
     let body;
     try { body = JSON.parse(await readBody(req, 8192)); } catch { return json(res, 400, { error: 'Invalid local-library request.' }); }
     try {
+      if (parts[2] === 'browse') return json(res, 200, await localLinks.browse(body?.path));
       if (parts[2] === 'preview') {
         localLinkPlan = null;
         const preview = await localLinks.preview(body?.path);

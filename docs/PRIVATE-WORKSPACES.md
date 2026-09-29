@@ -67,7 +67,11 @@ pass explicit approved filenames when validating a narrow scope.
 Use **File → Open…** (⌘O), **Open…** on the Projects home, or the map
 switcher's **Open file…**. In the Mac app this shows the Mac file picker; you
 can also drag a map onto the Serigraph Dock icon or use Finder's **Open With**.
-In a browser, paste the file's path instead. The file stays where it is, such
+In a browser on the same Mac, the dialog lists your folders: click through
+them, click a map to choose it and click it again to open it, or open the
+folder on screen. You can also paste a path. A shared address, such as one
+served to your tailnet, cannot open files from the serving Mac's folders. The
+file stays where it is, such
 as inside a code repo, and edits save to it. Nothing is copied into the engine
 or the library folder. Opened files appear in **Recent** and under **Opened from
 other folders**; opening a folder lists its maps as a project.
